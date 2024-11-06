@@ -10,7 +10,8 @@ any_grepl(
   ignore.case = FALSE,
   perl = FALSE,
   fixed = FALSE,
-  useBytes = FALSE
+  useBytes = FALSE,
+  return_indices = FALSE
 )
 }
 \arguments{
@@ -25,13 +26,16 @@ any_grepl(
 \item{fixed}{per base grepl}
 
 \item{useBytes}{per base grepl}
+
+\item{return_indices}{logical, if TRUE returns indices of matches instead of boolean vector}
 }
 \value{
-a boolean vector
+a boolean vector or integer vector of indices (if return_indices == TRUE)
 }
 \description{
-grepl wrapper for any matches in any vector of patterns.
+grepl wrapper for any matches in any vector of patterns
 allows spaces, unlike passing e.g. "pattern1 | pattern2" to grepl directly
+NA_chracter_ and empty strings are treated as valid patterns and can match
 }
 \examples{
 any_grepl(c("cat", "shoe"), c("shoe dog", "hat dog", "cat dog"))

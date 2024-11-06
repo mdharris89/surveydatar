@@ -33,7 +33,10 @@ get_affix_df(
 a dataframe summarising seps found in the full_string, the substrings separated, and their locations
 }
 \description{
-get_affix_df
+gets a dataframe summarising seps found in the full_string, the substrings separated, and their locations
+}
+\details{
+used by get_unique_suffixes
 }
 \examples{
 get_affix_df("Q1: This is a variable - This is a statement")

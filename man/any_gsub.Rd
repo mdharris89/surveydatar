@@ -38,6 +38,7 @@ find_in_vector with replacements made
 \description{
 gsub wrapper to replace all matches to a vector of strings with a single replacement value
 uses fixed = TRUE in gsub and trims whitespace at the end by default
+NA_character_ and empty strings are treated as valid patterns and can match
 }
 \examples{
 any_gsub(c("cat", "hat"), c("shoe dog", "hat dog", "cat dog"), "")

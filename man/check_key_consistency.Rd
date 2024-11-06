@@ -16,7 +16,7 @@ TRUE if passes consistency checks, else returns a data frame to help diagnose in
 }
 \description{
 checks that values in all other columns for every unique value of key_name are the same for every instance of that value of key_name
-if false, rreturns a data frame to help diagnose inconsistencies
+if false, returns a data frame to help diagnose inconsistencies
 note: doesn't check uniqueness of key_name, i.e. there can be multiple (duplicate) instances of the same value of key_name
 }
 \examples{

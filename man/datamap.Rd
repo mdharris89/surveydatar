@@ -2,27 +2,27 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{datamap}
 \alias{datamap}
-\title{datamap
-creates a dataframe with variable names, labels and other useful info as rows (SPSS style)
-useful for quickly understanding structure of a large dataset
-note: order of value labels and order of unique values does not necessarily correspond}
+\title{datamap}
 \usage{
-datamap(temp_dat, view_or_return = "view")
+datamap(x, view_or_return = "view")
 }
 \arguments{
-\item{temp_dat}{a dataframe, assumed to be survey data}
+\item{x}{A dataframe or survey_data object}
 
-\item{view_or_return}{calls View by default - or if "save", return the summary as a dataframe}
+\item{view_or_return}{"view" to call View, or "return" to return the summary as a dataframe}
 }
 \value{
-calls View by default - or if "return", return the summary
+Calls View by default, or returns the summary dataframe if view_or_return is "return"
 }
 \description{
-datamap
 creates a dataframe with variable names, labels and other useful info as rows (SPSS style)
+}
+\details{
 useful for quickly understanding structure of a large dataset
-note: order of value labels and order of unique values does not necessarily correspond
+note: order of unique values is in order they are found, not necessarily corresponding to the order in which they have in labelling
 }
 \examples{
 datamap(get_basic_test_dat(100), view_or_return = "return")
+survey_obj <- create_survey_data(get_basic_test_dat(100))
+datamap(survey_obj, view_or_return = "return")
 }

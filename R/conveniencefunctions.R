@@ -1,7 +1,12 @@
+#' @import dplyr
+#' @import rlang
+NULL
+
 #' any_grepl
 #'
-#' grepl wrapper for any matches in any vector of patterns.
+#' grepl wrapper for any matches in any vector of patterns
 #' allows spaces, unlike passing e.g. "pattern1 | pattern2" to grepl directly
+#' NA_chracter_ and empty strings are treated as valid patterns and can match
 #'
 #' @param pattern_vector the vector of strings to look for
 #' @param find_in_vector the vector of strings to look in
@@ -9,31 +14,70 @@
 #' @param perl per base grepl
 #' @param fixed per base grepl
 #' @param useBytes per base grepl
+#' @param return_indices logical, if TRUE returns indices of matches instead of boolean vector
 #'
-#' @return a boolean vector
+#' @return a boolean vector or integer vector of indices (if return_indices == TRUE)
 #' @export
 #'
 #' @examples
 #' any_grepl(c("cat", "shoe"), c("shoe dog", "hat dog", "cat dog"))
-any_grepl <- function(pattern_vector, find_in_vector, ignore.case = FALSE, perl = FALSE, fixed = FALSE, useBytes = FALSE){
+any_grepl <- function(pattern_vector, find_in_vector, ignore.case = FALSE, perl = FALSE, fixed = FALSE, useBytes = FALSE, return_indices = FALSE){
 
-  # validation and error handling
-  stopifnot("both pattern_vector and find_in_vector but be strings or vectors of strings" = all(is.character(pattern_vector)) &&
-              all(is.character(find_in_vector)))
-  stopifnot("find_in_vector must be length > 0" = length(find_in_vector) > 0)
-  if (length(pattern_vector) == 0) {return(rep(FALSE, length(find_in_vector)))}
+  # Input validation
+  if (!is.character(pattern_vector) || !is.character(find_in_vector)) {
+    stop("Both pattern_vector and find_in_vector must be character vectors")
+  }
+  if (length(pattern_vector) == 0) {
+    stop("pattern_vector must have length > 0")
+  }
+  if (length(find_in_vector) == 0) {
+    stop("find_in_vector must have length > 0")
+  }
 
-  # apply grepl for each item in pattern_vector then check for any matches
-  matches <- sapply(pattern_vector, grepl, find_in_vector, ignore.case, perl, fixed, useBytes)
-  any_matches <- rowSums(matches) > 0
-  return(any_matches)
+  # Separate NA, empty string, and non-empty patterns
+  na_pattern <- is.na(pattern_vector)
+  empty_pattern <- !na_pattern & pattern_vector == ""
+  non_empty_patterns <- pattern_vector[!na_pattern & !empty_pattern]
+
+  # Combine non-empty patterns into a single regex for performance
+  combined_pattern <- if (length(non_empty_patterns) > 0) {
+    paste(non_empty_patterns, collapse = "|")
+  } else {
+    character(0)
+  }
+
+  # Perform matching
+  matches <- rep(FALSE, length(find_in_vector))
+  # Match non-empty patterns
+  if (length(combined_pattern) > 0) {
+    matches[!is.na(find_in_vector)] <- grepl(combined_pattern, find_in_vector[!is.na(find_in_vector)],
+                                             ignore.case = ignore.case, perl = perl,
+                                             fixed = fixed, useBytes = useBytes)
+  }
+
+  # Match NA patterns
+  if (any(na_pattern)) {
+    matches[is.na(find_in_vector)] <- TRUE
+  }
+
+  # Match empty string patterns
+  if (any(empty_pattern)) {
+    matches[find_in_vector == ""] <- TRUE
+  }
+
+  # Return result based on return_indices parameter
+  if (return_indices) {
+    return(which(matches))
+  } else {
+    return(matches)
+  }
 }
 
 #' any_gsub
 #'
 #' gsub wrapper to replace all matches to a vector of strings with a single replacement value
 #' uses fixed = TRUE in gsub and trims whitespace at the end by default
-#'
+#' NA_character_ and empty strings are treated as valid patterns and can match
 #'
 #' @param pattern_vector the vector of strings to look for
 #' @param replacement_value the string to replace with
@@ -51,25 +95,53 @@ any_grepl <- function(pattern_vector, find_in_vector, ignore.case = FALSE, perl 
 #' any_gsub(c("cat", "hat"), c("shoe dog", "hat dog", "cat dog"), "")
 any_gsub <- function(pattern_vector, replacement_value = "", find_in_vector, trimws_at_end = TRUE, ignore.case = FALSE, perl = FALSE, fixed = FALSE, useBytes = FALSE) {
 
-  # validation and error handling
-  stopifnot("both pattern_vector and find_in_vector but be strings or vectors of strings" = all(is.character(pattern_vector)) &&
-              all(is.character(find_in_vector)))
-  stopifnot("find_in_vector must be length > 0" = length(find_in_vector) > 0)
-  if (length(pattern_vector) == 0) {return(find_in_vector)}
+  # Input validation
+  if (!is.character(pattern_vector) || !is.character(find_in_vector)) {
+    stop("Both pattern_vector and find_in_vector must be character vectors")
+  }
+  if (length(pattern_vector) == 0) {
+    stop("pattern_vector must have length > 0")
+  }
+  if (length(find_in_vector) == 0) {
+    stop("find_in_vector must have length > 0")
+  }
 
-  # for each element in find_in_vector...
-  out <- sapply(find_in_vector, function(item) {
-    # Reduce to apply gsub successively, replacing all elements of pattern_vector with replacement_value for the current element from find_in_vector
-    reduced_string <- Reduce(function(text, pattern) {
-      gsub(pattern, replacement_value, text, ignore.case, perl, fixed, useBytes)
-    }, pattern_vector, init = item)
+  na_pattern <- is.na(pattern_vector)
+  empty_pattern <- !na_pattern & pattern_vector == ""
+  non_empty_patterns <- pattern_vector[!na_pattern & !empty_pattern]
 
-    # optionally trim whitespace from the final strings
-    if (trimws_at_end) {trimws(reduced_string)} else {reduced_string}
+  # Combine non-empty patterns into a single regex for performance
+  combined_pattern <- if (length(non_empty_patterns) > 0) {
+    paste(non_empty_patterns, collapse = "|")
+  } else {
+    character(0)
+  }
 
-  })
+  # Perform replacements
+  out <- find_in_vector
 
-  out <- unname(out)
+  # Replace non-empty patterns
+  if (length(combined_pattern) > 0) {
+    out[!is.na(out)] <- gsub(combined_pattern, replacement_value, out[!is.na(out)],
+                             ignore.case = ignore.case, perl = perl,
+                             fixed = fixed, useBytes = useBytes)
+  }
+
+  # Replace NA patterns
+  if (any(na_pattern)) {
+    out[is.na(out)] <- replacement_value
+  }
+
+  # Replace empty string patterns
+  if (any(empty_pattern)) {
+    out[out == ""] <- replacement_value
+  }
+
+  # Trim whitespace if requested
+  if (trimws_at_end) {
+    out <- trimws(out)
+  }
+
   return(out)
 }
 
@@ -415,7 +487,7 @@ sub_char_by_index <- function(string, index, replacement){
 
 #' closest_matching_string
 #'
-#' returns closest matching strings_vector to string_to_check
+#' returns closest matching string from strings_vector to string_to_check
 #'
 #' @param strings_vector vector of strings
 #' @param string_to_check single string to measure distance against
@@ -562,7 +634,7 @@ merge_left <- function(x, y, by, overwrite = FALSE){
 #' check_key_consistency
 #'
 #' checks that values in all other columns for every unique value of key_name are the same for every instance of that value of key_name
-#' if false, rreturns a data frame to help diagnose inconsistencies
+#' if false, returns a data frame to help diagnose inconsistencies
 #' note: doesn't check uniqueness of key_name, i.e. there can be multiple (duplicate) instances of the same value of key_name
 #'
 #' @param temp_dat dataframe to check in
@@ -590,7 +662,7 @@ check_key_consistency <- function(temp_dat, key_name){
   } else {
     # Return a data frame containing only the problematic rows and columns
     col_indices <- which(colSums(problem_matrix) > 0)
-    row_indices <- which(temp_dat[[key_name]] %in% problem_matrix[[key_name]][unlist(lapply(dplyr::select(problem_matrix[col_indices], -key_name), which))])
+    row_indices <- which(temp_dat[[key_name]] %in% problem_matrix[[key_name]][unlist(lapply(dplyr::select(problem_matrix[col_indices], -all_of(key_name)), which))])
     problematic_data <- temp_dat[row_indices, col_indices]
 
     return(list(status = "Key is inconsistent", problematic_data = problematic_data))
@@ -626,16 +698,16 @@ concatenate_by_group <- function(temp_dat, group_var){
 
   temp_dat <- temp_dat %>%
     dplyr::group_by(dplyr::across(dplyr::all_of(group_var))) %>%
-    dplyr::mutate(first_row_id = dplyr::first(row_id)) %>%
+    dplyr::mutate(first_row_id = dplyr::first(.data$row_id)) %>%
     dplyr::arrange(dplyr::across(dplyr::all_of(names(temp_dat)[!names(temp_dat) %in% group_var]))) %>% # Arrange all except ID for more consistent ordering of concatenated values in string
     dplyr::summarise(dplyr::across(dplyr::all_of(names(temp_dat)[!names(temp_dat) %in% group_var & names(temp_dat) != "row_id"]),
                                    ~paste(unique(.), collapse = ", "), .names = "concat_{.col}"),
-                     first_row_id = dplyr::first(first_row_id),
+                     first_row_id = dplyr::first(.data$first_row_id),
                      .groups = 'drop') %>%
     dplyr::ungroup()
 
   # Arrange by row_id and remove temporary columns
-  temp_dat <- temp_dat %>% dplyr::arrange(first_row_id) %>% dplyr::select(-first_row_id)
+  temp_dat <- temp_dat %>% dplyr::arrange(.data$first_row_id) %>% dplyr::select(-.data$first_row_id)
 
   return(temp_dat)
 

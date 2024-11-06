@@ -2,8 +2,7 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{create_dict}
 \alias{create_dict}
-\title{create_dict
-creates a tibble to use as a dictionary to easily update variable names and labels}
+\title{create_dict}
 \usage{
 create_dict(temp_dat, prefill = TRUE)
 }
@@ -16,7 +15,6 @@ create_dict(temp_dat, prefill = TRUE)
 a tibble with columns for old_variable_names, old_variable_labels, old_value_labels, and new_ versions of each
 }
 \description{
-create_dict
 creates a tibble to use as a dictionary to easily update variable names and labels
 }
 \examples{

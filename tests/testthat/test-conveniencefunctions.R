@@ -1,21 +1,31 @@
 test_that("any_grepl works", {
-  # No pattern_array strings provided
-  expect_equal(any_grepl(character(0), c("anything", "nothing")), c(FALSE, FALSE))
 
-  # No find_in_array strings provided
-  expect_error(any_grepl(c("something", "anything"), character(0)))
+  # Error cases
+  expect_error(any_grepl(1:3, c("big cat", "small dog", "red fish")), "must be character vectors")
+  expect_error(any_grepl(c("cat", "dog"), 1:3), "must be character vectors")
+  expect_error(any_grepl(character(0), c("cat", "dog")), "must have length > 0")
+  expect_error(any_grepl(c("cat", "dog"), character(0)), "must have length > 0")
 
   # Simple match
   expect_equal(any_grepl(c("cat"), c("cat dog", "hat dog")), c(TRUE, FALSE))
-
-  # Multiple patterns, multiple found
-  expect_equal(any_grepl(c("cat", "shoe"), c("shoe dog", "hat dog", "cat dog")), c(TRUE, FALSE, TRUE))
 
   # Test with multiple patterns, none found
   expect_equal(any_grepl(c("apple", "pear"), c("cat dog", "hat dog")), c(FALSE, FALSE))
 
   # Overlapping patterns
   expect_equal(any_grepl(c("dog", "do"), c("dog", "cat", "do")), c(TRUE, FALSE, TRUE))
+
+  # NA handling
+  expect_equal(any_grepl(c("cat", NA, "dog"), c("big cat", NA, "small dog", "red fish", NA)), c(TRUE, TRUE, TRUE, FALSE, TRUE))
+
+  # Empty string handling
+  expect_equal(any_grepl(c("cat", "", "dog"), c("big cat", "", "small dog", "red fish", "")), c(TRUE, TRUE, TRUE, FALSE, TRUE))
+
+  # Only NA in pattern_vector
+  expect_equal(any_grepl(NA_character_, c("big cat", NA, "small dog", "red fish", NA)), c(FALSE, TRUE, FALSE, FALSE, TRUE))
+
+  # Multiple patterns, multiple found
+  expect_equal(any_grepl(c("cat", "shoe"), c("shoe dog", "hat dog", "cat dog")), c(TRUE, FALSE, TRUE))
 
   # Case sensitivity
   expect_equal(any_grepl(c("CAT"), c("cat", "Cat", "CAT"), ignore.case = FALSE), c(FALSE, FALSE, TRUE))
@@ -31,11 +41,11 @@ test_that("any_grepl works", {
 
 test_that("any_gsub works", {
 
-  # No pattern_array strings provided
-  expect_equal(any_gsub(character(0), "replacement", c("anything", "nothing")), c("anything", "nothing"))
-
-  # No find_in_array strings provided
-  expect_error(any_gsub(c("something", "anything"), "replacement", character(0)))
+  # Error cases
+  expect_error(any_gsub(1:3, "ANIMAL", c("big cat", "small dog", "red fish")), "must be character vectors")
+  expect_error(any_gsub(c("cat", "dog"), "ANIMAL", 1:3), "must be character vectors")
+  expect_error(any_gsub(character(0), "ANIMAL", c("cat", "dog")), "must have length > 0")
+  expect_error(any_gsub(c("cat", "dog"), "ANIMAL", character(0)), "must have length > 0")
 
   # Simple match
   expect_equal(any_gsub(c("cat"), "", c("cat dog", "hat dog")), c("dog", "hat dog"))
@@ -48,6 +58,46 @@ test_that("any_gsub works", {
 
   # Overlapping patterns
   expect_equal(any_gsub(c("at", "dog"), "", c("shoe dog", "hat dog", "cat dog")), c("shoe", "h", "c"))
+
+  # NA handling
+  expect_equal(
+    any_gsub(c("cat", NA, "dog"), "REPLACED", c("big cat", NA, "small dog", "red fish", NA)),
+    c("big REPLACED", "REPLACED", "small REPLACED", "red fish", "REPLACED")
+  )
+
+  # Empty string handling
+  expect_equal(
+    any_gsub(c("cat", "", "dog"), "REPLACED", c("big cat", "", "small dog", "red fish", "")),
+    c("big REPLACED", "REPLACED", "small REPLACED", "red fish", "REPLACED")
+  )
+
+  # Only NA in pattern_vector
+  expect_equal(
+    any_gsub(NA_character_, "REPLACED", c("big cat", NA, "small dog", "red fish", NA)),
+    c("big cat", "REPLACED", "small dog", "red fish", "REPLACED")
+  )
+
+  # Only empty string in pattern_vector
+  expect_equal(
+    any_gsub("", "REPLACED", c("big cat", "", "small dog", "red fish", "")),
+    c("big cat", "REPLACED", "small dog", "red fish", "REPLACED")
+  )
+
+  # Complex case with mix of NAs, empty strings, and regular patterns
+  expect_equal(
+    any_gsub(c("cat", NA, "", "fish"), "REPLACED", c("big cat", NA, "", "small dog", "red fish", NA, "")),
+    c("big REPLACED", "REPLACED", "REPLACED", "small dog", "red REPLACED", "REPLACED", "REPLACED")
+  )
+
+  # Trim option
+  expect_equal(
+    any_gsub(c("cat", "dog"), "ANIMAL ", c("big cat ", "small dog", "red fish "), trimws_at_end = TRUE),
+    c("big ANIMAL", "small ANIMAL", "red fish")
+  )
+  expect_equal(
+    any_gsub(c("cat", "dog"), "ANIMAL ", c("big cat ", "small dog", "red fish "), trimws_at_end = FALSE),
+    c("big ANIMAL  ", "small ANIMAL ", "red fish ")
+  )
 
   # Case sensitivity
   expect_equal(any_gsub(c("CAT"), "replacement", c("cat", "Cat", "CAT"), ignore.case = FALSE), c("cat", "Cat", "replacement"))

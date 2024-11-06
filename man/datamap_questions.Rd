@@ -2,25 +2,19 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{datamap_questions}
 \alias{datamap_questions}
-\title{datamap_questions
-provides a convenient view similar to SPSS variables like datamap, but by question group instead of individual variables.}
+\title{datamap_questions}
 \usage{
-datamap_questions(temp_dat, temp_dpdict)
+datamap_questions(survey_obj)
 }
 \arguments{
-\item{temp_dat}{a dataframe, assumed to be survey data}
-
-\item{temp_dpdict}{a dpdict dataframe corresponding to temp_dat. must have a 'question_group' column.}
+\item{survey_obj}{A survey_data object containing the survey data and metadata.}
 }
 \value{
-a tibble with columns for question_group, var_count, first_var_label, first_var_name, var_classes, var_values, var_labels, and question_types
+a data frame with columns for question_group, var_count, first_var_label, first_var_name, var_classes, var_values, var_labels, and question_types
 }
 \description{
-datamap_questions
 provides a convenient view similar to SPSS variables like datamap, but by question group instead of individual variables.
 }
 \examples{
-temp_dat <- get_big_test_dat(10)
-temp_dpdict <- create_dict_with_metadata(temp_dat)
-datamap_questions(temp_dat, temp_dpdict)
+datamap_questions(create_survey_data(get_big_test_dat(10)))
 }

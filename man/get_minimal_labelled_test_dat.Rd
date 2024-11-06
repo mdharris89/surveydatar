@@ -2,8 +2,7 @@
 % Please edit documentation in R/testdatagenerators.R
 \name{get_minimal_labelled_test_dat}
 \alias{get_minimal_labelled_test_dat}
-\title{get_minimal_labelled_test_dat
-creates a simple dataframe with columns for uid, csat, and nps - and then adds variable and value labels}
+\title{get_minimal_labelled_test_dat}
 \usage{
 get_minimal_labelled_test_dat(n = 100, random_seed = 123)
 }
@@ -16,8 +15,7 @@ get_minimal_labelled_test_dat(n = 100, random_seed = 123)
 a dataframe
 }
 \description{
-get_minimal_labelled_test_dat
-creates a simple dataframe with columns for uid, csat, and nps - and then adds variable and value labels
+creates a very simple dataframe with columns for uid, csat, and nps - and then adds variable and value labels
 }
 \examples{
 get_minimal_labelled_test_dat()

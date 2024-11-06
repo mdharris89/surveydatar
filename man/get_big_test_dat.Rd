@@ -2,8 +2,7 @@
 % Please edit documentation in R/testdatagenerators.R
 \name{get_big_test_dat}
 \alias{get_big_test_dat}
-\title{get_big_test_dat
-creates a dataframe meant to replicate all common question types in survey data}
+\title{get_big_test_dat}
 \usage{
 get_big_test_dat(n = 100, random_seed = 123)
 }
@@ -16,8 +15,7 @@ get_big_test_dat(n = 100, random_seed = 123)
 a dataframe
 }
 \description{
-get_big_test_dat
-creates a dataframe meant to replicate all common question types in survey data
+creates a bigger but still well formatted dataframe meant to replicate all common question types in survey data
 }
 \examples{
 get_big_test_dat()

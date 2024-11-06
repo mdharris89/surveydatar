@@ -2,11 +2,7 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{get_unique_suffixes}
 \alias{get_unique_suffixes}
-\title{get_unique_suffixes
-takes a dpdict and returns a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
-wants to find suffix based on a common same sep type and, if allow_unmatched_sep_count_from_end == FALSE, common position of sep relative to the end
-if can't find a suffix in labels, looks in variable name
-and if can't find a unique suffix anywhere else, just assigns successive numbers}
+\title{get_unique_suffixes}
 \usage{
 get_unique_suffixes(
   temp_dpdict,
@@ -37,8 +33,9 @@ get_unique_suffixes(
 a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
 }
 \description{
-get_unique_suffixes
 takes a dpdict and returns a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
+}
+\details{
 wants to find suffix based on a common same sep type and, if allow_unmatched_sep_count_from_end == FALSE, common position of sep relative to the end
 if can't find a suffix in labels, looks in variable name
 and if can't find a unique suffix anywhere else, just assigns successive numbers

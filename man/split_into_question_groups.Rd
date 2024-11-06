@@ -2,15 +2,12 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{split_into_question_groups}
 \alias{split_into_question_groups}
-\title{split_into_question_groups
-key part of create_dict_with_metadata
-attempts to find a $question within a temp_dpdict with a unique suffix in an attempt to group variables into sensible questions
-(will work within existing question groups if $question already exists, else will create starting $question from prefix to variable_name_sep)
-will also provide a column question_lcs which is the longest common string found within a question group (this is used to define question groups when splitbycommonlabel == TRUE)}
+\title{split_into_question_groups}
 \usage{
 split_into_question_groups(
   temp_dpdict,
   temp_dat,
+  variables_to_process = NULL,
   variable_name_sep = "_",
   ignorelabelbeforeprefix = TRUE,
   prefix_sep = ": ",
@@ -32,6 +29,9 @@ split_into_question_groups(
 \item{temp_dpdict}{dpdict for temp_dat. must have question_group variable.}
 
 \item{temp_dat}{survey data dataframe}
+
+\item{variables_to_process}{boolean of length nrow(dpdict). will attempt to split all variables for which variables_to_process == TRUE.
+(if only some variables in a question group identified as to process by the boolean, will update to include all variables in that groupi)}
 
 \item{variable_name_sep}{"\emph{" by default. string that separates each variable within a common question, e.g. if Q1_1, Q1_2 "}" is the correct variable_name_sep.}
 
@@ -67,15 +67,20 @@ split_into_question_groups(
 temp_dpdict with question groups split according to the function settings
 }
 \description{
-note: if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
+attempts to find a $question_group within a temp_dpdict with a unique suffix that groups variables into sensible questions
 }
 \details{
+key function for defining survey metadata (e.g. as part of create_dict_with_metadata)
+will work within existing question groups if $question_group already exists, else will create starting $question_group from prefix to variable_name_sep
+will also provide a column question_lcs which is the longest common string found within a question group (this is used to define question groups when splitbycommonlabel == TRUE)
+
+note: if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
+
 requires letters_702
 }
 \examples{
 temp_dat <- get_big_test_dat(n=10)
-temp_dpdict <- create_dict(temp_dat, prefill = TRUE) # create fresh basic dpdict
-# but we don't need variables for 'old' names and labels
+temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
 temp_dpdict <- temp_dpdict[, !(names(temp_dpdict) \%in\% c("old_variable_names",
                                                    "old_variable_labels",
                                                    "old_value_labels"))]

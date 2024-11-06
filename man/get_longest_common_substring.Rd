@@ -17,7 +17,7 @@ get_longest_common_substring(string1, string2, fromstart = FALSE)
 substring which represents the longest common starting substring found between string1 and string2, with an attribute lcs_distance representing the number of characters in the lcs
 }
 \description{
-get_longest_common_substring
+finds the long common substring (lcs) from two given strings
 }
 \examples{
 get_longest_common_substring("boat", "boar")

@@ -4,20 +4,32 @@
 \alias{update_aliases}
 \title{update_aliases}
 \usage{
-update_aliases(temp_dpdict, questions_dict = NULL)
+update_aliases(x, questions_dict)
 }
 \arguments{
-\item{temp_dpdict}{dpdict, e.g. from create_dict_with_metadata}
+\item{x}{a survey data object or a dpdict}
 
-\item{questions_dict}{optional. a questions_dict that must have columns for question_group and question_alias
+\item{questions_dict}{a questions_dict that must have columns for question_group and question_alias
 and the same number of values as there are unique question_groups in temp_dpdict}
 }
 \value{
-temp_dpdict with alias_with_suffix always updated, and question_alias updated if questions_dict was provided
+survey data object or a temp_dpdict with question_aias and alias_with_suffix updated based on the questions_dict
 }
 \description{
-update_aliases
+updates question_alias, question_description and alias_with_suffix in a dpdict, based on question_alias and question_suffix
+}
+\details{
+useful if e.g. manually editing alias in a questions_dict and want to apply that to a dpdict
 }
 \examples{
-update_aliases(create_dict_with_metadata(get_big_test_dat()))
+# Using a temp_dpdict
+temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
+questions_dict <- get_questions_dict(temp_dpdict)
+questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <- "newlabelledmultiordinal_a"
+updated_dpdict <- update_aliases(temp_dpdict, questions_dict)
+# Using a survey_obj
+survey_obj <- create_survey_data(get_big_test_dat(n=10))
+questions_dict <- get_questions_dict(survey_obj)
+questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <- "newlabelledmultiordinal_a"
+updated_survey_obj <- update_aliases(survey_obj, questions_dict)
 }

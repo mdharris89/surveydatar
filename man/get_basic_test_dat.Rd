@@ -2,9 +2,7 @@
 % Please edit documentation in R/testdatagenerators.R
 \name{get_basic_test_dat}
 \alias{get_basic_test_dat}
-\title{get_basic_test_dat
-creates a basic dataframe meant to replicate survey data for testing
-with columns for respid, numeric, oe, boolean, and 3 versions of each of ordinal, categorical and binary categorical - as labelled, factors, and characters}
+\title{get_basic_test_dat}
 \usage{
 get_basic_test_dat(n = 100, random_seed = 123)
 }
@@ -17,9 +15,10 @@ get_basic_test_dat(n = 100, random_seed = 123)
 a dataframe
 }
 \description{
-get_basic_test_dat
-creates a basic dataframe meant to replicate survey data for testing
-with columns for respid, numeric, oe, boolean, and 3 versions of each of ordinal, categorical and binary categorical - as labelled, factors, and characters
+creates a quite simple dataframe meant to replicate basic survey data for testing
+}
+\details{
+Includes columns for respid, numeric, oe, boolean, and 3 versions of each of ordinal, categorical and binary categorical - as labelled, factors, and characters
 }
 \examples{
 get_basic_test_dat()

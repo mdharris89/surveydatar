@@ -2,8 +2,7 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{get_longest_common_substring_slow}
 \alias{get_longest_common_substring_slow}
-\title{get_longest_common_substring_slow
-an old implementation of getting the longest common substring. about 3x slower than get_longest_common_substring()}
+\title{get_longest_common_substring_slow}
 \usage{
 get_longest_common_substring_slow(
   string1,
@@ -45,7 +44,6 @@ if increments == "random" will randomise number of characters to add each time, 
 substring which represents the longest common starting substring found between string1 and string2, with an attribute lcs_distance representing the number of characters in the lcs
 }
 \description{
-get_longest_common_substring_slow
 an old implementation of getting the longest common substring. about 3x slower than get_longest_common_substring()
 }
 \examples{

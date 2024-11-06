@@ -2,16 +2,10 @@
 % Please edit documentation in R/surveymetadatafunctions.R
 \name{split_grid_labels}
 \alias{split_grid_labels}
-\title{split_grid_labels
-for expanding the question alias in a dpdict for grid questions, e.g. brand perceptions where a series of statements are rated for each of a series of brands
-e.g. moving from question_alias == 'Q1. Brand Image', question_suffix == 'Brand 1 - Statement 1'...
-to question_alias == 'Q1. Brand Image - Brand 1', question_suffix == 'Statement 1'
-so that the common question alias is specific to each brand.
-Does so based on an example 'stem' (e.g. 'Brand 1') and a count_before_repeat, i.e. the number of statements asked for each brand.
-(Assumes the same number of statements exists for each brand.)}
+\title{split_grid_labels}
 \usage{
 split_grid_labels(
-  temp_dpdict,
+  x,
   alias_to_split,
   example_stem_to_add,
   count_before_repeat,
@@ -19,7 +13,7 @@ split_grid_labels(
 )
 }
 \arguments{
-\item{temp_dpdict}{a 'dpdict' dataframe}
+\item{x}{a survey data object or a dpdict}
 
 \item{alias_to_split}{the question_alias in the temp_dpdict to change}
 
@@ -33,15 +27,22 @@ split_grid_labels(
 an updated dpdict
 }
 \description{
-split_grid_labels
 for expanding the question alias in a dpdict for grid questions, e.g. brand perceptions where a series of statements are rated for each of a series of brands
-e.g. moving from question_alias == 'Q1. Brand Image', question_suffix == 'Brand 1 - Statement 1'...
+}
+\details{
+For e.g. moving from question_alias == 'Q1. Brand Image', question_suffix == 'Brand 1 - Statement 1'...
 to question_alias == 'Q1. Brand Image - Brand 1', question_suffix == 'Statement 1'
 so that the common question alias is specific to each brand.
 Does so based on an example 'stem' (e.g. 'Brand 1') and a count_before_repeat, i.e. the number of statements asked for each brand.
 (Assumes the same number of statements exists for each brand.)
 }
 \examples{
-split_grid_labels(create_dict_with_metadata(get_big_test_dat(n=10)),
+# Using a temp_dpdict
+temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
+split_grid_labels(temp_dpdict,
+                  "labelledmultiresponsegrid_a", "statement 1 ", 2)
+# Using a survey_obj
+survey_obj <- create_survey_data(get_big_test_dat(n=10))
+split_grid_labels(survey_obj,
                   "labelledmultiresponsegrid_a", "statement 1 ", 2)
 }

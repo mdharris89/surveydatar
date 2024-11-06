@@ -17,7 +17,7 @@ closest_matching_string(strings_vector, string_to_check, method = "lv")
 string from strings_vector that best matches string_to_check
 }
 \description{
-returns closest matching strings_vector to string_to_check
+returns closest matching string from strings_vector to string_to_check
 }
 \examples{
 closest_matching_string(c("shoe", "dog", "cat"), "dug")
