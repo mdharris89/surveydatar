@@ -17,6 +17,9 @@ a tibble with columns for old_variable_names, old_variable_labels, old_value_lab
 \description{
 creates a tibble to use as a dictionary to easily update variable names and labels
 }
+\details{
+note: uses sjlabelled to get value
+}
 \examples{
 create_dict(get_minimal_labelled_test_dat())
 

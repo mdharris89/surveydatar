@@ -133,6 +133,29 @@ get_big_test_dat <- function(n=100, random_seed = 123){
   return(big_test)
 }
 
+#' get_big_test_dat_with_prefixes
+#'
+#' wrapper around get_big_test_dat. calls get_big_test_dat() then adds variable names up to any seps as prefixes to the variable labels.
+#'
+#' @param n number of rows to create
+#' @param random_seed for reproducability
+#'
+#' @return a dataframe
+#' @export
+#'
+#' @examples get_big_test_dat_with_prefixes()
+get_big_test_dat_with_prefixes <- function(n=100, random_seed = 123){
+
+  big_test <- get_big_test_dat(n, random_seed)
+  var_names <- names(big_test)
+
+  for(i in var_names){
+    attr(big_test[[i]], "label") <- paste0(gsub("_[a-z0-9]*$", "", i), ": ", attr(big_test[[i]], "label", exact = TRUE))
+  }
+
+  return(big_test)
+}
+
 #' get_routing_test_dat
 #'
 #' creates a dataframe specifically for testing more complex routing patterns to test metadata handling
@@ -228,81 +251,6 @@ get_routing_test_dat <- function(n=100, random_seed = 123) {
   )
 
   return(routing_test)
-}
-
-#' get_multilingual_test_dat
-#'
-#' creates a dataframe with multilingual variables, labels, and values
-#'
-#' @param n number of rows to create
-#' @param random_seed for reproducability
-#'
-#' @return a dataframe
-#' @export
-#'
-#' @examples get_multilingual_test_dat()
-get_multilingual_test_dat <- function(n=100, random_seed = 123) {
-  set.seed(random_seed)
-
-  multilingual_test <- data.frame(
-    # Variable names in different languages
-    pregunta_1 = haven::labelled(
-      sample(1:5, n, replace=TRUE),
-      label="¿Cómo calificaría el servicio? / How would you rate the service?",
-      labels = c("Muy malo / Very poor" = 1,
-                 "Malo / Poor" = 2,
-                 "Regular / Fair" = 3,
-                 "Bueno / Good" = 4,
-                 "Muy bueno / Very good" = 5)
-    ),
-
-    # Cyrillic variable names and labels
-    вопрос_1 = haven::labelled(
-      sample(1:3, n, replace=TRUE),
-      label="Как часто вы пользуетесь услугой? / How often do you use the service?",
-      labels = c("Редко / Rarely" = 1,
-                 "Иногда / Sometimes" = 2,
-                 "Часто / Often" = 3)
-    ),
-
-    # Mixed script variable names
-    q1_مرضی = haven::labelled(
-      sample(1:5, n, replace=TRUE),
-      label="کیا آپ مطمئن ہیں؟ / Are you satisfied?",
-      labels = c("بالکل نہیں / Not at all" = 1,
-                 "نہیں / No" = 2,
-                 "شاید / Maybe" = 3,
-                 "ہاں / Yes" = 4,
-                 "بالکل / Absolutely" = 5)
-    ),
-
-    # Multiple response with mixed languages
-    mr_選擇_1 = haven::labelled(
-      sample(c(0,1), n, replace=TRUE),
-      label="選擇所有適用項目 / Select all that apply - 選項 1 / Option 1",
-      labels = c("未選擇 / Not selected" = 0,
-                 "已選擇 / Selected" = 1)
-    ),
-    mr_選擇_2 = haven::labelled(
-      sample(c(0,1), n, replace=TRUE),
-      label="選擇所有適用項目 / Select all that apply - 選項 2 / Option 2",
-      labels = c("未選擇 / Not selected" = 0,
-                 "已選擇 / Selected" = 1)
-    ),
-
-    # RTL language grid
-    grid_رضایت_1_1 = haven::labelled(
-      sample(1:5, n, replace=TRUE),
-      label="رضایت از خدمات - کیفیت - قبل / Service satisfaction - Quality - Before",
-      labels = c("خیلی کم / Very low" = 1,
-                 "کم / Low" = 2,
-                 "متوسط / Medium" = 3,
-                 "زیاد / High" = 4,
-                 "خیلی زیاد / Very high" = 5)
-    )
-  )
-
-  return(multilingual_test)
 }
 
 #' get_problematic_metadata_test_dat

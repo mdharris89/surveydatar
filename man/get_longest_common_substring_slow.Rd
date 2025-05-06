@@ -38,7 +38,7 @@ if increments == "random" will randomise number of characters to add each time, 
 
 \item{starting_string}{string to start with if lcs_mode is starting_string_priority or starting_string_only}
 
-\item{noisy}{boolean. if true, prints status messages.}
+\item{noisy}{logical. if true, prints status messages.}
 }
 \value{
 substring which represents the longest common starting substring found between string1 and string2, with an attribute lcs_distance representing the number of characters in the lcs

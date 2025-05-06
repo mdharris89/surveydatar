@@ -6,22 +6,22 @@
 \usage{
 check_seps(
   temp_dat,
-  var_name_seps_to_check = "_",
-  prefixes_to_check = c(": ", ". "),
-  statement_seps_to_check = " - ",
+  var_name_seps_to_check = NULL,
+  prefixes_to_check = NULL,
+  statement_seps_to_check = NULL,
   verbose = FALSE
 )
 }
 \arguments{
 \item{temp_dat}{a survey data frame}
 
-\item{var_name_seps_to_check}{a vector of strings of potential var name separators to check for}
+\item{var_name_seps_to_check}{a vector of strings of potential var name separators to check for. If NULL, checks for any punctuation \verb{[[:punct:]]}}
 
-\item{prefixes_to_check}{a vector of strings of potential prefix separators to check for}
+\item{prefixes_to_check}{a vector of strings of potential prefix separators to check for. If NULL, checks for \verb{[[:punct:]][[:space:]]}}
 
-\item{statement_seps_to_check}{a vector of strings of potential statement separators to check for}
+\item{statement_seps_to_check}{a vector of strings of potential statement separators to check for. If NULL, checks for \verb{[[:space:]][[:punct:]][[:space:]]}}
 
-\item{verbose}{boolean. if true, print issues found.}
+\item{verbose}{logical. if true, print issues found.}
 }
 \value{
 A list with components:
@@ -38,11 +38,11 @@ Analyses variable names and labels to identify separator patterns and check for 
 Reports on three types of separators:
 \itemize{
 \item Variable name separators (e.g., "_" in "Q1_1" in a varible name). Only a single unique sep is allowed across all variable names.
-\item Prefix separators (e.g., ":" in "Q1: Question text" in a variable label). A prefix is defined as any letter and, optionally, numbers, followed by punctuation, followed by whitespace.
-\item Statement separators (e.g., " - " in "Question text - Statement" in a variable label). Any prefixes are removed before checking for statement separators.
+\item Prefix separators (e.g., ":" in "Q1: Question text" in a variable label). A prefix is defined as any letter and, optionally, numbers, followed by punctuation, followed by whitespace. (It must be followed by whitespace.)
+\item Statement separators (e.g., " - " in "Question text - Statement" in a variable label). Any prefixes are removed before checking for statement separators. A statement separate is any punctuation surrounded by whitespace.
 }
 }
 \examples{
-temp_dat <- get_big_test_temp_dat_with_prefixes()
+temp_dat <- get_big_test_dat_with_prefixes()
 check_seps(temp_dat)
 }

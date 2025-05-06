@@ -25,11 +25,13 @@ useful if e.g. manually editing alias in a questions_dict and want to apply that
 # Using a temp_dpdict
 temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
 questions_dict <- get_questions_dict(temp_dpdict)
-questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <- "newlabelledmultiordinal_a"
+questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <-
+"newlabelledmultiordinal_a"
 updated_dpdict <- update_aliases(temp_dpdict, questions_dict)
 # Using a survey_obj
 survey_obj <- create_survey_data(get_big_test_dat(n=10))
 questions_dict <- get_questions_dict(survey_obj)
-questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <- "newlabelledmultiordinal_a"
+questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <-
+"newlabelledmultiordinal_a"
 updated_survey_obj <- update_aliases(survey_obj, questions_dict)
 }

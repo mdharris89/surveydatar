@@ -37,6 +37,8 @@ gets a dataframe summarising seps found in the full_string, the substrings separ
 }
 \details{
 used by get_unique_suffixes
+
+note that sep_count_from_end/ sep_count_from_start is the count within that sep, not the count across all seps
 }
 \examples{
 get_affix_df("Q1: This is a variable - This is a statement")

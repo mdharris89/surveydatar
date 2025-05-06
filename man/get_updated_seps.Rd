@@ -23,6 +23,6 @@ updates separator patterns in a survey data file
 by default will update all seps to the most common seps
 }
 \examples{
-temp_dat <- get_big_test_temp_dat_with_prefixes()
+temp_dat <- get_big_test_dat_with_prefixes()
 get_updated_seps(temp_dat, check_seps(temp_dat))
 }

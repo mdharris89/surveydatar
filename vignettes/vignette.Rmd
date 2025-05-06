@@ -1,0 +1,319 @@
+---
+title: "Using the surveydatar package"
+author: "Matt Harris"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Using the surveydatar package}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Introduction
+
+This package provides a suite of tools designed to streamline the processing and management of complex survey data in R. Survey data often involves dealing with complex metadata and question structures. This package aims to simplify tasks such as:
+
+-   Viewing and understanding data structure
+-   Creating and enriching metadata dictionaries (`dpdict`)
+-   Standardizing separator patterns in names and labels
+-   Automatically grouping variables into logical questions
+-   Updating survey data based on metadata changes
+-   Validating the consistency of data and metadata
+
+The core of the package revolves around the `survey_data` object and the associated metadata dictionary (`dpdict`).
+
+## Core Concepts
+
+### The `survey_data` Object
+
+The central data structure in this package is the `survey_data` S3 object. It acts as a container, bundling the raw survey data (as a data frame, typically named `dat`) with its corresponding metadata dictionary (`dpdict`). This helps ensure that the data and its description always stay synchronized.
+
+You create a `survey_data` object using `create_survey_data()`.
+
+```{r create_survey_data_example, eval=FALSE}
+raw_data <- get_minimal_labelled_test_dat() # example data
+
+# Option 1: Create dpdict automatically
+survey_obj <- create_survey_data(raw_data)
+
+# Option 2: Provide an existing dpdict
+manual_dpdict <- create_dict(raw_data)
+# ... potentially modify manual_dpdict ...
+survey_obj_manual <- create_survey_data(raw_data, dpdict = manual_dpdict)
+
+# Check if an object is a survey_data object
+is.survey_data(survey_obj)
+
+# Validate the object's integrity
+validate_survey_data(survey_obj)
+```
+
+The package also provides methods for common data manipulation verbs (`filter`, `select`, `mutate`) and base R subsetting (`[`, `[[`) that work directly on `survey_data` objects, ensuring metadata consistency.
+
+### The Metadata Dictionary (`dpdict`)
+
+The `dpdict` (data processing dictionary) is a data frame where each row corresponds to a variable in the `dat` data frame. It stores crucial metadata, including:
+
+-   `variable_names`: The current name of the variable in `dat`.
+-   `variable_labels`: The descriptive label for the variable.
+-   `value_labels`: A list-column containing named vectors or lists defining value labels.
+-   `old_variable_names`, `old_variable_labels`, `old_value_labels`: Original metadata, useful for tracking changes.
+-   `question_group`: An identifier grouping variables belonging to the same survey question.
+-   `question_type`: Automatically inferred type (e.g., "numeric", "categorical", "multiresponse", "text").
+-   `question_alias`: A potentially user-defined, shorter alias for the question group.
+-   `question_description`: A descriptive label for the question group.
+-   `question_suffix`: The part of a variable label unique within its question group (e.g., the statement in a grid question).
+-   `alias_with_suffix`: Combines `question_alias` and `question_suffix` for unique variable identification.
+-   Other metadata like `variable_class`, checks for dichotomous/multiresponse variables, etc.
+
+## Getting Started & Viewing Metadata
+
+### Initial Data Exploration
+
+Once you have your survey data loaded (e.g., from SPSS, CSV), you can start exploring it.
+
+The `datamap()` function provides an SPSS-style variable view, summarizing key information for each variable as a row in a data frame.
+
+```{r datamap_example, eval=FALSE}
+raw_data <- get_basic_test_dat(100) # Example data
+
+# View the datamap directly (requires interactive session)
+datamap(raw_data)
+
+# Or return it as a dataframe
+dm <- datamap(raw_data, view_or_return = "return")
+print(head(dm))
+
+# If using a survey_data object, it includes more metadata
+survey_obj <- create_survey_data(raw_data)
+dm_survey <- datamap(survey_obj, view_or_return = "return")
+print(head(dm_survey))
+```
+
+`datamap()` shows variable names, labels, class, missing values, unique values, value labels, and the first few observed values.
+
+For `survey_data` objects, `datamap_questions()` provides a higher-level view, summarizing information by `question_group` instead of individual variables.
+
+```{r datamap_questions_example, eval=FALSE}
+survey_obj_big <- create_survey_data(get_big_test_dat(10)) # Example data
+dm_q <- datamap_questions(survey_obj_big)
+print(head(dm_q))
+```
+
+## Creating and Refining Metadata
+
+### Initial `dpdict` Creation
+
+You can create a basic `dpdict` to facilitate bulk updates using `create_dict()`. It captures the current variable names, labels, and value labels and provides columns for new versions.
+
+```{r create_dict_example, eval=FALSE}
+raw_data <- get_minimal_labelled_test_dat()
+basic_dpdict <- create_dict(raw_data)
+print(basic_dpdict)
+```
+
+To create a `dpdict` and immediately populate it with detailed metadata (like question groups, types, etc.), use `create_dict_with_metadata()`. This is often the most convenient starting point.
+
+```{r create_dict_with_metadata_example, eval=FALSE}
+raw_data_big <- get_big_test_dat(10)
+full_dpdict <- create_dict_with_metadata(raw_data_big)
+print(head(full_dpdict))
+
+survey_obj <- create_survey_data(raw_data_big, dpdict = full_dpdict)
+print(survey_obj)
+```
+
+### Handling Separators
+
+Survey data often uses separators (like `_`, `:`, `-`) in variable names and labels.
+
+-   `check_seps()`: Analyzes variable names and labels to detect separator patterns (variable name, prefix, statement separators) and reports inconsistencies.
+-   `get_updated_seps()`: Takes the analysis from `check_seps()` and generates standardized variable names and labels, typically using the most common separator found for each type.
+
+```{r check_seps_example, eval=FALSE}
+# Assume data with inconsistent separators
+data_with_seps <- get_big_test_dat_with_prefixes()
+
+# Check separators
+sep_analysis <- check_seps(data_with_seps)
+print(sep_analysis$separators)
+print(sep_analysis$consistency)
+print(sep_analysis$issues)
+
+# Generate standardized names/labels (using most common seps by default)
+standardized_metadata <- get_updated_seps(data_with_seps, sep_analysis)
+print(head(standardized_metadata[, c("old_variable_names", "new_variable_names", "old_variable_labels", "new_variable_labels")]))
+
+# Can also specify separators to use
+standardized_specific <- get_updated_seps(data_with_seps, sep_analysis,
+                                         seps_to_use = list(var_name_sep = "_", prefix_sep = ": ", statement_sep = " - "))
+```
+
+Standardizing separators is often a prerequisite for accurate question grouping. The `update_dict_with_metadata` function incorporates this standardization step.
+
+### Automatic Question Grouping (`update_dict_with_metadata` & `split_into_question_groups`)
+
+A key feature is the automatic grouping of variables into questions. This is primarily handled by `update_dict_with_metadata()`, which in turn calls `split_into_question_groups()`.
+
+**How it Works (`split_into_question_groups`):**
+
+1.  **Initialization:** If no `question_group` column exists in the `dpdict`, it's initialized based on the prefix before the `variable_name_sep` (e.g., "Q1" from "Q1_1"). A suffix (e.g., "\_a") is appended.
+2.  **Splitting Criteria:** The function iterates through variables within each initial group. It decides whether to assign a *new* suffix (e.g., "\_b", "\_c") based on several configurable criteria:
+    -   `splitbyclass` (Default: TRUE): New suffix if the variable's class changes.
+    -   `splitbynumlabelledvalues` (Default: TRUE): New suffix if the number of value labels changes.
+    -   `splitbynoncontiguous` (Default: TRUE): New suffix if variables with the same root name are not adjacent in the `dpdict`.
+    -   `splitbycommonlabel` (Default: TRUE): New suffix if the common part of the variable label changes.
+3.  **Common Label Identification:**
+    -   **Simple Mode (`findlongest = FALSE`, Default):** Assumes the common label is everything before the `statement_sep` (after optionally removing text before the `prefix_sep`). Fast but requires consistently structured labels.
+    -   **Advanced Mode (`findlongest = TRUE`):** Uses `get_longest_common_substring()` to find the actual longest common substring (LCS) among variable labels within a potential group. More robust but computationally more expensive. Configurable parameters like `min_lcs_length`, `min_common_strings`, and comparison modes (`variable_compare_mode`) fine-tune this process.
+4.  **Output:** Returns the `dpdict` with updated `question_group` identifiers and a `question_lcs` column storing the identified common label part.
+
+**Using `update_dict_with_metadata`:**
+
+This function orchestrates the metadata enrichment process.
+
+1.  **Input:** Takes a `survey_data` object or separate `dat` and `dpdict`.
+2.  **Standardize Separators:** Calls `get_updated_seps` internally.
+3.  **Split Groups:** Calls `split_into_question_groups` using specified or default configurations.
+4.  **Calculate Variable Metadata:** Determines `variable_class`, `singlevariablequestion`, `dichotomousvariable`, `has_value_labels`, and `multiresponse` status. (Note: Multiresponse detection checks if multiple variables within a group have non-zero/non-NA values.)
+5.  **Determine `questiontype`:** Assigns a type based on the calculated variable metadata (e.g., numeric, categorical, multiresponse, text, date). Issues warnings for variables that couldn't be typed.
+6.  **Generate Question Metadata:** Creates a temporary `questions_dict` (see below) to get default `question_alias` (from `question_group`) and `question_description` (from alias and `question_lcs`).
+7.  **Generate Unique Suffixes:** Calls `get_unique_suffixes` to determine the unique part of each variable within its group (e.g., "Statement 1", "Statement 2").
+8.  **Create `alias_with_suffix`:** Combines the `question_alias` and `question_suffix`.
+9.  **Output:** Returns the updated `survey_data` object or `dpdict` with comprehensive metadata.
+
+```{r update_dict_with_metadata_example, eval=FALSE}
+survey_obj <- create_survey_data(get_big_test_dat(n=10))
+
+# Update metadata with default settings
+survey_obj_updated <- update_dict_with_metadata(survey_obj)
+
+# Example with custom splitting configuration
+custom_config <- list(
+  splitbyclass = TRUE,
+  splitbycommonlabel = TRUE,
+  findlongest = FALSE # Use simpler label splitting
+)
+survey_obj_custom <- update_dict_with_metadata(survey_obj,
+                                              split_into_groups_config = custom_config,
+                                              noisy = 1) 
+
+print(head(survey_obj_updated$dpdict))
+```
+
+### Generating Aliases and Suffixes
+
+-   `create_questions_dict()`: Creates a data frame summarizing metadata at the *question* level (one row per unique `question_group`). It derives default aliases and descriptions. It can optionally allow interactive editing via `DataEditR`.
+-   `get_unique_suffixes()`: Determines the best suffix for each variable label within its question group to ensure uniqueness. It prioritizes finding suffixes based on consistent separator types and positions within the group's variable labels, falling back to variable names or simple numbering if needed. This relies on `get_affix_df()` which analyzes a string for potential prefixes or suffixes based on a prioritized list of separators.
+
+```{r questions_dict_suffix_example, eval=FALSE}
+temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
+
+# Create a summary dictionary for questions
+q_dict <- create_questions_dict(temp_dpdict = temp_dpdict, editfirst = FALSE)
+print(head(q_dict))
+
+# Get the unique suffixes (relies on columns created by update_dict_with_metadata)
+suffixes <- get_unique_suffixes(temp_dpdict)
+print(head(suffixes))
+
+# Add suffixes to the dpdict (update_dict_with_metadata does this automatically)
+# temp_dpdict$question_suffix <- suffixes
+# temp_dpdict$alias_with_suffix <- ifelse(is.na(temp_dpdict$question_suffix),
+#                                          temp_dpdict$question_alias,
+#                                          paste0(temp_dpdict$question_alias, " - ", temp_dpdict$question_suffix))
+```
+
+## Updating Data and Metadata
+
+-   `update_dat_from_dpdict()`: Applies changes recorded in a `dpdict` (new variable names, labels, value labels) back to the actual data frame (`dat`). It uses the `old_variable_names` column for matching.
+-   `update_aliases()`: Propagates changes made to `question_alias` in a `questions_dict` back into the main `dpdict`, updating `question_alias`, `question_description`, and `alias_with_suffix` accordingly.
+-   `split_grid_labels()`: A specialized function to restructure aliases and suffixes for grid questions (e.g., brand perception grids). It moves part of the suffix (e.g., the brand) into the alias, based on an example and the number of items before the pattern repeats.
+
+```{r update_examples, eval=FALSE}
+# Update data example
+survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+temp_dpdict <- survey_obj$dpdict
+temp_dpdict$variable_names[1] <- "new_var_name" # Change a name
+temp_dpdict$variable_labels[1] <- "New Variable Label" # Change a label
+survey_obj_updated_data <- update_dat_from_dpdict(survey_obj, temp_dpdict)
+print(names(survey_obj_updated_data$dat)[1])
+print(sjlabelled::get_label(survey_obj_updated_data$dat[[1]]))
+
+# Update aliases example
+temp_dpdict_meta <- create_dict_with_metadata(get_big_test_dat(n=10))
+q_dict <- get_questions_dict(temp_dpdict_meta)
+q_dict$question_alias[1] <- "NEW_ALIAS_Q1" # Manually change an alias
+temp_dpdict_updated_aliases <- update_aliases(temp_dpdict_meta, q_dict)
+print(head(temp_dpdict_updated_aliases[, c("question_group", "question_alias", "alias_with_suffix")]))
+
+# Split grid labels example
+temp_dpdict_grid <- create_dict_with_metadata(get_big_test_dat(n=10))
+# Assuming 'labelledmultiresponsegrid_a' is the alias and suffixes are like "Brand 1 - Statement 1", "Brand 1 - Statement 2", etc.
+# and "statement 1 " is the first part of the suffix after the stem to be moved,
+# and there are 2 statements per brand.
+temp_dpdict_split <- split_grid_labels(temp_dpdict_grid,
+                                      alias_to_split = "labelledmultiresponsegrid_a",
+                                      example_stem_to_add = "statement 1 ", # Stem part that identifies the repeating unit
+                                      count_before_repeat = 2,
+                                      sep = " - ")
+print(temp_dpdict_split[temp_dpdict_split$question_group == "labelledmultiresponsegrid_a", c("question_alias", "question_suffix", "alias_with_suffix")])
+
+```
+
+## Validation Functions
+
+Several functions help ensure the integrity and consistency of your data and metadata:
+
+-   `validate_dat_dpdict_alignment()`: Checks if `dat` and `dpdict` match in terms of variable count and if names/labels align. Can return warnings or stop execution.
+-   `validate_no_dpdict_duplicates()`: Checks for duplicate `variable_names`, `variable_labels`, or `alias_with_suffix` within the `dpdict`. Can ignore prefixes like "Q1: " when checking label uniqueness.
+-   `validate_variable_names()`: Checks if variable names conform to a specific pattern (start with letter, only letters/numbers/underscores, underscores must be followed by numbers).
+-   `validate_survey_data()`: A wrapper that performs multiple checks on a `survey_data` object.
+
+## Working with `survey_data` Objects
+
+The `survey_data` object integrates with `dplyr` verbs and base R subsetting:
+
+-   **`filter()`**: Subsets rows of `$dat` while keeping `$dpdict` intact.
+-   **`select()`**: Subsets columns of `$dat`, automatically updating `$dpdict` to match the selected columns and handling renames.
+-   **`mutate()`**: Adds or modifies columns in `$dat`. If new columns are added, it attempts to automatically add corresponding rows to `$dpdict` and populate their metadata using `update_dict_with_metadata`.
+-   **`[`**: Standard subsetting for rows and columns. Updates `$dpdict` when columns are subsetted.
+-   **`[[`**: Extracts a single column from `$dat`.
+
+```{r dplyr_examples, eval=FALSE}
+survey_obj <- create_survey_data(get_big_test_dat(n=20))
+survey_obj <- update_dict_with_metadata(survey_obj) # Ensure metadata is present
+
+# Filter rows
+filtered_obj <- filter(survey_obj, numeric > 5)
+print(nrow(filtered_obj$dat))
+
+# Select columns (and rename)
+selected_obj <- select(survey_obj, new_numeric_name = numeric, starts_with("labelled"))
+print(names(selected_obj$dat))
+print(selected_obj$dpdict$variable_names)
+
+# Mutate (add a new column)
+mutated_obj <- mutate(survey_obj, numeric_doubled = numeric * 2)
+print(names(mutated_obj$dat))
+# Check the dpdict for the new variable
+print(tail(mutated_obj$dpdict, 1))
+
+# Base R subsetting
+subset_obj_cols <- survey_obj[, c("numeric", "text")]
+print(names(subset_obj_cols$dat))
+
+numeric_vector <- survey_obj[["numeric"]]
+print(head(numeric_vector))
+```
+
+## Conclusion
+
+This package offers a structured approach to managing survey metadata in R. By combining data and metadata in the `survey_data` object and providing functions for automated metadata generation, standardization, and validation, it aims to make the process of preparing survey data for analysis more efficient and reliable. \`\`\`

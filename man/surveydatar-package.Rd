@@ -4,12 +4,12 @@
 \name{surveydatar-package}
 \alias{surveydatar}
 \alias{surveydatar-package}
-\title{surveydatar: Tools for data processing for survey data in a market research setting}
+\title{surveydatar: Tools for data processing survey data in a market research setting}
 \description{
-Aimed at covering the full data processing workflow for a typical market research project using survey data, from ingestion to basic formatting to the efficient creation of new variables.
+Functions to support the full data processing workflow for a typical market research project using survey data, from ingestion to basic formatting to the efficient creation of new variables.
 }
 \author{
-\strong{Maintainer}: First Last \email{first.last@example.com} (\href{https://orcid.org/YOUR-ORCID-ID}{ORCID})
+\strong{Maintainer}: Matt Harris \email{mdharris89@gmail.com}
 
 }
 \keyword{internal}

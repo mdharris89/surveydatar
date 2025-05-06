@@ -11,7 +11,7 @@ validate_dat_dpdict_alignment(temp_dat, temp_dpdict, warn_only = FALSE)
 
 \item{temp_dpdict}{'dpdict' to check for alignment with temp_dat}
 
-\item{warn_only}{boolean. if TRUE returns warnings instead of errors}
+\item{warn_only}{logical. if TRUE returns warnings instead of errors}
 }
 \value{
 (invisibly) TRUE if passes all checks, else warnings or errors

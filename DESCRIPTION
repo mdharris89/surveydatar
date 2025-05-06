@@ -1,16 +1,19 @@
 Package: surveydatar
-Title: Tools for data processing for survey data in a market research setting
+Title: Tools for data processing survey data in a market research setting
 Version: 0.0.0.9000
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: Aimed at covering the full data processing workflow for a typical market research project using survey data, from ingestion to basic formatting to the efficient creation of new variables.
+    person("Matt", "Harris", email = "mdharris89@gmail.com", role = c("aut", "cre"))
+Maintainer: Matt Harris <mdharris89@gmail.com>
+Description: Functions to support the full data processing workflow for a typical market research project using survey data, from ingestion to basic formatting to the efficient creation of new variables.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.1
+VignetteBuilder: knitr
 Suggests: 
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
 Config/testthat/edition: 3
 Imports: 
     dplyr,
@@ -22,4 +25,5 @@ Imports:
     stats,
     stringdist,
     stringr,
-    DataEditR
+    DataEditR,
+    tidyselect

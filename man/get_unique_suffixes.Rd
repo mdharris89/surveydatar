@@ -15,7 +15,7 @@ get_unique_suffixes(
 )
 }
 \arguments{
-\item{temp_dpdict}{a dpdict with cols for uniqueid (e.g. variable name), variable labels and question groups}
+\item{temp_dpdict}{a dpdict with cols for uniqueid (e.g. variable name), variable labels and question groups. Values in the \code{var_with_strings} column should be unique.}
 
 \item{var_with_unique_id}{name of column to use as unique id (typically variable name)}
 
@@ -30,13 +30,16 @@ get_unique_suffixes(
 \item{noisy}{either 0, 1, or 2. 1 and 2 provide increasingly noisy updates as the function works.}
 }
 \value{
-a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
+A character vector with the same length and order as \code{temp_dpdict},
+containing the determined suffix for each variable. Returns NA for
+single-variable groups where no suffix was identified by separators.
+Returns sequential numbers if no other unique suffix pattern was found
 }
 \description{
 takes a dpdict and returns a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
 }
 \details{
-wants to find suffix based on a common same sep type and, if allow_unmatched_sep_count_from_end == FALSE, common position of sep relative to the end
+wants to find suffix based on a common sep type and, if allow_unmatched_sep_count_from_end == FALSE, common position of sep relative to the end
 if can't find a suffix in labels, looks in variable name
 and if can't find a unique suffix anywhere else, just assigns successive numbers
 }

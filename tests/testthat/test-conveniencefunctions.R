@@ -42,73 +42,69 @@ test_that("any_grepl works", {
 test_that("any_gsub works", {
 
   # Error cases
-  expect_error(any_gsub(1:3, "ANIMAL", c("big cat", "small dog", "red fish")), "must be character vectors")
-  expect_error(any_gsub(c("cat", "dog"), "ANIMAL", 1:3), "must be character vectors")
-  expect_error(any_gsub(character(0), "ANIMAL", c("cat", "dog")), "must have length > 0")
-  expect_error(any_gsub(c("cat", "dog"), "ANIMAL", character(0)), "must have length > 0")
+  expect_error(any_gsub(1:3, "ANIMAL", c("big cat", "small dog", "red fish"), trimws_at_end = TRUE), "must be character vectors")
+  expect_error(any_gsub(c("cat", "dog"), "ANIMAL", 1:3, trimws_at_end = TRUE), "must be character vectors")
+  expect_error(any_gsub(character(0), "ANIMAL", c("cat", "dog"), trimws_at_end = TRUE), "must have length > 0")
+  expect_error(any_gsub(c("cat", "dog"), "ANIMAL", character(0), trimws_at_end = TRUE), "must have length > 0")
 
   # Simple match
-  expect_equal(any_gsub(c("cat"), "", c("cat dog", "hat dog")), c("dog", "hat dog"))
+  expect_equal(any_gsub(c("cat"), "", c("cat dog", "hat dog"), trimws_at_end = TRUE), c("dog", "hat dog"))
 
   # Multiple patterns, multiple found
-  expect_equal(any_gsub(c("cat", "shoe"), "", c("shoe dog", "hat dog", "cat dog")), c("dog", "hat dog", "dog"))
+  expect_equal(any_gsub(c("cat", "shoe"), "", c("shoe dog", "hat dog", "cat dog"), trimws_at_end = TRUE), c("dog", "hat dog", "dog"))
 
   # Test with multiple patterns, none found
-  expect_equal(any_gsub(c("apple", "pear"), "", c("cat dog", "hat dog")), c("cat dog", "hat dog"))
+  expect_equal(any_gsub(c("apple", "pear"), "", c("cat dog", "hat dog"), trimws_at_end = TRUE), c("cat dog", "hat dog"))
 
   # Overlapping patterns
-  expect_equal(any_gsub(c("at", "dog"), "", c("shoe dog", "hat dog", "cat dog")), c("shoe", "h", "c"))
+  expect_equal(any_gsub(c("at", "dog"), "", c("shoe dog", "hat dog", "cat dog"), trimws_at_end = TRUE), c("shoe", "h", "c"))
 
   # NA handling
   expect_equal(
-    any_gsub(c("cat", NA, "dog"), "REPLACED", c("big cat", NA, "small dog", "red fish", NA)),
+    any_gsub(c("cat", NA, "dog"), "REPLACED", c("big cat", NA, "small dog", "red fish", NA), trimws_at_end = TRUE),
     c("big REPLACED", "REPLACED", "small REPLACED", "red fish", "REPLACED")
   )
 
   # Empty string handling
   expect_equal(
-    any_gsub(c("cat", "", "dog"), "REPLACED", c("big cat", "", "small dog", "red fish", "")),
+    any_gsub(c("cat", "", "dog"), "REPLACED", c("big cat", "", "small dog", "red fish", ""), trimws_at_end = TRUE),
     c("big REPLACED", "REPLACED", "small REPLACED", "red fish", "REPLACED")
   )
 
   # Only NA in pattern_vector
   expect_equal(
-    any_gsub(NA_character_, "REPLACED", c("big cat", NA, "small dog", "red fish", NA)),
+    any_gsub(NA_character_, "REPLACED", c("big cat", NA, "small dog", "red fish", NA), trimws_at_end = TRUE),
     c("big cat", "REPLACED", "small dog", "red fish", "REPLACED")
   )
 
   # Only empty string in pattern_vector
   expect_equal(
-    any_gsub("", "REPLACED", c("big cat", "", "small dog", "red fish", "")),
+    any_gsub("", "REPLACED", c("big cat", "", "small dog", "red fish", ""), trimws_at_end = TRUE),
     c("big cat", "REPLACED", "small dog", "red fish", "REPLACED")
   )
 
   # Complex case with mix of NAs, empty strings, and regular patterns
   expect_equal(
-    any_gsub(c("cat", NA, "", "fish"), "REPLACED", c("big cat", NA, "", "small dog", "red fish", NA, "")),
+    any_gsub(c("cat", NA, "", "fish"), "REPLACED", c("big cat", NA, "", "small dog", "red fish", NA, ""), trimws_at_end = TRUE),
     c("big REPLACED", "REPLACED", "REPLACED", "small dog", "red REPLACED", "REPLACED", "REPLACED")
   )
 
-  # Trim option
-  expect_equal(
-    any_gsub(c("cat", "dog"), "ANIMAL ", c("big cat ", "small dog", "red fish "), trimws_at_end = TRUE),
-    c("big ANIMAL", "small ANIMAL", "red fish")
-  )
+  # Trim option false
   expect_equal(
     any_gsub(c("cat", "dog"), "ANIMAL ", c("big cat ", "small dog", "red fish "), trimws_at_end = FALSE),
     c("big ANIMAL  ", "small ANIMAL ", "red fish ")
   )
 
   # Case sensitivity
-  expect_equal(any_gsub(c("CAT"), "replacement", c("cat", "Cat", "CAT"), ignore.case = FALSE), c("cat", "Cat", "replacement"))
-  expect_equal(any_gsub(c("CAT"), "replacement", c("cat", "Cat", "CAT"), ignore.case = TRUE), c("replacement", "replacement", "replacement"))
+  expect_equal(any_gsub(c("CAT"), "replacement", c("cat", "Cat", "CAT"), trimws_at_end = TRUE, ignore.case = FALSE), c("cat", "Cat", "replacement"))
+  expect_equal(any_gsub(c("CAT"), "replacement", c("cat", "Cat", "CAT"), trimws_at_end = TRUE, ignore.case = TRUE), c("replacement", "replacement", "replacement"))
 
   # Special characters
-  expect_equal(any_gsub(c("^cat"), "", c("cat", "1 cat", "cattle")), c("", "1 cat", "tle"))
-  expect_equal(any_gsub(c("^cat"), "", c("cat", "1 cat", "cattle"), fixed = TRUE), c("cat", "1 cat", "cattle"))
+  expect_equal(any_gsub(c("^cat"), "", c("cat", "1 cat", "cattle"), trimws_at_end = TRUE), c("", "1 cat", "tle"))
+  expect_equal(any_gsub(c("^cat"), "", c("cat", "1 cat", "cattle"), trimws_at_end = TRUE, fixed = TRUE), c("cat", "1 cat", "cattle"))
 
   # perl
-  expect_equal(any_gsub("foo(?=bar)", "", c("foobar", "foobaz", "barfoo"), perl = TRUE), c("bar", "foobaz", "barfoo"))
+  expect_equal(any_gsub("foo(?=bar)", "", c("foobar", "foobaz", "barfoo"), trimws_at_end = TRUE, perl = TRUE), c("bar", "foobaz", "barfoo"))
 })
 
 test_that("strsplit_keep_delim works", {
@@ -159,7 +155,11 @@ test_that("insert_into_str works", {
   expect_equal(insert_into_str("testing... yes this is a test", "new ", "test"), "new testing... yes this is a new test")
 
   # No string_to_find given
-  expect_equal(insert_into_str("this is a", " test", "elephant"), "this is a test")
+  expect_warning(
+    result <- insert_into_str("this is a", " test", "elephant"),
+    "'elephant' not found in 'this is a'. Inserting at end instead."
+    )
+  expect_equal(result, "this is a test")
 
   # more instances_to_insert_at than instances found, strict_mode == FALSE
   expect_equal(insert_into_str("this is a test, a good test, not a bad test", "new ", "test", strict_mode = FALSE, instances_to_insert_at = c(1, 3, 4)), "this is a new test, a good test, not a bad new test")
@@ -184,9 +184,13 @@ test_that("gsub_by_dict works", {
                             "I have an apple and a carrot."))
 
   # duplicate keys in data frame
-  expect_equal(gsub_by_dict(data.frame(find = c("an apple", "an apple"), replace = c("a fruit", "a vegetable")),
+  expect_warning(
+    result <- gsub_by_dict(data.frame(find = c("an apple", "an apple"), replace = c("a fruit", "a vegetable")),
                             "I have an apple and a carrot.",
-                            "find", "replace"), "I have a fruit and a carrot.")
+                            "find", "replace"),
+               "Found duplicate values in reference_dict\\[\\[find_column_name\\]\\]. will only use first match"
+    )
+  expect_equal(result, "I have a fruit and a carrot.")
 
   # duplicate keys in data frame
   expect_equal(gsub_by_dict(list("an apple" = "a fruit", "a carrot" = "a vegetable"),
@@ -257,7 +261,11 @@ test_that("closest_matching_string works", {
   expect_equal(closest_matching_string(c("ant", "dog", "cat"), "dug"), "dog")
 
   # multiple matches
-  expect_equal(closest_matching_string(c("ant", "dog", "cat"), "ruf"), "ant")
+  expect_warning(
+    result <- closest_matching_string(c("ant", "dog", "cat"), "ruf"),
+                           "Multiple strings with the same distance found. Returning the first instance."
+  )
+  expect_equal(result, "ant")
 })
 
 test_that("labelled_map_dfc works", {

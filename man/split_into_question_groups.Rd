@@ -8,63 +8,47 @@ split_into_question_groups(
   temp_dpdict,
   temp_dat,
   variables_to_process = NULL,
-  variable_name_sep = "_",
+  seps_to_use = list(),
   ignorelabelbeforeprefix = TRUE,
-  prefix_sep = ": ",
-  splitbyclass = TRUE,
-  splitbynumlabelledvalues = TRUE,
-  splitbynoncontiguous = TRUE,
-  splitbycommonlabel = TRUE,
-  labelsep = " - ",
-  findlongest = FALSE,
-  min_lcs_length = 10,
-  min_common_strings = 5,
-  consistent_consecutive_mode = FALSE,
-  variable_compare_mode = "reduced",
-  consecutive_range = 10,
+  config = list(),
   noisy = 0
 )
 }
 \arguments{
-\item{temp_dpdict}{dpdict for temp_dat. must have question_group variable.}
+\item{temp_dpdict}{A dpdict data frame. Must contain 'variable_names' and
+'variable_labels'. A 'question_group' column will be created if it
+doesn't exist (based on variable names before \code{variable_name_sep})}
 
-\item{temp_dat}{survey data dataframe}
+\item{temp_dat}{The corresponding survey data dataframe.}
 
-\item{variables_to_process}{boolean of length nrow(dpdict). will attempt to split all variables for which variables_to_process == TRUE.
-(if only some variables in a question group identified as to process by the boolean, will update to include all variables in that groupi)}
+\item{variables_to_process}{Optional logical vector (length = nrow(temp_dpdict))
+indicating which variables to process. If NULL (default), all are processed.
+Note: If any variable in a group is selected, all variables in that
+original group will be processed}
 
-\item{variable_name_sep}{"\emph{" by default. string that separates each variable within a common question, e.g. if Q1_1, Q1_2 "}" is the correct variable_name_sep.}
+\item{seps_to_use}{List specifying separators used for parsing names/labels.
+Defaults are used if not provided. See \code{\link{check_seps}}. Key elements:
+'variable_name_sep', 'prefix_sep', 'statement_sep'.}
 
-\item{ignorelabelbeforeprefix}{boolean. if true, removes substring before prefix_sep before working with variable labels}
+\item{ignorelabelbeforeprefix}{Logical. If TRUE, removes substring before prefix_sep before working with variable labels.}
 
-\item{prefix_sep}{string. if ignorelabelbeforeprefix == TRUE, the substring before prefix_sep will be removed before working with variable labels .}
+\item{config}{Optional list with configuration settings. Can include:
+- splitbyclass: Logical. If TRUE, every successive new class is given a new unique suffix.
+- splitbynumlabelledvalues: Logical. If TRUE, each variable with a different number of labelled values gets a new suffix.
+- splitbynoncontiguous: Logical. If TRUE, variables with the same variable name prefix not located adjacent are given a new suffix.
+- splitbycommonlabel: Logical. If TRUE, each variable with a different longest common string gets a new suffix.
+- findlongest: Logical. If TRUE, finds longest common substring (computationally expensive).
+- min_lcs_length: Integer. Any potential lcs shorter than this is disqualified.
+- min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables.
+- consistent_consecutive_mode: Logical. If TRUE, look for strings common with consecutive variables.
+- consecutive_range: Integer. For variable_compare_mode == "reduced", only looks at variables this many before and after.
+- variable_compare_mode: String. Either "complete" or "reduced" - affects how variables are compared.}
 
-\item{splitbyclass}{boolean. if true, every successive new class is given a new unique suffix}
-
-\item{splitbynumlabelledvalues}{boolean. if true, each variable with a different number of labelled values is given a new unique suffix (because we would expect multiple variables in the same question to have the same number of options, e.g. battery of likert scales)}
-
-\item{splitbynoncontiguous}{boolean. if true, variables with the same variable name prefix that are not located adjacent to each other are given a new unique suffix}
-
-\item{splitbycommonlabel}{boolean. if true, each variable for which the longest common string within the variable label for that variable does not match the longest common string within the question group as a whole, is given a new suffix}
-
-\item{labelsep}{string. setting for when findlongest == FALSE, in which case uses the substring in the variable name prior to labelsep as commonlabel.}
-
-\item{findlongest}{boolean. if true, applies splitbycommonlabel by looking for the longest common substring. (this is computationally expensive.) if false, takes substring preceding labelsep as the commonlabel.}
-
-\item{min_lcs_length}{integer. any potential lcs shorter than min_lcs_length is disqualified.}
-
-\item{min_common_strings}{integer. setting for when findlongest == TRUE. looks for substrings common to at least min_common_strings other variables in the question group and will take from this subset the longest string.}
-
-\item{consistent_consecutive_mode}{boolean. if true, will look for strings common with consecutive variables within consecutive_range. this is intended to speed up finding the best lcs. but it's not always useful as it can be too sensitive to spurious lcs. not used by default. instead, if consistent_consecutive_mode == FALSE, it will look for strings common to at least min_common_strings other variables in the question group.}
-
-\item{variable_compare_mode}{either "complete" or "reduced'. setting for when findlongest == TRUE. "complete" is computationally cheaper. if "complete", compares within the entire question group to find lcs for each statement. if "reduced", only looks at the variables before and after the variable in question, according to consecutive_range (a parameter in split_into_question_groups)}
-
-\item{consecutive_range}{integer. if variable_compare_mode == "reduced", only looks at the variables consecutive_range before and after the variable in question.}
-
-\item{noisy}{numeric. noisy == 0 by default. if == 1, 2, 3 or 4 will do varying levels of printing for debugging and monitoring}
+\item{noisy}{Integer 0-4 controlling verbosity level.}
 }
 \value{
-temp_dpdict with question groups split according to the function settings
+The input \code{temp_dpdict} data frame with updated 'question_group'
+and 'question_lcs' columns
 }
 \description{
 attempts to find a $question_group within a temp_dpdict with a unique suffix that groups variables into sensible questions
@@ -76,7 +60,26 @@ will also provide a column question_lcs which is the longest common string found
 
 note: if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
 
-requires letters_702
+Iterates through initial question groups and applies splitting rules
+based on the \code{config} settings. A new group (with a new suffix like "_b")
+is started whenever a condition is met for consecutive variables within the
+original group.
+
+Default \code{config} settings:
+\itemize{
+\item \code{splitbyclass = TRUE}: Split if variable class changes.
+\item \code{splitbynumlabelledvalues = TRUE}: Split if the number of defined value labels changes.
+\item \code{splitbynoncontiguous = TRUE}: Split if variables with the same original prefix are not adjacent in the \code{dpdict}.
+\item \code{splitbycommonlabel = TRUE}: Split if the common part of the variable label changes. How the "common part" is determined depends on \code{findlongest}.
+\item \code{findlongest = FALSE}: If FALSE (default) and \code{splitbycommonlabel=TRUE}, the common label is assumed to be the text before \code{statement_sep}. If TRUE, the function actively searches for the Longest Common Substring (LCS) between labels, which is much slower.
+\item \code{min_lcs_length = 10}: Minimum length for a string to be considered a potential LCS when \code{findlongest=TRUE}.
+\item \code{min_common_strings = 5}: When \code{findlongest=TRUE}, requires an LCS candidate to be common to at least this many variables in the group to be prioritized.
+\item \code{consistent_consecutive_mode = FALSE}: Alternative LCS finding logic (experimental/unused by default).
+\item \code{consecutive_range = 10}: Range for comparing variables in 'reduced' mode.
+\item \code{variable_compare_mode = "reduced"}: How variables are compared when \code{findlongest=TRUE} ("complete" or "reduced").
+}
+Finding the LCS (\code{findlongest = TRUE}) uses \code{\link{get_longest_common_substring}}.
+Note: If the last variable in a group retains its full label as \code{question_lcs}, \code{min_common_strings} might be set too high.
 }
 \examples{
 temp_dat <- get_big_test_dat(n=10)
@@ -84,15 +87,18 @@ temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
 temp_dpdict <- temp_dpdict[, !(names(temp_dpdict) \%in\% c("old_variable_names",
                                                    "old_variable_labels",
                                                    "old_value_labels"))]
-temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat, variable_name_sep = "_",
-                                       ignorelabelbeforeprefix = TRUE, prefix_sep = ": ",
-                                       splitbyclass = TRUE, splitbynumlabelledvalues = TRUE,
-                                       splitbynoncontiguous = TRUE,
-                                       splitbycommonlabel = TRUE, labelsep = " - ",
-                                       findlongest = TRUE, min_lcs_length = 10,
-                                       min_common_strings = 5,
-                                       consistent_consecutive_mode = FALSE,
-                                       consecutive_range = 10,
-                                       variable_compare_mode = "reduced",
-                                       noisy = 0)
+# basic usage
+temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
+                                         seps_to_use = list(variable_name_sep = "_",
+                                         prefix_sep = ": ", statement_sep = " - "))
+
+# usage with custom configuration
+config <- list(
+  splitbyclass = TRUE,
+  splitbycommonlabel = TRUE
+)
+temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
+                                         seps_to_use = list(variable_name_sep = "_",
+                                         prefix_sep = ": ", statement_sep = " - "),
+                                         config = config)
 }

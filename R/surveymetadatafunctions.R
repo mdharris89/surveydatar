@@ -1,7 +1,9 @@
 #' @import rlang
+#' @importFrom dplyr filter select mutate
+#' @importFrom tidyselect eval_select
 NULL
 
-##### FILE DESCRIPTION: various functions for creating, manipulating and viewing survey metadata + defines survey_data object #####
+##### FILE DESCRIPTION: various functions for creating, manipulating and viewing survey metadata #####
 # includes the following functions (function arguments not shown here):
 #
 # functions for viewing metadata:
@@ -13,7 +15,7 @@ NULL
 # create_dict_with_metadata() - creates a dpdict with full metadata
 # update_dict_with_metadata() - adds metadata to an existing dpdict
 # split_into_question_groups() - attempts to find sensible groupings of variables into question_groups
-# get_longest_common_substring() - finds lcs from 2 strings. (there is also get_longest_common_substring_slow, an old, 3x slow implementation.)
+# get_longest_common_substring() - finds lcs from 2 strings. (there is also get_longest_common_substring_slow, an old, 3x slower implementation.)
 # create_questions_dict() - creates a questions_dict, that is, a dataframe with metadata for each unique question in a dpdict
 # get_affix_df() - gets candidate prefixes or suffixes, with information on their seps and sep locations
 # get_unique_suffixes() - makes a best guess at suffixes to add to each variable's question_group to make it unique
@@ -41,7 +43,6 @@ NULL
 #' @param view_or_return "view" to call View, or "return" to return the summary as a dataframe
 #'
 #' @return Calls View by default, or returns the summary dataframe if view_or_return is "return"
-#' @importFrom utils View
 #' @export
 #'
 #' @examples
@@ -69,7 +70,7 @@ datamap.survey_data <- function(x, view_or_return = "view") {
                        "value labels", "first values", "first unique values")]
 
   if (view_or_return == "view") {
-    View(result, paste0("datamap ", deparse(substitute(x))))
+    utils::View(result, paste0("datamap ", deparse(substitute(x))))
   } else {
     return(result)
   }
@@ -87,7 +88,10 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
 
   out <- dplyr::tibble(
     `variable` = names(temp_dat),
-    `variable label` = vapply(temp_dat, function(x) attr(x, "label", exact = TRUE), FUN.VALUE = character(1), USE.NAMES = FALSE),
+    `variable label` = vapply(temp_dat, function(x) {
+      label <- attr(x, "label", exact = TRUE)
+      ifelse(is.null(label), "", label)
+    }, FUN.VALUE = character(1), USE.NAMES = FALSE),
     `class` = vapply(temp_dat, function(x) paste(class(x), collapse = ", "), FUN.VALUE = character(1), USE.NAMES = FALSE),
     `n missing` = vapply(temp_dat, function(x) sum(is.na(x)), FUN.VALUE = integer(1), USE.NAMES = FALSE),
     `n unique` = vapply(temp_dat, function(x) length(unique(x)), FUN.VALUE = integer(1), USE.NAMES = FALSE),
@@ -97,7 +101,7 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
   )
 
   if (view_or_return == "view") {
-    View(out, paste0("datamap ", deparse(substitute(temp_dat))))
+    utils::View(out, paste0("datamap ", deparse(substitute(temp_dat))))
     return(invisible(out))
   } else {
     return(out)
@@ -164,6 +168,8 @@ datamap_questions <- function(survey_obj){
 #'
 #' creates a tibble to use as a dictionary to easily update variable names and labels
 #'
+#' note: uses sjlabelled to get value
+#'
 #' @param temp_dat a dataframe, assumed to be survey data
 #' @param prefill if TRUE (the default), columns variable_names/variable_labels/value_labels will be populated with values from 'old' versions. if FALSE, will leave as NA.
 #'
@@ -175,11 +181,16 @@ datamap_questions <- function(survey_obj){
 #'
 create_dict <- function(temp_dat, prefill = TRUE){
 
-  stopifnot("temp_dat must be a dataframe" = is.data.frame(temp_dat))
+  ### validation
+  stopifnot("temp_dat must be a dataframe with more than zero columns" = (is.data.frame(temp_dat) && ncol(temp_dat) > 0))
+
+  if (!is.logical(prefill) || length(prefill) != 1) {
+    stop("`prefill` must be a single logical value (TRUE/FALSE).")
+  }
 
   temp_dpdict <- dplyr::tibble("old_variable_names" = names(temp_dat),
                       "old_variable_labels" = vapply(temp_dat, function(x) sjlabelled::get_label(x, def.value = NA_character_), FUN.VALUE = character(1), USE.NAMES = FALSE), # set def.value to return NA instead of NULL if no label found
-                      "old_value_labels" = lapply(temp_dat, function(x) sjlabelled::get_labels(x, values = "as.name")),
+                      "old_value_labels" = lapply(temp_dat, function(x) sjlabelled::get_labels(x, attr.only = TRUE, values = "as.name")),
                       "variable_names" = NA,
                       "variable_labels" = NA,
                       "value_labels" = NA)
@@ -195,65 +206,437 @@ create_dict <- function(temp_dat, prefill = TRUE){
 }
 
 
+#' check_seps
+#'
+#' Checks separator patterns in a survey data file
+#'
+#' Analyses variable names and labels to identify separator patterns and check for consistency.
+#' Reports on three types of separators:
+#' - Variable name separators (e.g., "_" in "Q1_1" in a varible name). Only a single unique sep is allowed across all variable names.
+#' - Prefix separators (e.g., ":" in "Q1: Question text" in a variable label). A prefix is defined as any letter and, optionally, numbers, followed by punctuation, followed by whitespace. (It must be followed by whitespace.)
+#' - Statement separators (e.g., " - " in "Question text - Statement" in a variable label). Any prefixes are removed before checking for statement separators. A statement separate is any punctuation surrounded by whitespace.
+#'
+#' @param temp_dat a survey data frame
+#' @param var_name_seps_to_check a vector of strings of potential var name separators to check for. If NULL, checks for any punctuation `[[:punct:]]`
+#' @param prefixes_to_check a vector of strings of potential prefix separators to check for. If NULL, checks for `[[:punct:]][[:space:]]`
+#' @param statement_seps_to_check a vector of strings of potential statement separators to check for. If NULL, checks for `[[:space:]][[:punct:]][[:space:]]`
+#' @param verbose logical. if true, print issues found.
+#'
+#'
+#' @return A list with components:
+#'   \item{separators}{Named character vector of detected separators}
+#'   \item{consistency}{Named logical vector indicating if each separator type is consistent}
+#'   \item{issues}{Character vector of specific inconsistencies found}
+#'   \item{examples}{List of example variable names/labels for each pattern}
+#'
+#' @export
+#'
+#' @examples
+#' temp_dat <- get_big_test_dat_with_prefixes()
+#' check_seps(temp_dat)
+check_seps <- function(temp_dat,
+                             var_name_seps_to_check = NULL,
+                             prefixes_to_check = NULL,
+                             statement_seps_to_check = NULL,
+                       verbose = FALSE) {
+
+  ### vaidation
+  if (!is.data.frame(temp_dat)) {
+    stop("Input must be a data frame")
+  }
+  if (!is.null(var_name_seps_to_check) && !is.character(var_name_seps_to_check)) {
+    stop("`var_name_seps_to_check` must be NULL or a character vector.")
+  }
+  if (!is.null(prefixes_to_check) && !is.character(prefixes_to_check)) {
+    stop("`prefixes_to_check` must be NULL or a character vector.")
+  }
+  if (!is.null(statement_seps_to_check) && !is.character(statement_seps_to_check)) {
+    stop("`statement_seps_to_check` must be NULL or a character vector.")
+  }
+  if (!is.logical(verbose) || length(verbose) != 1) {
+    stop("`verbose` must be a single logical value (TRUE/FALSE).")
+  }
+
+  # initialize results
+  results <- list(
+    separators = character(),
+    consistency = logical(),
+    counts = list(),
+    issues = character(),
+    examples = list()
+  )
+
+  # get variable names and labels
+  var_names <- names(temp_dat)
+  var_labels <- sapply(temp_dat, function(x) attr(x, "label", exact = TRUE))
+
+  # helper function that looks for specified seps at the end of a given regex pattern
+  check_seps_from_regex <- function(vector_of_strings, regex_pattern = "^[A-Za-z]+[-_.,0-9A-Za-z]*[A-Za-z0-9]", seps_to_check = NULL) {
+
+    sep_regex <- paste0(regex_pattern, seps_to_check)
+
+    # find which strings have recognisable prefixes
+    has_sep <- grepl(sep_regex, vector_of_strings)
+
+    # if none, return early
+    if(!any(has_sep)) {
+      return(list(
+        separators = character(0),
+        consistent = TRUE,
+        count = NA,
+        example = NA_character_))
+    }
+
+    # find sep for each string
+    match_starts <- regexpr(sep_regex, vector_of_strings) # start position of sep_regex match
+    match_ends <- match_starts + attr(match_starts, "match.length") - 1 # end position of sep_regex match
+    sep_portions <- mapply(substr, vector_of_strings, match_starts, match_ends)
+    # For each string, identify which separator from seps_to_check is present
+    ending_seps <- sapply(sep_portions, function(portion) {
+      # Find the separator pattern within the portion
+      sep_match <- regexpr(seps_to_check, portion)
+      if(sep_match > 0) {
+        substr(portion,
+               sep_match,
+               sep_match + attr(sep_match, "match.length") - 1)
+      } else {
+        NA_character_
+      }
+    })
+
+    unique_ending_seps <- unique(stats::na.omit(ending_seps))
+
+    # check consistency - should only have one type of sep
+    consistent <- length(unique_ending_seps) == 1
+
+    # count occurances of each sep
+    sep_count <- stats::setNames(as.vector(table(ending_seps)), names(table(ending_seps)))
+
+    # find examples showing each separator
+    examples <- character(length(unique_ending_seps))
+    names(examples) <- unique_ending_seps
+    for(sep in unique_ending_seps) {
+      matches <- which(grepl(sep, vector_of_strings, fixed = TRUE))
+      if(length(matches) > 0) {
+        examples[sep] <- vector_of_strings[matches[1]]
+      } else {
+        examples[sep] <- NA_character_
+      }
+    }
+
+    list(
+      separators = unique_ending_seps,
+      consistent = consistent,
+      count = sep_count,
+      example = if(length(unique_ending_seps) > 0) examples else NA_character_
+    )
+  }
+
+  # get var name patterns
+  if(is.null(var_name_seps_to_check)){
+    var_name_seps_to_check <- "[[:punct:]]"
+  } else {
+    var_name_seps_to_check <- puncts_to_pattern(var_name_seps_to_check)
+  }
+  var_name_patterns <- check_seps_from_regex(var_names, regex_pattern = "^[A-Za-z]+[0-9A-Za-z]*", seps_to_check = var_name_seps_to_check)
+
+  # then get prefix patterns. we assume that whitespace follows any label prefix.
+  if(is.null(prefixes_to_check)){
+    prefixes_to_check <- "[[:punct:]][[:space:]]"
+  } else {
+    prefixes_to_check <- puncts_to_pattern(prefixes_to_check)
+  }
+  prefix_patterns <- check_seps_from_regex(var_labels, regex_pattern = "^[A-Za-z]+[-_.,0-9A-Za-z]*[A-Za-z0-9]", seps_to_check = prefixes_to_check)
+
+  # then look for statement separators. we remove any prefixes first.
+  labels_without_prefixes <- var_labels
+  if(length(prefix_patterns$separators) > 0) {
+    # for each prefix separator found, remove everything up to and including it
+    for(sep in prefix_patterns$separators) {
+      labels_without_prefixes <- sapply(labels_without_prefixes, function(x) {
+        if(grepl(sep, x, fixed = TRUE)) {
+          parts <- strsplit(x, sep, fixed = TRUE)[[1]]
+          trimws(paste(parts[-1], collapse = sep), which = "left")
+        } else {
+          x
+        }
+      })
+    }
+  }
+  if(is.null(statement_seps_to_check)){
+    statement_seps_to_check <- "[[:space:]][[:punct:]][[:space:]]"
+  } else {
+    statement_seps_to_check <- puncts_to_pattern(statement_seps_to_check)
+  }
+  statement_patterns <- check_seps_from_regex(labels_without_prefixes, regex_pattern = "^.*", seps_to_check = statement_seps_to_check)
+
+  # Compile results
+  results$separators <- c(
+    var_name_sep = if(length(var_name_patterns$separators) > 0) var_name_patterns$separators[1] else NA_character_,
+    prefix_sep = if(length(prefix_patterns$separators) > 0) prefix_patterns$separators[1] else NA_character_,
+    statement_sep = if(length(statement_patterns$separators) > 0) statement_patterns$separators[1] else NA_character_
+  )
+
+  results$consistency <- c(
+    var_name_sep = length(var_name_patterns$separators) <= 1 && var_name_patterns$consistent,
+    prefix_sep = length(prefix_patterns$separators) <= 1 && all(prefix_patterns$consistent),
+    statement_sep = length(statement_patterns$separators) <= 1 && all(statement_patterns$consistent)
+  )
+
+  results$counts <- list(
+    var_name_sep = var_name_patterns$count,
+    prefix_sep = prefix_patterns$count,
+    statement_sep = statement_patterns$count
+  )
+
+  results$examples <- list(
+    var_name_sep = var_name_patterns$example,
+    prefix_sep = prefix_patterns$example,
+    statement_sep = statement_patterns$example
+  )
+
+  # Add specific issues
+  # update these including inconsistent_vars which no longer exists
+  if (!results$consistency["var_name_sep"]) {
+    inconsistent_vars <- var_names[grepl(paste(var_name_patterns$separators, collapse = "|"), var_names)]
+    results$issues <- c(results$issues,
+                        sprintf("Inconsistent variable name separators. Examples: %s",
+                                paste(utils::head(inconsistent_vars, 3), collapse = ", ")))
+  }
+
+  if (!results$consistency["prefix_sep"]) {
+    results$issues <- c(results$issues,
+                        "Inconsistent prefix separators in variable labels")
+  }
+
+  if (!results$consistency["statement_sep"]) {
+    results$issues <- c(results$issues,
+                        "Inconsistent statement separators in variable labels")
+  }
+
+  # Print verbose output if requested
+  if (verbose && length(results$issues) > 0) {
+    message("Separator detection found the following issues:")
+    for (issue in results$issues) {
+      message("- ", issue)
+    }
+  }
+
+  return(results)
+}
+
+
+#' get_updated_seps
+#'
+#' updates separator patterns in a survey data file
+#'
+#' by default will update all seps to the most common seps
+#'
+#' @param temp_dat a survey data frame
+#' @param sep_analysis the result of check_seps(temp_dat)
+#' @param seps_to_use NULL by default, else provide a list with elements for 'var name', 'prefix', and 'statement' specifying the sep to use instead of the most common sep
+#'
+#' @return a data frame summarising old and new (updated) variable names and variable labels
+#' @export
+#'
+#' @examples
+#' temp_dat <- get_big_test_dat_with_prefixes()
+#' get_updated_seps(temp_dat, check_seps(temp_dat))
+get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
+  if (!is.data.frame(temp_dat)) {
+    stop("temp_dat must be a data frame")
+  }
+  if (!is.list(sep_analysis) || !all(c("separators", "counts") %in% names(sep_analysis))) {
+    stop("sep_analysis must be a list containing 'separators' and 'counts' elements")
+  }
+
+  if((!all(c("var_name_sep", "prefix_sep", "statement_sep") %in% names(seps_to_use))) && !is.null(seps_to_use)){
+    stop("seps_to_use must be a list containing elements for 'var_name_sep', 'prefix_sep', and 'statement_sep', or null")
+  }
+
+  # If no seps to use given, uses most common separators by default
+
+  if(is.null(seps_to_use)){
+    get_most_common <- function(counts) {
+      if (length(counts) == 0 || all(is.na(counts))) return(NA_character_)
+      names(which.max(counts))
+    }
+
+    seps_to_use <- list(
+      var_name_sep = get_most_common(sep_analysis$counts$var_name_sep),
+      prefix_sep = get_most_common(sep_analysis$counts$prefix_sep),
+      statement_sep = get_most_common(sep_analysis$counts$statement_sep)
+    )
+  }
+
+  # Initialize results dataframe
+  result <- data.frame(
+    old_variable_names = names(temp_dat),
+    var_name_seps_found = NA_character_,
+    old_variable_labels = vapply(temp_dat, function(x) {
+      label <- attr(x, "label", exact = TRUE)
+      if (is.null(label)) NA_character_ else label
+    }, character(1)),
+    prefix_seps_found = NA_character_,
+    statement_seps_found = NA_character_,
+    new_variable_names = names(temp_dat),
+    new_variable_labels = vapply(temp_dat, function(x) {
+      label <- attr(x, "label", exact = TRUE)
+      if (is.null(label)) NA_character_ else label
+    }, character(1)),
+    stringsAsFactors = FALSE
+  )
+
+  # helper function to update seps using result from check_seps
+  update_sep_from_regex <- function(x, seps_to_check, new_sep, regex_pattern = "^([A-Za-z]+[0-9A-Za-z]*)"){
+
+    if(is.null(seps_to_check)){
+      return(list(found_sep = NA_character_,
+                  new_string = x))
+    }
+
+    seps_to_check <- puncts_to_pattern(seps_to_check)
+    sep_regex <- paste0(regex_pattern, seps_to_check)
+
+    new_string <- x
+
+    if (grepl(sep_regex, x)) {
+      # find current sep position
+      match_starts <- regexpr(sep_regex, x) # start position of sep_regex match
+      match_ends <- match_starts + attr(match_starts, "match.length") - 1 # end position of sep_regex match
+      sep_portion <- substr(x, match_starts, match_ends)
+      matched_sep <- regexpr(seps_to_check, sep_portion)
+      # swap in new sep
+      if(matched_sep > 0) {
+        found_sep <- substr(sep_portion,
+                            matched_sep,
+                            matched_sep + attr(matched_sep, "match.length") - 1)
+        substr(new_string,
+               matched_sep,
+               matched_sep + attr(matched_sep, "match.length") - 1) <- new_sep
+      }
+    } else {
+      found_sep <- NA_character_
+    }
+    return(list(found_sep = found_sep,
+                new_string = new_string))
+  }
+
+  # var name seps
+  var_name_seps_result <- mapply(
+    function(x) update_sep_from_regex(x, names(sep_analysis$counts$var_name_sep), seps_to_use[["var_name_sep"]], regex_pattern = "^([A-Za-z]+[0-9A-Za-z]*)"),
+    result$old_variable_names,
+    SIMPLIFY = FALSE
+  )
+
+  result$var_name_seps_found <- sapply(var_name_seps_result, `[[`, "found_sep")
+  result$new_variable_names <- sapply(var_name_seps_result, `[[`, "new_string")
+
+  # prefix seps
+  prefix_seps_result <- mapply(
+    function(x) update_sep_from_regex(x, names(sep_analysis$counts$prefix_sep), seps_to_use[["prefix_sep"]], regex_pattern = "^[A-Za-z]+[-_.,0-9A-Za-z]*[A-Za-z0-9]"),
+    result$old_variable_labels,
+    SIMPLIFY = FALSE
+  )
+
+  result$prefix_seps_found <- sapply(prefix_seps_result, `[[`, "found_sep")
+  result$new_variable_labels <- sapply(prefix_seps_result, `[[`, "new_string")
+
+  # statement seps
+  if (!is.na(seps_to_use[["statement_sep"]])) {
+    pattern <- paste0(puncts_to_pattern(names(sep_analysis$counts$statement_sep)), collapse = "|")
+
+    result$statement_seps_found <- sapply(result$new_variable_labels, function(label) {
+      matched_sep <- regexpr(pattern, label)
+      substr(label, matched_sep, matched_sep + attr(matched_sep, "match.length")-1)
+    })
+
+    if (!is.na(seps_to_use[["prefix_sep"]]) && any(grepl(seps_to_use[["prefix_sep"]], result$new_variable_labels, fixed = TRUE))) {
+      result$new_variable_labels <- sapply(result$new_variable_labels, function(label) {
+        parts <- strsplit(label, seps_to_use[["prefix_sep"]], fixed = TRUE)[[1]]
+        remainder <- paste(parts[-1], collapse = seps_to_use[["prefix_sep"]])
+        remainder <- gsub(pattern, seps_to_use[["statement_sep"]], remainder)
+        paste0(parts[1], seps_to_use[["prefix_sep"]], remainder)
+      })
+    } else {
+      result$new_variable_labels <- gsub(pattern, seps_to_use[["statement_sep"]], result$new_variable_labels)
+    }
+  }
+
+  return(result)
+}
+
 #' create_dict_with_metadata
 #'
 #' a wrapper around update_dict_with_metadata to create a dpdict from dat with metadata.
 #'
-#' calls create_dict() first and removes unneeded variables, so you can create a dpdict with metadata from a dat with a single function
+#' calls create_dict() first then adds metadata, so you can create a dpdict with metadata from a dat with a single function
 #'
 #' @param temp_dat a survey data frame ('dat')
+#' @param noisy integer between 1 and 4, relating to how verbose to print.
 #'
 #' @return a dpdict with metadata
 #' @export
 #'
 #' @examples create_dict_with_metadata(get_big_test_dat(n=10))
-create_dict_with_metadata <- function(temp_dat){
+create_dict_with_metadata <- function(temp_dat, noisy = 0){
   # if no temp_dpdict provided, create one and initialize metadata columns
-  temp_dpdict <- create_dict(temp_dat, prefill = TRUE) # create fresh basic dpdict - but we don't need variables for 'old' names and labels
-  temp_dpdict <- temp_dpdict[, !(names(temp_dpdict) %in% c("old_variable_names", "old_variable_labels", "old_value_labels"))]
-  temp_dpdict <- update_dict_with_metadata(survey_obj = NULL, temp_dat, temp_dpdict)
+  temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
+  temp_dpdict <- update_dict_with_metadata(survey_obj = NULL, temp_dat, temp_dpdict, noisy = noisy)
   return(temp_dpdict)
 }
 
 
 #' update_dict_with_metadata
 #'
-#' given a dpdict, updates additional metadata fields for a requested set of variables given by variables_to_update (or if NULL, all variables)
-#'
-#' metadata included:
-#' variable-level metadata: question_group, variable class, and then checks for single variable question, dichotomous variable, variable with value labels, and multiresponse variable, which are in turn used to define questiontype
-#' question-level metadata: question_alias, question_description, question_suffix, alias_with_suffix, and question_folder
-#' question_alias is intended as a user-defined identifier for the question but takes the values of question_group by default
-#' question_description, question_suffix, and alias_with_suffix are useful when creating tables and visualisations
-#' requires: split_into_question_groups()
-#' most arguments are settings for split_into_question_groups()
-#'
-#' notes:
-#' - identifies categorical and multiresponse ('select all') variables by the presence of value labels. i.e. if a variable has class labelled but not value labels, it will not be given questiontype multiresponse, categorical or categorical array. (usually it will be a numeric or multinumeric)
-#' - findlongest=TRUE, with splitbycommonlabel=TRUE takes significantly longer (as it attempts to split by analysing strings). may not be necessary for some processing - if correct common label is always the string prior to label_sep.
-#' - variable labels should be hierarchically structured, with unique statements at the end. e.g. "Q1. Question text - Attitude statement - answer code"
-#' - checking for multiresponse variables can also takes a while but is required.
-#' - if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
+#' Given a dpdict, updates additional metadata fields for a requested set of variables given by variables_to_update, or if NULL, all variables.
 #'
 #' @param survey_obj a survey_data object, or NULL, in which case must provide temp_dat and temp_dpdict
 #' @param temp_dat survey data dataframe
 #' @param temp_dpdict a dpdict to update
-#' @param variables_to_update optionally specify only certain variables in the existing temp_dpdict to update
-#' @param variable_name_sep "_" by default. string that separates each variable within a common question, e.g. if Q1_1, Q1_2 "_" is the correct variable_name_sep.
-#' @param splitbyclass boolean. if true, every successive new class is given a new unique suffix
-#' @param splitbynumlabelledvalues boolean. if true, each variable with a different number of labelled values is given a new unique suffix (because we would expect multiple variables in the same question to have the same number of options, e.g. battery of likert scales)
-#' @param splitbynoncontiguous boolean. if true, variables with the same variable name prefix that are not located adjacent to each other are given a new unique suffix
-#' @param splitbycommonlabel boolean. if true, each variable for which the longest common string within the variable label for that variable does not match the longest common string within the question group as a whole, is given a new suffix
-#' @param findlongest boolean. if true, applies splitbycommonlabel by looking for the longest common substring. (this is computationally expensive.) if false, takes substring preceding labelsep as the commonlabel.
-#' @param variable_compare_mode either "complete" or "reduced'. setting for when findlongest == TRUE. "reduced" is computationally cheaper. if "complete", compares within the entire question group to find lcs for each statement. if "reduced", only looks at the variables before and after the variable in question, according to consecutive_range (a parameter in split_into_question_groups)
-#' @param min_common_strings integer. setting for when findlongest == TRUE. looks for substrings common to at least min_common_strings other variables in the question group and will take from this subset the longest string.
-#' @param labelsep string. setting for when findlongest == FALSE, in which case uses the substring in the variable name prior to labelsep as commonlabel.
-#' @param edit_aliases boolean. whether to allow user to manually edit question_aliases using data_edit before creating alias_with_suffix. (question_folder can be defined at the same time)
+#' @param variables_to_update optional logical vector to specify that only certain variables in the existing temp_dpdict should be updated
+#' @param seps_to_use optional specifying separators to use for processing:
+#'        - variable_name_sep: String that separates each variable within a common question, e.g. "_" for Q1_1, Q1_2.
+#'        - prefix_sep: String. If ignorelabelbeforeprefix == TRUE, substring before prefix_sep will be removed before working with variable labels.
+#'        - statement_sep: String. For findlongest == FALSE, uses substring prior to statement_sep as commonlabel.
+#' @param ignorelabelbeforeprefix Logical. If TRUE, removes substring before prefix_sep before working with variable labels.
+#' @param split_into_groups_config options for split_into_question_groups
+#' @param edit_aliases logical. whether to allow user to manually edit question_aliases using data_edit before creating alias_with_suffix. (question_folder can be defined at the same time)
 #' @param noisy integer between 1 and 4. 1 by default. if 1, signals start of attempts to find question groups, and multiresponse. if noisy == 2 provides timing and updates within question groups and multiresponse hunts. noisy > 2 has settings within function for finding question groups.
 #'
-#' @return a dp_dict with metadata
-#' @export
+#' @details
+#' metadata included:
+#' \itemize{
+#'  \item variable-level metadata: question_group, variable class, and then checks for single variable question, dichotomous variable, variable with value labels, and multiresponse variable, which are in turn used to define questiontype
+#'  \item question-level metadata: question_alias, question_description, question_suffix, alias_with_suffix, and question_folder
+#'  \item question_alias is intended as a user-defined identifier for the question but takes the values of question_group by default
+#'  \item question_description, question_suffix, and alias_with_suffix are useful when creating tables and visualisations
+#' }
 #'
+#' The function performs several steps:
+#' \itemize{
+#'   \item Standardizes separators in variable names and labels using \code{\link{get_updated_seps}}.
+#'   \item Determines question groups using \code{\link{split_into_question_groups}}.
+#'   \item Infers variable metadata (class, single/dichotomous, value labels).
+#'   \item Attempts to identify multiresponse variable sets (may take time on large datasets). Note: identification relies on values != 0 or NA within a question group.
+#'   \item Assigns a `questiontype` based on the inferred metadata (e.g., 'numeric', 'categorical', 'multiresponse', 'text'). Warnings are issued for undefined types.
+#'   \item Creates question-level metadata (alias, description, folder) using \code{\link{create_questions_dict}}.
+#'   \item Generates unique suffixes for variables within question groups using \code{\link{get_unique_suffixes}} and creates an `alias_with_suffix`.
+#' }
+#'
+#' other notes:
+#' \itemize{
+#' \item identifies categorical and multiresponse ('select all') variables by the presence of value labels. i.e. if a variable has class labelled but not value labels, it will not be given questiontype multiresponse, categorical or categorical array. (usually it will be a numeric or multinumeric)
+#' \item findlongest=TRUE, with splitbycommonlabel=TRUE takes significantly longer (as it attempts to split by analysing strings). may not be necessary for some processing - if correct common label is always the string prior to label_sep.
+#' \item variable labels should be hierarchically structured, with unique statements at the end. e.g. "Q1. Question text - Attitude statement - answer code"
+#' \item checking for multiresponse variables can also take a while but is required.
+#' \item if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
+#' }
+#'
+#'
+#' @return If `survey_obj` was provided, returns the updated `survey_data` object.
+#'         Otherwise, returns the updated `dpdict` data frame
+#' @export
 #' @examples
 #' # For survey_data object
 #' survey_obj <- create_survey_data(get_big_test_dat(n=10))
@@ -265,40 +648,112 @@ create_dict_with_metadata <- function(temp_dat){
 #' temp_dpdict <- update_dict_with_metadata(NULL, temp_dat, temp_dpdict)
 update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_dpdict = NULL,
                                       variables_to_update = NULL,
-                                      variable_name_sep = "_",
-                                      splitbyclass = TRUE, splitbynumlabelledvalues = TRUE, splitbynoncontiguous = TRUE, splitbycommonlabel = TRUE,
-                                      findlongest = TRUE, variable_compare_mode = "reduced", min_common_strings = 3, labelsep = " - ",
+                                      seps_to_use = NULL, ignorelabelbeforeprefix = TRUE,
+                                      split_into_groups_config = NULL,
                                       edit_aliases = FALSE,
                                       noisy = 0){
 
-  if (is.survey_data(survey_obj)) {
+  ## validation and unpacking arguments
+  if (!is.null(survey_obj)) {
+    if (!is.survey_data(survey_obj)) {
+      stop("survey_obj must be a survey_data object")
+    }
     temp_dat <- survey_obj$dat
     temp_dpdict <- survey_obj$dpdict
-  } else if (is.null(survey_obj)) {
+  } else {
     if (is.null(temp_dat) || is.null(temp_dpdict)) {
       stop("If survey_obj is NULL, both temp_dat and temp_dpdict must be provided")
     }
     if (!is.data.frame(temp_dat) || !is.data.frame(temp_dpdict)) {
       stop("temp_dat and temp_dpdict must be data frames")
     }
-  } else {
-    stop("survey_obj must be either a survey_data object or NULL")
   }
 
-  # initialize any missing columns
-  if(!"question_group" %in% names(temp_dpdict)){temp_dpdict$question_group <- gsub(paste0(variable_name_sep,".*"), "", temp_dpdict$variable_names)}
-  character_cols_to_initialize <- c("question_lcs", "variable_class", "questiontype", "question_suffix", "question_alias", "question_description", "alias_with_suffix", "question_folder")
-  for(i in character_cols_to_initialize[!character_cols_to_initialize %in% names(temp_dpdict)]){
-    temp_dpdict[[i]] <- NA_character_
+  required_cols <- c("variable_names", "variable_labels")
+  if (!all(required_cols %in% names(temp_dpdict))) {
+    stop("temp_dpdict must contain columns: ", paste(required_cols, collapse = ", "))
   }
-  boolean_cols_to_initialize <- c("singlevariablequestion", "dichotomousvariable", "has_value_labels", "multiresponse")
-  for(i in boolean_cols_to_initialize[!boolean_cols_to_initialize %in% names(temp_dpdict)]){
-    temp_dpdict[[i]] <- NA
+
+  if (!all(temp_dpdict$variable_names %in% names(temp_dat))) {
+    stop("Some variable_names in temp_dpdict are not found in temp_dat")
   }
+  if (!all(names(temp_dat) %in% temp_dpdict$variable_names)) {
+    stop("Some columns in temp_dat are not found in temp_dpdict$variable_names")
+  }
+
+  if (!is.null(variables_to_update)) {
+    if (!is.logical(variables_to_update) || length(variables_to_update) != nrow(temp_dpdict)) {
+      stop("if provided, variables_to_update must be a logical vector of length nrow(temp_dpdict)")
+    }
+  } else {
+    variables_to_update <- rep(TRUE, nrow(temp_dpdict))
+  }
+
+  if (!is.null(seps_to_use)) {
+    if (!is.list(seps_to_use) || !all(c("var_name_sep", "prefix_sep", "statement_sep") %in% names(seps_to_use))) {
+      stop("if provided, seps_to_use must be a list with elements 'var_name_sep', 'prefix_sep', and 'statement_sep'")
+    }
+  }
+
+  if (!noisy %in% c(0, 1, 2, 3, 4)){
+    stop("noisy must be a number between 0 and 4", call)
+  }
+
+  if(!is.null(split_into_groups_config)){
+    bool_config_params <- c("splitbyclass", "splitbynumlabelledvalues",
+                            "splitbynoncontiguous", "splitbycommonlabel",
+                            "findlongest")
+    for (param in bool_config_params) {
+      if (!is.logical(split_into_groups_config[[param]]) || length(split_into_groups_config[[param]]) != 1) {
+        stop(sprintf("%s must be a single logical value", param), call. = FALSE)
+      }
+    }
+
+    if (!split_into_groups_config$variable_compare_mode %in% c("complete", "reduced")) {
+      stop("variable_compare_mode must be either 'complete' or 'reduced'", call. = FALSE)
+    }
+
+    # Validate min_common_strings
+    if (!is.numeric(split_into_groups_config$min_common_strings) || length(split_into_groups_config$min_common_strings) != 1 ||
+        split_into_groups_config$min_common_strings < 1) {
+      stop("min_common_strings must be a positive integer", call. = FALSE)
+    }
+  }
+
+  if (!is.logical(edit_aliases) || length(edit_aliases) != 1){
+    stop("edit_aliases must be a single logical value", call. = FALSE)
+  }
+  ## end of validation
 
   # if no variables_to_update provided, we'll update all
   if (is.null(variables_to_update)){
-      variables_to_update <- rep(TRUE, ncol(temp_dat))
+    variables_to_update <- rep(TRUE, ncol(temp_dat))
+  }
+
+  # check seps
+  check_seps_result <- check_seps(temp_dat)
+  current_seps <- as.list(check_seps_result$separators)
+
+  # if seps_to_use not provided, use current seps
+  if(is.null(seps_to_use)) {
+    seps_to_use <- current_seps
+  }
+
+  # standardise seps in variable names and labels
+  standardised_seps <- get_updated_seps(temp_dat, check_seps_result, seps_to_use)
+  temp_dpdict$variable_names[variables_to_update] <- standardised_seps$new_variable_names[variables_to_update]
+  temp_dpdict$variable_labels[variables_to_update] <- standardised_seps$new_variable_labels[variables_to_update]
+
+  attr(temp_dpdict, "sep_patterns") <- seps_to_use
+
+  # initialize any missing columns
+  character_cols_to_initialize <- c("question_group", "question_lcs", "variable_class", "questiontype", "question_suffix", "question_alias", "question_description", "alias_with_suffix", "question_folder")
+  for(i in character_cols_to_initialize[!character_cols_to_initialize %in% names(temp_dpdict)]){
+    temp_dpdict[[i]] <- NA_character_
+  }
+  logical_cols_to_initialize <- c("singlevariablequestion", "dichotomousvariable", "has_value_labels", "multiresponse")
+  for(i in logical_cols_to_initialize[!logical_cols_to_initialize %in% names(temp_dpdict)]){
+    temp_dpdict[[i]] <- NA
   }
 
   # split into question groups. there are various settings for this, particularly for if attempting to split by commonlabel
@@ -306,10 +761,11 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     print("Attempting to split into question groups...")
     if(noisy >= 2){start_time <- proc.time()}
   }
-  temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat, variables_to_process = variables_to_update, variable_name_sep = variable_name_sep, ignorelabelbeforeprefix = TRUE, prefix_sep = ": ",
-                                          splitbyclass = splitbyclass, splitbynumlabelledvalues = splitbynumlabelledvalues, splitbynoncontiguous = splitbynoncontiguous, splitbycommonlabel = splitbycommonlabel,
-                                          labelsep = labelsep, findlongest = findlongest, min_lcs_length = 10, min_common_strings = min_common_strings, consistent_consecutive_mode = FALSE, consecutive_range = 10, variable_compare_mode = variable_compare_mode,
-                                          noisy = noisy)
+
+  temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat, variables_to_process = variables_to_update,
+                                            seps_to_use, ignorelabelbeforeprefix = TRUE,
+                                            config = split_into_groups_config,
+                                            noisy = noisy)
   if(noisy >= 2){print(proc.time() - start_time)}
 
   # define variable metadata
@@ -351,18 +807,51 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     (grepl("POSIXct|POSIXt|Date", variable_class)) ~ "date",
     variable_class == "difftime" ~ "difftime",
     variable_class == "character" ~ "text",
-    ((variable_class == "factor") & (multiresponse == FALSE)) ~ "categorical",
+    (grepl("factor", variable_class) & (multiresponse == FALSE)) ~ "categorical",
     (has_value_labels == TRUE & (multiresponse == FALSE)) ~ "categorical",
-    variable_class == "logical" ~ "categorical",
-    ((variable_class == "factor") & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
+    grepl("logical", variable_class) ~ "categorical",
+    (grepl("factor", variable_class) & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
     (has_value_labels == TRUE & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
-    ((variable_class == "factor") & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
+    (grepl("factor", variable_class) & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
     (has_value_labels == TRUE & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
     .default = NA
   ))
 
+  # warning messages for undefined question types
   if(any(is.na(temp_dpdict$questiontype))){
-    warning(paste(c("The following variables do not have a defined question type:", unlist(temp_dpdict$variable_names[is.na(temp_dpdict$questiontype)])), collapse = "\n"))
+    # Get the undefined variables
+    undefined_vars <- temp_dpdict$variable_names[is.na(temp_dpdict$questiontype)]
+    undefined_groups <- unique(temp_dpdict$question_group[temp_dpdict$variable_names %in% undefined_vars])
+
+    potential_mr_groups <- character(0)
+    potential_mr_vars <- character(0)
+
+    for(qgroup in undefined_groups) {
+      group_vars <- stats::na.omit(temp_dpdict$variable_names[temp_dpdict$question_group == qgroup])
+      # Check if this looks like a multiresponse group (multiple variables in same group)
+      if(length(group_vars) > 1) {
+        # Check if all variables in this group only have 0s or NAs
+        if(all(vapply(temp_dat[group_vars], function(x) all(is.na(x) | x == 0), logical(1)))) {
+          potential_mr_groups <- c(potential_mr_groups, qgroup)
+          potential_mr_vars <- c(potential_mr_vars, group_vars)
+        }
+      }
+    }
+
+    if(length(potential_mr_vars) > 0) {
+      warning("The following variables appear to be part of multiresponse question groups but contain only 0s or NAs and so are currently questiontype undefined: ",
+              paste(potential_mr_vars, collapse = ", "),
+              "\nCheck if these are multiresponse questions.")
+
+      remaining_undefined <- setdiff(undefined_vars, potential_mr_vars)
+      if(length(remaining_undefined) > 0) {
+        warning("Additional variables without defined question types: ",
+                paste(remaining_undefined, collapse = ", "))
+      }
+    } else {
+      warning("The following variables do not have a defined question type: ",
+              paste(undefined_vars, collapse = ", "))
+    }
   }
 
   # define question metadata
@@ -405,29 +894,54 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'
 #' note: if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
 #'
-#' requires letters_702
+#' @param temp_dpdict A dpdict data frame. Must contain 'variable_names' and
+#'        'variable_labels'. A 'question_group' column will be created if it
+#'        doesn't exist (based on variable names before `variable_name_sep`)
+#' @param temp_dat The corresponding survey data dataframe.
+#' @param variables_to_process Optional logical vector (length = nrow(temp_dpdict))
+#'        indicating which variables to process. If NULL (default), all are processed.
+#'        Note: If any variable in a group is selected, all variables in that
+#'        original group will be processed
+#' @param seps_to_use List specifying separators used for parsing names/labels.
+#'        Defaults are used if not provided. See \code{\link{check_seps}}. Key elements:
+#'        'variable_name_sep', 'prefix_sep', 'statement_sep'.
+#' @param ignorelabelbeforeprefix Logical. If TRUE, removes substring before prefix_sep before working with variable labels.
+#' @param config Optional list with configuration settings. Can include:
+#'        - splitbyclass: Logical. If TRUE, every successive new class is given a new unique suffix.
+#'        - splitbynumlabelledvalues: Logical. If TRUE, each variable with a different number of labelled values gets a new suffix.
+#'        - splitbynoncontiguous: Logical. If TRUE, variables with the same variable name prefix not located adjacent are given a new suffix.
+#'        - splitbycommonlabel: Logical. If TRUE, each variable with a different longest common string gets a new suffix.
+#'        - findlongest: Logical. If TRUE, finds longest common substring (computationally expensive).
+#'        - min_lcs_length: Integer. Any potential lcs shorter than this is disqualified.
+#'        - min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables.
+#'        - consistent_consecutive_mode: Logical. If TRUE, look for strings common with consecutive variables.
+#'        - consecutive_range: Integer. For variable_compare_mode == "reduced", only looks at variables this many before and after.
+#'        - variable_compare_mode: String. Either "complete" or "reduced" - affects how variables are compared.
+#' @param noisy Integer 0-4 controlling verbosity level.
+#' @details
+#' Iterates through initial question groups and applies splitting rules
+#' based on the `config` settings. A new group (with a new suffix like "_b")
+#' is started whenever a condition is met for consecutive variables within the
+#' original group.
 #'
-#' @param temp_dpdict dpdict for temp_dat. must have question_group variable.
-#' @param temp_dat survey data dataframe
-#' @param variables_to_process boolean of length nrow(dpdict). will attempt to split all variables for which variables_to_process == TRUE.
-#' (if only some variables in a question group identified as to process by the boolean, will update to include all variables in that groupi)
-#' @param variable_name_sep "_" by default. string that separates each variable within a common question, e.g. if Q1_1, Q1_2 "_" is the correct variable_name_sep.
-#' @param ignorelabelbeforeprefix boolean. if true, removes substring before prefix_sep before working with variable labels
-#' @param prefix_sep string. if ignorelabelbeforeprefix == TRUE, the substring before prefix_sep will be removed before working with variable labels .
-#' @param splitbyclass boolean. if true, every successive new class is given a new unique suffix
-#' @param splitbynumlabelledvalues boolean. if true, each variable with a different number of labelled values is given a new unique suffix (because we would expect multiple variables in the same question to have the same number of options, e.g. battery of likert scales)
-#' @param splitbynoncontiguous boolean. if true, variables with the same variable name prefix that are not located adjacent to each other are given a new unique suffix
-#' @param splitbycommonlabel boolean. if true, each variable for which the longest common string within the variable label for that variable does not match the longest common string within the question group as a whole, is given a new suffix
-#' @param findlongest boolean. if true, applies splitbycommonlabel by looking for the longest common substring. (this is computationally expensive.) if false, takes substring preceding labelsep as the commonlabel.
-#' @param variable_compare_mode either "complete" or "reduced'. setting for when findlongest == TRUE. "complete" is computationally cheaper. if "complete", compares within the entire question group to find lcs for each statement. if "reduced", only looks at the variables before and after the variable in question, according to consecutive_range (a parameter in split_into_question_groups)
-#' @param min_common_strings integer. setting for when findlongest == TRUE. looks for substrings common to at least min_common_strings other variables in the question group and will take from this subset the longest string.
-#' @param labelsep string. setting for when findlongest == FALSE, in which case uses the substring in the variable name prior to labelsep as commonlabel.
-#' @param min_lcs_length integer. any potential lcs shorter than min_lcs_length is disqualified.
-#' @param consistent_consecutive_mode boolean. if true, will look for strings common with consecutive variables within consecutive_range. this is intended to speed up finding the best lcs. but it's not always useful as it can be too sensitive to spurious lcs. not used by default. instead, if consistent_consecutive_mode == FALSE, it will look for strings common to at least min_common_strings other variables in the question group.
-#' @param consecutive_range integer. if variable_compare_mode == "reduced", only looks at the variables consecutive_range before and after the variable in question.
-#' @param noisy numeric. noisy == 0 by default. if == 1, 2, 3 or 4 will do varying levels of printing for debugging and monitoring
+#' Default `config` settings:
+#' \itemize{
+#'   \item `splitbyclass = TRUE`: Split if variable class changes.
+#'   \item `splitbynumlabelledvalues = TRUE`: Split if the number of defined value labels changes.
+#'   \item `splitbynoncontiguous = TRUE`: Split if variables with the same original prefix are not adjacent in the `dpdict`.
+#'   \item `splitbycommonlabel = TRUE`: Split if the common part of the variable label changes. How the "common part" is determined depends on `findlongest`.
+#'   \item `findlongest = FALSE`: If FALSE (default) and `splitbycommonlabel=TRUE`, the common label is assumed to be the text before `statement_sep`. If TRUE, the function actively searches for the Longest Common Substring (LCS) between labels, which is much slower.
+#'   \item `min_lcs_length = 10`: Minimum length for a string to be considered a potential LCS when `findlongest=TRUE`.
+#'   \item `min_common_strings = 5`: When `findlongest=TRUE`, requires an LCS candidate to be common to at least this many variables in the group to be prioritized.
+#'   \item `consistent_consecutive_mode = FALSE`: Alternative LCS finding logic (experimental/unused by default).
+#'   \item `consecutive_range = 10`: Range for comparing variables in 'reduced' mode.
+#'   \item `variable_compare_mode = "reduced"`: How variables are compared when `findlongest=TRUE` ("complete" or "reduced").
+#' }
+#' Finding the LCS (`findlongest = TRUE`) uses \code{\link{get_longest_common_substring}}.
+#' Note: If the last variable in a group retains its full label as `question_lcs`, `min_common_strings` might be set too high.
 #'
-#' @return temp_dpdict with question groups split according to the function settings
+#' @return The input `temp_dpdict` data frame with updated 'question_group'
+#'         and 'question_lcs' columns
 #' @export
 #'
 #' @examples
@@ -436,53 +950,128 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #' temp_dpdict <- temp_dpdict[, !(names(temp_dpdict) %in% c("old_variable_names",
 #'                                                    "old_variable_labels",
 #'                                                    "old_value_labels"))]
-#' temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat, variable_name_sep = "_",
-#'                                        ignorelabelbeforeprefix = TRUE, prefix_sep = ": ",
-#'                                        splitbyclass = TRUE, splitbynumlabelledvalues = TRUE,
-#'                                        splitbynoncontiguous = TRUE,
-#'                                        splitbycommonlabel = TRUE, labelsep = " - ",
-#'                                        findlongest = TRUE, min_lcs_length = 10,
-#'                                        min_common_strings = 5,
-#'                                        consistent_consecutive_mode = FALSE,
-#'                                        consecutive_range = 10,
-#'                                        variable_compare_mode = "reduced",
-#'                                        noisy = 0)
+#' # basic usage
+#' temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
+#'                                          seps_to_use = list(variable_name_sep = "_",
+#'                                          prefix_sep = ": ", statement_sep = " - "))
+#'
+#' # usage with custom configuration
+#' config <- list(
+#'   splitbyclass = TRUE,
+#'   splitbycommonlabel = TRUE
+#' )
+#' temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
+#'                                          seps_to_use = list(variable_name_sep = "_",
+#'                                          prefix_sep = ": ", statement_sep = " - "),
+#'                                          config = config)
 split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_process = NULL,
-                                       variable_name_sep = "_", ignorelabelbeforeprefix = TRUE, prefix_sep = ": ",
-                                       splitbyclass = TRUE, splitbynumlabelledvalues = TRUE, splitbynoncontiguous = TRUE, splitbycommonlabel = TRUE,
-                                       labelsep = " - ", findlongest = FALSE, min_lcs_length = 10,  min_common_strings = 5,
-                                       consistent_consecutive_mode = FALSE, variable_compare_mode = "reduced", consecutive_range = 10,
-                                       noisy = 0){
+                                       seps_to_use = list(), ignorelabelbeforeprefix = TRUE, config = list(), noisy = 0){
 
-  if(splitbycommonlabel == FALSE & findlongest == TRUE){
-    findlongest <- FALSE
-    print("Setting findlongest to FALSE as only used if splitbycommonlabel is TRUE")
+
+  # Default seps_to_use
+  default_seps_to_use <- list(
+    variable_name_sep = "_",
+    prefix_sep = ": ",
+    statement_sep = " - "
+  )
+
+  seps_to_use <- utils::modifyList(default_seps_to_use, seps_to_use)
+
+  # Default config
+  default_config <- list(
+    splitbyclass = TRUE,
+    splitbynumlabelledvalues = TRUE,
+    splitbynoncontiguous = TRUE,
+    splitbycommonlabel = TRUE,
+    findlongest = FALSE,
+    min_lcs_length = 10,
+    min_common_strings = 5,
+    consistent_consecutive_mode = FALSE,
+    consecutive_range = 10,
+    variable_compare_mode = "reduced"
+  )
+  if(is.null(config)){config <- list()}
+  config <- utils::modifyList(default_config, config)
+
+  # Extract parameters for easier access
+  variable_name_sep <- seps_to_use$variable_name_sep
+  prefix_sep <- seps_to_use$prefix_sep
+  statement_sep <- seps_to_use$statement_sep
+
+  splitbyclass <- config$splitbyclass
+  splitbynumlabelledvalues <- config$splitbynumlabelledvalues
+  splitbynoncontiguous <- config$splitbynoncontiguous
+  splitbycommonlabel <- config$splitbycommonlabel
+  findlongest <- config$findlongest
+  min_lcs_length <- config$min_lcs_length
+  min_common_strings <- config$min_common_strings
+  consistent_consecutive_mode <- config$consistent_consecutive_mode
+  consecutive_range <- config$consecutive_range
+  variable_compare_mode <- config$variable_compare_mode
+
+  # Basic type checks
+  if (!is.data.frame(temp_dpdict) || !is.data.frame(temp_dat)) {
+    stop("temp_dpdict and temp_dat must be data frames")
   }
 
+  if (!is.character(variable_name_sep)) {
+    stop("variable_name_sep must be a character string")
+  }
+
+  if (!is.numeric(noisy) || length(noisy) != 1 || noisy < 0 || noisy > 4) {
+    stop("noisy must be a single integer between 0 and 4")
+  }
+  ## End of validation
+
+  # Turn off findlongest if splitbycommonlabel is FALSE
+  if (splitbycommonlabel == FALSE && findlongest == TRUE) {
+    findlongest <- FALSE
+    if (noisy >= 1) {
+      message("Setting findlongest to FALSE as it's only used if splitbycommonlabel is TRUE")
+    }
+  }
+
+  # validate variables_to_process
   if(is.null(variables_to_process)){
     variables_to_process <- rep(TRUE, nrow(temp_dpdict))
   } else {
-    # Expand variables_to_process to include all variables in a question group if at least one is selected
-    if("question_group" %in% names(temp_dpdict)){
-      original_groups <- unique(temp_dpdict$question_group[variables_to_process])
-      expanded_variables <- temp_dpdict$question_group %in% original_groups
-
-      if (any(expanded_variables != variables_to_process)) {
-        warning("Some question groups were partially selected. All variables in these groups will be processed.")
-        variables_to_process <- expanded_variables
-      }
+    # validate type
+    if (!is.logical(variables_to_process) || length(variables_to_process) != nrow(temp_dpdict)) {
+      stop("variables_to_process must be a logical vector of length nrow(temp_dpdict)")
     }
+  }
+
+  # initialise question_lcs
+  if(!"question_lcs" %in% names(temp_dpdict)){
+    temp_dpdict$question_lcs <- NA_character_
   }
 
   # creates a question group variable if there isn't one already
   if(!"question_group" %in% names(temp_dpdict)){
-    temp_dpdict$question_group <- gsub(paste0(variable_name_sep,".*"), "", temp_dpdict$variable_names)
+    temp_dpdict$question_group <- NA_character_
   }
-  # first add a "_a" suffix to all question groups. we will update to e.g. "_b", "_c" as we split into groups.
-  temp_dpdict$question_group[variables_to_process] <- paste0(temp_dpdict$question_group[variables_to_process], "_a")
 
-  # we'll also save the lcs associated with each question group
-  temp_dpdict$question_lcs <- NA_character_
+  # Identify rows that need question_group initialisation
+  rows_to_update <- variables_to_process & (is.na(temp_dpdict$question_group))
+
+  # initalise question group for those rows
+  if(any(rows_to_update)) {
+    temp_dpdict$question_group[rows_to_update] <- gsub(paste0(variable_name_sep,".*"), "",
+                                                       temp_dpdict$variable_names[rows_to_update])
+    # Add suffix to these initialized groups
+    temp_dpdict$question_group[rows_to_update] <- paste0(temp_dpdict$question_group[rows_to_update], "_a")
+  }
+
+  # Expand variables_to_process to include all variables in a question group if at least one is selected
+  if(!all(variables_to_process == TRUE)){
+    original_groups <- stats::na.omit(unique(temp_dpdict$question_group[variables_to_process])) # don't expand NAs (e.g. if question_group newly initialized)
+    expanded_variables <- temp_dpdict$question_group %in% original_groups
+
+    if (any(expanded_variables == TRUE & variables_to_process == FALSE)) {
+      warning("Some question groups were partially selected. All variables in these groups will be processed.")
+      variables_to_process[expanded_variables == TRUE & variables_to_process == FALSE] <- TRUE
+    }
+  }
 
   # find longest common label for each question group and store in lcs_dict that we can reference
   if(findlongest == TRUE){
@@ -569,7 +1158,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
           }
 
           # remove any candidate common strings below the min_lcs_length
-          variabledpdict <- subset(variabledpdict, nchar(lcs) >= min_lcs_length)
+          variabledpdict <- subset(variabledpdict, nchar(variabledpdict$lcs) >= min_lcs_length)
 
           if(consistent_consecutive_mode == TRUE){ # intended to speed up finding the best lcs. but it's not always useful as it can be too sensitive to spurious lcs. not used by default
 
@@ -630,13 +1219,13 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
           }
 
           # save best_lcs from variabledpdict, i.e. the lcs between j_name and every other variable in the question group, to current_question_dpdict
-          # also trim labelsep and whitespace
-          current_question_dpdict$lcs[current_question_dpdict$variable_names == j_name] <- trimws(gsub(paste0(labelsep, "+$"), "", best_lcs))
+          # also trim statement_sep and whitespace
+          current_question_dpdict$lcs[current_question_dpdict$variable_names == j_name] <- trimws(gsub(paste0(statement_sep, "+$"), "", best_lcs))
           current_question_dpdict$lcs_distance[current_question_dpdict$variable_names == j_name] <- best_lcs_distance
 
           if(noisy >= 4){print(paste0("lcs found for ", j_name, ": ", best_lcs))}
         } else if (nrow(variabledpdict) == 1){ # if only one variable in variabledpdict, there's no need for complex logic to find lcs
-          current_question_dpdict$lcs[current_question_dpdict$variable_names == j_name] <- trimws(gsub(paste0(labelsep, "+$"), "", variabledpdict$lcs))
+          current_question_dpdict$lcs[current_question_dpdict$variable_names == j_name] <- trimws(gsub(paste0(statement_sep, "+$"), "", variabledpdict$lcs))
           current_question_dpdict$lcs_distance[current_question_dpdict$variable_names == j_name] <- variabledpdict$lcs_distance
         }
       }
@@ -658,8 +1247,6 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
   # for each question group
   for(j in unique(temp_dpdict$question_group[variables_to_process])){
-
-    # subset temp_dpdict for just the current question group
     current_question_dpdict <- temp_dpdict[temp_dpdict$question_group == j & variables_to_process,]
     # and we'll also save the lcs associated with each question group
     current_question_dpdict$question_lcs <- NA
@@ -685,7 +1272,9 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
       current_class <- class(temp_dat[[match(TRUE, names(temp_dat) == current_question_dpdict$variable_names[i])]])
       current_question_group <- gsub("_.*", "", current_question_dpdict$question_group[i]) # current_question defined WITHOUT any suffixes
-      current_numlabelledvalues <- length(sjlabelled::get_labels(temp_dat[, current_question_dpdict$variable_names[i], drop = FALSE])[[1]]) # we want character variables to always be given their own question group, because no such things as a multi character in crunch - so for example if two character variables have value labels and these obviously different, they're grouped separately
+
+      # ! error here. current_question_dpdict is sometimes empty (mixed of NULLs and NAs)
+      current_numlabelledvalues <- length(sjlabelled::get_labels(temp_dat[, current_question_dpdict$variable_names[i], drop = FALSE])[[1]]) # we want character variables to always be given their own question group, so for example if two character variables have value labels and these obviously different, they're grouped separately
       current_index <- match(current_question_dpdict$variable_names[i], temp_dpdict$variable_names)
 
       if(findlongest == TRUE){
@@ -696,9 +1285,9 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
         if(ignorelabelbeforeprefix == TRUE){
           current_question_dpdict$variable_labels_less_prefix <- gsub(paste0("^([^", prefix_sep, "]+)", prefix_sep),
                                                               "", current_question_dpdict$variable_labels)
-          current_commonlabel <- gsub(paste0(labelsep, "\\s*"), "", strsplit(current_question_dpdict$variable_labels_less_prefix[current_question_dpdict$variable_names == current_question_dpdict$variable_names[i]], paste0(labelsep, "\\s*"))[[1]][1])
+          current_commonlabel <- gsub(paste0(statement_sep, "\\s*"), "", strsplit(current_question_dpdict$variable_labels_less_prefix[current_question_dpdict$variable_names == current_question_dpdict$variable_names[i]], paste0(statement_sep, "\\s*"))[[1]][1])
         } else {
-          current_commonlabel <- gsub(paste0(labelsep, "\\s*"), "", strsplit(current_question_dpdict$variable_labels[current_question_dpdict$variable_names == current_question_dpdict$variable_names[i]], paste0(labelsep, "\\s*"))[[1]][1])
+          current_commonlabel <- gsub(paste0(statement_sep, "\\s*"), "", strsplit(current_question_dpdict$variable_labels[current_question_dpdict$variable_names == current_question_dpdict$variable_names[i]], paste0(statement_sep, "\\s*"))[[1]][1])
         }
       }
       # save the current lcs, which will be shared by each question group
@@ -716,6 +1305,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
             cat(paste0("current_class: ", current_class), "\n", "\n")
           }
         }
+
         if(splitbycommonlabel == TRUE && current_commonlabel != last_commonlabel){
           new_suffix_required <- TRUE
           if(noisy >= 4){
@@ -791,7 +1381,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 #' if increments == "forward" will add characters successively and check match each time.
 #' if increments == "random" will randomise number of characters to add each time, without replacement, bounded by min(nchar(string1), nchar(string2) - so should be faster for longer strings.
 #' @param stopping_threshold integer. if iterations since last improvement in lcs exceeds stopping_threshold, returns best lcs so far.
-#' @param noisy boolean. if true, prints status messages.
+#' @param noisy logical. if true, prints status messages.
 #'
 #' @return substring which represents the longest common starting substring found between string1 and string2, with an attribute lcs_distance representing the number of characters in the lcs
 #' @export
@@ -981,13 +1571,25 @@ get_longest_common_substring_slow <- function(string1, string2, lcs_mode = "comp
 #'
 #' @param string1 a string
 #' @param string2 another string
-#' @param fromstart boolean. if true, finds longest common substring from the start of string1. if false, looks for lcs at any position.
+#' @param fromstart logical. if true, finds longest common substring from the start of string1. if false, looks for lcs at any position.
 #'
 #' @return substring which represents the longest common starting substring found between string1 and string2, with an attribute lcs_distance representing the number of characters in the lcs
 #' @export
 #'
 #' @examples get_longest_common_substring("boat", "boar")
 get_longest_common_substring <- function(string1, string2, fromstart = FALSE) {
+
+  ### validation
+  if (!is.character(string1) || length(string1) != 1) {
+    stop("`string1` must be a single character string.")
+  }
+  if (!is.character(string2) || length(string2) != 1) {
+    stop("`string2` must be a single character string.")
+  }
+  if (!is.logical(fromstart) || length(fromstart) != 1) {
+    stop("`fromstart` must be a single logical value (TRUE/FALSE).")
+  }
+
   m <- nchar(string1)
   n <- nchar(string2)
 
@@ -1108,6 +1710,8 @@ create_questions_dict <- function(survey_obj = NULL, temp_dpdict = NULL, editfir
 #' @param sort_results whether to sort the final dataframe
 #' @param prioritise_caps whether to sort final dataframe prioritising capital letters
 #'
+#' @details note that sep_count_from_end/ sep_count_from_start is the count within that sep, not the count across all seps
+#'
 #' @return a dataframe summarising seps found in the full_string, the substrings separated, and their locations
 #' @export
 #'
@@ -1115,10 +1719,25 @@ create_questions_dict <- function(survey_obj = NULL, temp_dpdict = NULL, editfir
 get_affix_df <- function(full_string, affix_type = "prefix", seps_priority = c("- ", "_", "."), strings_to_remove = c("Selected Choice"),
                          prioritise_caps = TRUE, filter_results = TRUE, sort_results = TRUE) {
 
-  # Validate affix_type
+  ### Validation
+  if (!is.character(full_string) || length(full_string) != 1 || !nzchar(full_string)) {
+    stop("`full_string` must be a single non-empty character string.")
+  }
+  # Validate affix_type (already done in original code) [cite: 219]
   if (!affix_type %in% c("suffix", "prefix")) {
     stop("affix_type must be either 'suffix' or 'prefix'")
   }
+  if (!is.character(seps_priority) || length(seps_priority) == 0) {
+    stop("`seps_priority` must be a non-empty character vector.")
+  }
+  if (!is.character(strings_to_remove)) {
+    stop("`strings_to_remove` must be a character vector.")
+  }
+  stopifnot(
+    "`prioritise_caps` must be a single logical value" = is.logical(prioritise_caps) && length(prioritise_caps) == 1,
+    "`filter_results` must be a single logical value" = is.logical(filter_results) && length(filter_results) == 1,
+    "`sort_results` must be a single logical value" = is.logical(sort_results) && length(sort_results) == 1
+  )
 
   # Remove specified strings
   full_string <- gsub(paste(strings_to_remove, collapse="|"), "", full_string, fixed = TRUE)
@@ -1185,7 +1804,12 @@ get_affix_df <- function(full_string, affix_type = "prefix", seps_priority = c("
   }
 
   rownames(result_df) <- NULL
-  return(result_df)
+  if(nrow(result_df)>0){
+    return(result_df)
+  } else {
+    return(NA)
+  }
+
 }
 
 
@@ -1193,11 +1817,11 @@ get_affix_df <- function(full_string, affix_type = "prefix", seps_priority = c("
 #'
 #' takes a dpdict and returns a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
 #'
-#' wants to find suffix based on a common same sep type and, if allow_unmatched_sep_count_from_end == FALSE, common position of sep relative to the end
+#' wants to find suffix based on a common sep type and, if allow_unmatched_sep_count_from_end == FALSE, common position of sep relative to the end
 #' if can't find a suffix in labels, looks in variable name
 #' and if can't find a unique suffix anywhere else, just assigns successive numbers
 #'
-#' @param temp_dpdict a dpdict with cols for uniqueid (e.g. variable name), variable labels and question groups
+#' @param temp_dpdict a dpdict with cols for uniqueid (e.g. variable name), variable labels and question groups. Values in the `var_with_strings` column should be unique.
 #' @param var_with_unique_id name of column to use as unique id (typically variable name)
 #' @param var_with_strings name of column with strings to look for a suffix in (typically variable label)
 #' @param var_with_question_groups name of column representing question groups of variables that should aim to find common suffix patterns within
@@ -1205,12 +1829,38 @@ get_affix_df <- function(full_string, affix_type = "prefix", seps_priority = c("
 #' @param allow_unmatched_sep_count_from_end whether to allow for suffixes that are identified by a sep in a different position relative to the end of the string
 #' @param noisy either 0, 1, or 2. 1 and 2 provide increasingly noisy updates as the function works.
 #'
-#' @return a vector of length nrow(dpdict) which is best-guess for best suffixes to add to each variable's question group label to make it unique
+#' @return A character vector with the same length and order as `temp_dpdict`,
+#'         containing the determined suffix for each variable. Returns NA for
+#'         single-variable groups where no suffix was identified by separators.
+#'         Returns sequential numbers if no other unique suffix pattern was found
 #' @export
 #'
 #' @examples
 #' get_unique_suffixes(create_dict_with_metadata(get_big_test_dat()))
 get_unique_suffixes <- function(temp_dpdict, var_with_unique_id = "variable_names", var_with_strings = "variable_labels", var_with_question_groups = "question_group", seps_priority = c("- ","_","."), allow_unmatched_sep_count_from_end = TRUE, noisy = 0){
+
+  ### validation
+  if (!is.data.frame(temp_dpdict)) {
+    stop("`temp_dpdict` must be a data frame.")
+  }
+  stopifnot(
+    "`var_with_unique_id` must be a single character string" = is.character(var_with_unique_id) && length(var_with_unique_id) == 1 && nzchar(var_with_unique_id),
+    "`var_with_strings` must be a single character string" = is.character(var_with_strings) && length(var_with_strings) == 1 && nzchar(var_with_strings),
+    "`var_with_question_groups` must be a single character string" = is.character(var_with_question_groups) && length(var_with_question_groups) == 1 && nzchar(var_with_question_groups)
+  )
+  required_cols <- c(var_with_unique_id, var_with_strings, var_with_question_groups)
+  if (!all(required_cols %in% names(temp_dpdict))) {
+    stop("`temp_dpdict` is missing required columns: ", paste(setdiff(required_cols, names(temp_dpdict)), collapse = ", "))
+  }
+  if (!is.character(seps_priority) || length(seps_priority) == 0) {
+    stop("`seps_priority` must be a non-empty character vector.")
+  }
+  if (!is.logical(allow_unmatched_sep_count_from_end) || length(allow_unmatched_sep_count_from_end) != 1) {
+    stop("`allow_unmatched_sep_count_from_end` must be a single logical value (TRUE/FALSE).")
+  }
+  if (!is.numeric(noisy) || length(noisy) != 1 || !noisy %in% c(0, 1, 2)) {
+    stop("`noisy` must be a single numeric value: 0, 1, or 2.")
+  }
 
   # reduce to just the columns we need
   small_dpdict <- temp_dpdict %>% dplyr::select(dplyr::all_of(c(var_with_unique_id, var_with_strings, var_with_question_groups)))
@@ -1412,8 +2062,20 @@ update_dat_from_dpdict <- function(x, temp_dpdict = NULL){
 
   stopifnot("temp_dpdict must be a data frame" = is.data.frame(temp_dpdict))
 
-  if (!all(c("variable_names", "variable_labels", "value_labels") %in% names(temp_dpdict))) {
-    stop("temp_dpdict must at a minimum contain 'variable_names', 'variable_labels', and 'value_labels' columns")
+  if (!all(c("old_variable_names", "variable_names", "variable_labels", "value_labels") %in% names(temp_dpdict))) {
+    stop("temp_dpdict must contain 'old_variable_names', 'variable_names', 'variable_labels', and 'value_labels' columns")
+  }
+
+  # validate all current names exist dpdict
+  name_mapping <- stats::setNames(
+    temp_dpdict$variable_names,
+    temp_dpdict$old_variable_names
+  )
+
+  missing_names <- setdiff(names(temp_dat), names(name_mapping))
+  if (length(missing_names) > 0) {
+    stop("Some variables in dat not found in dpdict old_variable_names: ",
+         paste(missing_names, collapse = ", "))
   }
 
   dpdict_check <- validate_no_dpdict_duplicates(temp_dpdict, check_variable_names = TRUE,
@@ -1423,13 +2085,38 @@ update_dat_from_dpdict <- function(x, temp_dpdict = NULL){
     stop("Duplicate variable names, label or alias_with_suffix found in dpdict.")
   }
 
-  temp_dat <- stats::setNames(temp_dat, temp_dpdict$variable_names)
+  # update with new variable names
+  names(temp_dat) <- name_mapping[names(temp_dat)]
 
-  new_labels <- vapply(names(temp_dat), function(i) query_dict(temp_dpdict, "variable_names", i, "variable_labels")[[1]][[1]], character(1))
-  temp_dat <- mapply(sjlabelled::set_label, temp_dat, label = new_labels, SIMPLIFY = FALSE)
+  # update variable labels using old names for matching
+  new_labels <- vapply(
+    temp_dpdict$old_variable_names,
+    function(old_name) {
+      temp_dpdict$variable_labels[temp_dpdict$old_variable_names == old_name]
+    },
+    character(1)
+  )
 
-  value_labels_list <- sapply(names(temp_dat), function(i) query_dict(temp_dpdict, "variable_names", i, "value_labels")[[1]][[1]])
-  temp_dat <- mapply(function(x, labels) if(!anyNA(labels)) sjlabelled::set_labels(x, labels = labels, force.labels = TRUE) else x, temp_dat, value_labels_list, SIMPLIFY = FALSE)
+  temp_dat <- mapply(sjlabelled::set_label,
+                     temp_dat,
+                     label = new_labels,
+                     SIMPLIFY = FALSE)
+
+  # update value labels using old names for matching
+  value_labels_list <- temp_dpdict$value_labels[match(names(temp_dat), temp_dpdict$variable_names)]
+
+  temp_dat <- mapply(
+    function(x, labels) {
+      if(!anyNA(labels)) {
+        sjlabelled::set_labels(x, labels = labels, force.labels = TRUE)
+      } else {
+        x
+      }
+    },
+    temp_dat,
+    value_labels_list,
+    SIMPLIFY = FALSE
+  )
 
   temp_dat <- as.data.frame(temp_dat, stringsAsFactors = FALSE)
 
@@ -1489,12 +2176,14 @@ get_questions_dict <- function(x){
 #' # Using a temp_dpdict
 #' temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
 #' questions_dict <- get_questions_dict(temp_dpdict)
-#' questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <- "newlabelledmultiordinal_a"
+#' questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <-
+#' "newlabelledmultiordinal_a"
 #' updated_dpdict <- update_aliases(temp_dpdict, questions_dict)
 #' # Using a survey_obj
 #' survey_obj <- create_survey_data(get_big_test_dat(n=10))
 #' questions_dict <- get_questions_dict(survey_obj)
-#' questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <- "newlabelledmultiordinal_a"
+#' questions_dict$question_alias[questions_dict$question_alias == "labelledmultiordinal_a"] <-
+#' "newlabelledmultiordinal_a"
 #' updated_survey_obj <- update_aliases(survey_obj, questions_dict)
 update_aliases <- function(x, questions_dict){
 
@@ -1506,19 +2195,20 @@ update_aliases <- function(x, questions_dict){
     stop("x must be either a survey data object or a dataframe representing a dpdict")
   }
 
-  if(!(all(c("question_group", "question_alias") %in% names(questions_dict)) ||
-     length(questions_dict$question_group) == length(unique(temp_dpdict$question_group)))){
+  if((!all(c("question_group", "question_alias") %in% names(questions_dict)) ||
+     length(questions_dict$question_group) != length(unique(temp_dpdict$question_group)))){
     stop("Invalid questions_dict: missing required columns or mismatched length")
   }
 
   old_aliases <- temp_dpdict$question_alias
 
+  # update question aliases from questions_dict
   temp_dpdict$question_alias <- questions_dict$question_alias[match(temp_dpdict$question_group, questions_dict$question_group)]
 
   temp_dpdict$question_description <- mapply(
     gsub,
-    pattern = paste(sub("_.*", "", old_aliases)),
-    replacement = paste(sub("_.*", "", temp_dpdict$question_alias)),
+    pattern = paste(sub("_[a-z]+$", "", old_aliases)),
+    replacement = paste(sub("_[a-z]+$", "", temp_dpdict$question_alias)),
     x = temp_dpdict$question_description
   )
 
@@ -1564,12 +2254,30 @@ update_aliases <- function(x, questions_dict){
 #'                   "labelledmultiresponsegrid_a", "statement 1 ", 2)
 split_grid_labels <- function(x, alias_to_split, example_stem_to_add, count_before_repeat, sep = " - "){
 
+  # unpack surveydata
   if(is.survey_data(x)){
     temp_dpdict <- x$dpdict
   } else if (is.data.frame(x)){
     temp_dpdict <- x
   } else {
     stop("x must be either a survey data object or a dataframe representing a dpdict")
+  }
+
+  ### validation
+  stopifnot(
+    "`alias_to_split` must be a single character string" = is.character(alias_to_split) && length(alias_to_split) == 1 && nzchar(alias_to_split),
+    "`example_stem_to_add` must be a single character string" = is.character(example_stem_to_add) && length(example_stem_to_add) == 1 && nzchar(example_stem_to_add),
+    "`sep` must be a single character string" = is.character(sep) && length(sep) == 1 && nzchar(sep),
+    "`count_before_repeat` must be a single positive integer" = is.numeric(count_before_repeat) && length(count_before_repeat) == 1 && count_before_repeat > 0 && count_before_repeat == round(count_before_repeat)
+  )
+  if (!"question_alias" %in% names(temp_dpdict) || !"question_suffix" %in% names(temp_dpdict)) {
+    stop("`temp_dpdict` must contain 'question_alias' and 'question_suffix' columns.")
+  }
+  if (!alias_to_split %in% temp_dpdict$question_alias) {
+    stop("`alias_to_split` ('", alias_to_split, "') not found in `temp_dpdict$question_alias`.")
+  }
+  if (count_before_repeat > sum(temp_dpdict$question_alias == alias_to_split)) {
+    warning("`count_before_repeat` is greater than the number of variables with the specified `alias_to_split`.")
   }
 
   # extract stems
@@ -1579,9 +2287,10 @@ split_grid_labels <- function(x, alias_to_split, example_stem_to_add, count_befo
 
   # extract suffices
   suffix_with_sep <- any_gsub(unique(stems), "", temp_dpdict$question_suffix[temp_dpdict$question_alias == alias_to_split])
+  suffix_without_sep <- any_gsub(sep, "", suffix_with_sep)
 
   # update dpdict
-  temp_dpdict$question_suffix[temp_dpdict$question_alias == alias_to_split] <- suffix_with_sep
+  temp_dpdict$question_suffix[temp_dpdict$question_alias == alias_to_split] <- suffix_without_sep
   temp_dpdict$question_alias[temp_dpdict$question_alias == alias_to_split] <- paste0(unname(temp_dpdict$question_alias[temp_dpdict$question_alias == alias_to_split]), sep, stems)
 
   if (is.survey_data(x)) {
@@ -1598,7 +2307,7 @@ split_grid_labels <- function(x, alias_to_split, example_stem_to_add, count_befo
 #'
 #' @param temp_dat survey data dataframe
 #' @param temp_dpdict 'dpdict' to check for alignment with temp_dat
-#' @param warn_only boolean. if TRUE returns warnings instead of errors
+#' @param warn_only logical. if TRUE returns warnings instead of errors
 #'
 #' @return (invisibly) TRUE if passes all checks, else warnings or errors
 #' @export
@@ -1687,13 +2396,13 @@ validate_dat_dpdict_alignment <- function(temp_dat, temp_dpdict, warn_only = FAL
 #' returns(invisibly) a temp_dpdict filtered for duplicates, so it can be more easily viewed e.g. with View()
 #'
 #' @param temp_dpdict a dataframe, assumed to be survey data
-#' @param check_variable_names boolean. whether to check for and report on duplicate variable names.
-#' @param check_variable_labels boolean. whether to check for and report on duplicate variable labels.
-#' @param check_alias_with_suffix boolean. whether to check for and report on duplicate aliases with suffixes.
+#' @param check_variable_names logical. whether to check for and report on duplicate variable names.
+#' @param check_variable_labels logical. whether to check for and report on duplicate variable labels.
+#' @param check_alias_with_suffix logical. whether to check for and report on duplicate aliases with suffixes.
 #' @param ignore_variable_name_from_label if TRUE, removes any cases of paste0(new_variable_name, variable_name_sep) from new_variable_label before working
 #' for example, would remove "SC1: ", from "SC1: Country"
 #' @param variable_name_sep specify the sep used to delineate variable name from label, e.g. ":" in "SC1: Country"
-#' @param warn_only boolean. if TRUE returns warnings instead of errors
+#' @param warn_only logical. if TRUE returns warnings instead of errors
 #'
 #' @return TRUE (invisibly) if no issues, else warnings or errors
 #' @export
@@ -1909,11 +2618,443 @@ validate_survey_data <- function(x) {
 }
 
 
-# TO DO:
-# - implement core S3 methods for the new survey_data object
-# - update all functions to work with the survey_data object
-# - create simple update_metadata and apply_metadata functions
-# - Add support for language-specific variable names
+#' Print method for survey_data objects
+#'
+#' @param x A survey_data object
+#' @param ... Additional arguments passed to print
+#' @return x invisibly
+#' @export
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' print(survey_obj)
+print.survey_data <- function(x, ...) {
+  # Validate input
+  if (!is.survey_data(x)) {
+    stop("Object must be of class 'survey_data'")
+  }
 
-# ! set some reasonable fallback logic in create_dict_with_metadata, e.g. for case when not every label unique or description within group unique
-# ! setup call to small LLM for automatic aliases.
+  # Get dimensions and metadata counts
+  n_obs <- nrow(x$dat)
+  n_vars <- ncol(x$dat)
+  n_groups <- length(unique(x$dpdict$question_group))
+
+  # Get separator patterns from dpdict attributes
+  seps <- attr(x$dpdict, "sep_patterns")
+  if (is.null(seps)) {
+    seps <- check_seps(x$dat)$separators
+  }
+
+  # Create output string
+  cat("Survey data object:\n")
+  cat(sprintf(" %d observations of %d variables with %d question groups\n",
+              n_obs, n_vars, n_groups))
+
+  cat("Separator patterns:\n")
+  if (!is.na(seps["var_name_sep"])) {
+    cat(sprintf(" Variable names: '%s' (e.g. Q1%s1)\n",
+                seps["var_name_sep"], seps["var_name_sep"]))
+  }
+  if (!is.na(seps["prefix_sep"]) || !is.na(seps["statement_sep"])) {
+    cat(" Variable labels:")
+    if (!is.na(seps["prefix_sep"])) {
+      cat(sprintf(" '%s' prefix", seps["prefix_sep"]))
+    }
+    if (!is.na(seps["statement_sep"])) {
+      cat(sprintf("%s'%s' between statements",
+                  if (!is.na(seps["prefix_sep"])) "," else "",
+                  seps["statement_sep"]))
+    }
+    cat("\n")
+  }
+
+  invisible(x)
+}
+
+
+#' Subsetting method for survey_data objects
+#'
+#' @param x A survey_data object
+#' @param i Row indices
+#' @param j Column indices
+#' @param drop If TRUE, returns a vector when only one column is selected
+#' @return A new survey_data object containing only the selected data and corresponding metadata
+#' @export
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' # Select first 3 rows
+#' subset_rows <- survey_obj[1:3, ]
+#' # Select specific columns
+#' subset_cols <- survey_obj[, c("uid", "csat")]
+`[.survey_data` <- function(x, i, j, drop = FALSE) {
+  # Validate input
+  if (!is.survey_data(x)) {
+    stop("Object must be of class 'survey_data'")
+  }
+
+  # Handle missing i or j
+  if (missing(i)) i <- seq_len(nrow(x$dat))
+  if (missing(j)) j <- seq_len(ncol(x$dat))
+
+  # Convert column names to indices if necessary
+  if (is.character(j)) {
+    j <- match(j, names(x$dat))
+    if (any(is.na(j))) {
+      stop("Unknown column names: ",
+           paste(j[is.na(j)], collapse = ", "))
+    }
+  }
+
+  # Validate numeric indices
+  if (is.numeric(j)) {
+    if (any(j > ncol(x$dat)) || any(j < 1)) {
+      stop("Column subscript out of bounds")
+    }
+  }
+
+  # Subset the data
+  new_dat <- x$dat[i, j, drop = FALSE]
+
+  # Get the variable names that were selected
+  selected_vars <- names(new_dat)
+
+  # Subset the metadata
+  new_dpdict <- x$dpdict[x$dpdict$variable_names %in% selected_vars, ]
+
+  # Create new survey_data object
+  structure(
+    list(
+      dat = new_dat,
+      dpdict = new_dpdict
+    ),
+    class = "survey_data"
+  )
+}
+
+#' Single column extraction method for survey_data objects
+#'
+#' @param x A survey_data object
+#' @param i Name or index of the column to extract
+#' @return The selected column from the data
+#' @export
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' # Extract a column by name
+#' uid_vector <- survey_obj[["uid"]]
+#' # Extract a column by position
+#' first_column <- survey_obj[[1]]
+`[[.survey_data` <- function(x, i) {
+  if (!is.survey_data(x)) {
+    stop("Object must be of class 'survey_data'")
+  }
+
+  # Handle numeric indices
+  if (is.numeric(i)) {
+    if (i > ncol(x$dat) || i < 1) {
+      stop("Column subscript out of bounds")
+    }
+  }
+
+  # Handle character indices
+  if (is.character(i) && !(i %in% names(x$dat))) {
+    stop("Unknown column name: ", i)
+  }
+
+  x$dat[[i]]
+}
+
+
+#' Filter method for survey_data objects
+#'
+#' Subsets rows of the survey data based on conditions, preserving metadata.
+#'
+#' @param .data A survey_data object.
+#' @param ... Filter conditions passed to dplyr::filter.
+#' @importFrom dplyr filter
+#' @importFrom rlang enquos !!!
+#' @return A new survey_data object with filtered data and unchanged metadata.
+#' @export
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' # Filter rows where uid > 5
+#' filtered <- dplyr::filter(survey_obj, uid > 5)
+filter.survey_data <- function(.data, ...) {
+  if (!is.survey_data(.data)) stop("'.data' must be a survey_data object")
+
+  # Capture the expressions with quosures to maintain the correct environment
+  dots <- rlang::enquos(...)
+
+  new_dat <- dplyr::filter(.data$dat, !!!dots)
+  structure(
+    list(
+      dat = new_dat,
+      dpdict = .data$dpdict
+    ),
+    class = "survey_data"
+  )
+}
+
+#' Select method for survey_data objects
+#'
+#' Selects columns from the survey data, updating metadata to reflect selections and renames.
+#'
+#' @param .data A survey_data object.
+#' @param ... Column selections passed to dplyr::select (supports renaming).
+#' @importFrom dplyr select
+#' @importFrom tidyselect eval_select
+#' @importFrom rlang expr
+#' @return A new survey_data object with selected columns and updated metadata.
+#' @exportS3Method dplyr::select survey_data
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' # Select specific columns
+#' selected <- dplyr::select(survey_obj, uid, csat)
+#' # Select and rename
+#' renamed <- dplyr::select(survey_obj, user_id = uid, satisfaction = csat)
+select.survey_data <- function(.data, ...) {
+  if (!is.survey_data(.data)) stop("'.data' must be a survey_data object")
+
+  # Evaluate selection expressions
+  selected <- tidyselect::eval_select(rlang::expr(c(...)), .data$dat)
+  new_names <- names(selected)
+  positions <- selected
+  original_names <- names(.data$dat)[positions]
+
+  # Create mapping for renames
+  name_mapping <- stats::setNames(new_names, original_names)
+
+  # Subset and rename data
+  new_dat <- .data$dat[, positions, drop = FALSE]
+  names(new_dat) <- new_names
+
+  # Update dpdict: filter to selected variables, apply renames, and reorder
+  new_dpdict <- .data$dpdict[.data$dpdict$variable_names %in% original_names, ]
+  new_dpdict$variable_names <- as.character(name_mapping[new_dpdict$variable_names])
+  new_dpdict <- new_dpdict[match(new_names, new_dpdict$variable_names), ]
+
+  structure(
+    list(
+      dat = new_dat,
+      dpdict = new_dpdict
+    ),
+    class = "survey_data"
+  )
+}
+
+#' Create a labeled value for use within mutate.survey_data
+#'
+#' @param x The value expression
+#' @param label The variable label to apply
+#' @return The value with an attribute indicating the desired label
+#' @export
+#' @examples
+#' # Used within mutate.survey_data for labeling new variables
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' result <- dplyr::mutate(survey_obj, new_var = with_label(uid * 2, "Doubled ID"))
+with_label <- function(x, label) {
+  attr(x, "variable_label") <- label
+  x
+}
+
+#' Adds or modifies columns in the survey data, automatically updating metadata for new variables
+#' using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
+#' Supports custom variable labels using the with_label() function.
+#'
+#' @param .data A survey_data object.
+#' @param ... Mutation expressions passed to dplyr::mutate. Variable labels can be specified
+#'   using with_label(expr, "label").
+#' @importFrom dplyr mutate
+#' @importFrom rlang enquos
+#' @return A new survey_data object with mutated data and updated metadata.
+#' @exportS3Method dplyr::mutate survey_data
+#' @examples
+#' # Add a new variable with a custom label
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' survey_obj %>%
+#'   dplyr::mutate(new_var = with_label(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
+#'
+#' # Modify an existing variable with a new label
+#' survey_obj %>%
+#'   dplyr::mutate(uid = with_label(uid * 2, "uid doubled"))
+mutate.survey_data <- function(.data, ...) {
+  if (!is.survey_data(.data)) {
+    stop("'.data' must be a survey_data object")
+  }
+
+  # Get expressions to detect which variables are being modified
+  dots <- rlang::enquos(...)
+  modified_vars <- names(dots)
+
+  # Store original data for comparison
+  original_names <- names(.data$dat)
+  original_dat <- .data$dat
+
+  # Create environment with with_label function
+  with_label_fn <- function(x, label) {
+    attr(x, "variable_label") <- label
+    x
+  }
+
+  # Perform the mutation
+  new_dat <- dplyr::mutate(original_dat, ...)
+
+  new_names <- names(new_dat)
+
+  # Identify new variables (not in original dataset)
+  new_vars <- setdiff(new_names, original_names)
+
+  # Identify existing variables that were modified
+  changed_vars <- modified_vars[modified_vars %in% original_names]
+
+  # Process labels for new and modified variables
+  custom_labels <- list()
+
+  # Extract custom labels from attributes created by with_label
+  for (var in c(new_vars, changed_vars)) {
+    if (!is.null(attr(new_dat[[var]], "variable_label"))) {
+      custom_labels[[var]] <- attr(new_dat[[var]], "variable_label")
+      # Remove the temporary attribute
+      attr(new_dat[[var]], "variable_label") <- NULL
+    }
+  }
+
+  # Set default labels for new variables that don't have custom labels
+  if (length(new_vars) > 0) {
+    for (var in new_vars) {
+      if (!var %in% names(custom_labels)) {
+        # Use variable name as the default label
+        attr(new_dat[[var]], "label") <- var
+      } else {
+        # Apply custom label
+        attr(new_dat[[var]], "label") <- custom_labels[[var]]
+      }
+    }
+  }
+
+  # Apply custom labels to modified variables
+  if (length(changed_vars) > 0) {
+    for (var in changed_vars) {
+      if (var %in% names(custom_labels)) {
+        attr(new_dat[[var]], "label") <- custom_labels[[var]]
+      }
+    }
+  }
+
+  # Start with existing dpdict
+  existing_dpdict <- .data$dpdict
+
+  # Handle new variables if there are any
+  if (length(new_vars) > 0) {
+    # Initialize new rows with basic info
+    new_rows <- data.frame(
+      variable_names = new_vars,
+      variable_class = sapply(new_dat[new_vars], function(x) paste(class(x), collapse = ", ")),
+      stringsAsFactors = FALSE
+    )
+
+    # Add other columns with appropriate defaults
+    other_cols <- setdiff(names(existing_dpdict), c("variable_names", "variable_class"))
+    for (col in other_cols) {
+      if (col == "variable_labels") {
+        # Use custom labels where available, otherwise use variable name
+        new_rows[[col]] <- sapply(new_vars, function(var) {
+          if (var %in% names(custom_labels)) {
+            custom_labels[[var]]
+          } else {
+            var
+          }
+        })
+      } else if (col == "question_group") {
+        new_rows[[col]] <- NA_character_  # Empty string as placeholder
+      } else {
+        # Initialize with NA of appropriate type based on the column
+        col_type <- class(existing_dpdict[[col]])
+        if ("logical" %in% col_type) {
+          new_rows[[col]] <- NA
+        } else if ("character" %in% col_type) {
+          new_rows[[col]] <- NA_character_
+        } else if ("numeric" %in% col_type || "integer" %in% col_type) {
+          new_rows[[col]] <- NA_real_
+        } else {
+          new_rows[[col]] <- NA
+        }
+      }
+    }
+
+    # Combine with existing dpdict
+    temp_dpdict <- rbind(existing_dpdict, new_rows)
+
+  } else {
+    temp_dpdict <- existing_dpdict
+  }
+
+  # Update variable_class and labels for changed variables
+  if (length(changed_vars) > 0) {
+    for (var in changed_vars) {
+      # Update class
+      temp_dpdict$variable_class[temp_dpdict$variable_names == var] <-
+        paste(class(new_dat[[var]]), collapse = ", ")
+
+      # Update label if a custom one was provided
+      if (var %in% names(custom_labels)) {
+        temp_dpdict$variable_labels[temp_dpdict$variable_names == var] <- custom_labels[[var]]
+      }
+    }
+  }
+
+  # Create variables_to_update logical vector
+  vars_to_update <- rep(FALSE, nrow(temp_dpdict))
+  for (var in c(new_vars, changed_vars)) {
+    vars_to_update[temp_dpdict$variable_names == var] <- TRUE
+  }
+
+  # Update metadata for new and changed variables
+  if (any(vars_to_update)) {
+    updated_dpdict <- update_dict_with_metadata(
+      survey_obj = NULL,
+      temp_dat = new_dat,
+      temp_dpdict = temp_dpdict,
+      variables_to_update = vars_to_update
+    )
+  } else {
+    updated_dpdict <- temp_dpdict
+  }
+
+  # Ensure dpdict order matches new_dat
+  new_dpdict <- updated_dpdict[match(new_names, updated_dpdict$variable_names), ]
+
+  # Generate informative messages
+  if (length(new_vars) > 0) {
+    labeled_new <- new_vars[new_vars %in% names(custom_labels)]
+    if (length(labeled_new) > 0) {
+      message("New variables added with custom labels: ",
+              paste(labeled_new, collapse = ", "))
+    }
+    unlabeled_new <- new_vars[!new_vars %in% names(custom_labels)]
+    if (length(unlabeled_new) > 0) {
+      message("New variables added with default labels: ",
+              paste(unlabeled_new, collapse = ", "))
+    }
+  }
+
+  if (length(changed_vars) > 0) {
+    labeled_changed <- changed_vars[changed_vars %in% names(custom_labels)]
+    if (length(labeled_changed) > 0) {
+      message("Existing variables modified with new labels: ",
+              paste(labeled_changed, collapse = ", "))
+    }
+    unlabeled_changed <- changed_vars[!changed_vars %in% names(custom_labels)]
+    if (length(unlabeled_changed) > 0) {
+      message("Existing variables modified with preserved labels: ",
+              paste(unlabeled_changed, collapse = ", "))
+    }
+  }
+
+  # Return updated survey_data object
+  structure(
+    list(
+      dat = new_dat,
+      dpdict = new_dpdict
+    ),
+    class = "survey_data"
+  )
+}

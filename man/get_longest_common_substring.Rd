@@ -11,7 +11,7 @@ get_longest_common_substring(string1, string2, fromstart = FALSE)
 
 \item{string2}{another string}
 
-\item{fromstart}{boolean. if true, finds longest common substring from the start of string1. if false, looks for lcs at any position.}
+\item{fromstart}{logical. if true, finds longest common substring from the start of string1. if false, looks for lcs at any position.}
 }
 \value{
 substring which represents the longest common starting substring found between string1 and string2, with an attribute lcs_distance representing the number of characters in the lcs

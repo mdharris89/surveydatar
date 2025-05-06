@@ -8,7 +8,7 @@ any_gsub(
   pattern_vector,
   replacement_value = "",
   find_in_vector,
-  trimws_at_end = TRUE,
+  trimws_at_end = FALSE,
   ignore.case = FALSE,
   perl = FALSE,
   fixed = FALSE,
@@ -41,5 +41,5 @@ uses fixed = TRUE in gsub and trims whitespace at the end by default
 NA_character_ and empty strings are treated as valid patterns and can match
 }
 \examples{
-any_gsub(c("cat", "hat"), c("shoe dog", "hat dog", "cat dog"), "")
+any_gsub(c("cat", "hat"), "", c("shoe dog", "hat dog", "cat dog"))
 }

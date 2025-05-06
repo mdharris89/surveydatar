@@ -19,8 +19,3 @@ Convert punctuation vector to regex pattern
 Takes a vector of punctuation characters or strings (allowing whitespace) and returns a regex-safe pattern
 that matches any one of them. Escapes special regex characters and whitespace.
 }
-\examples{
-puncts_to_pattern(c(":", ".", "-"))  # returns "[\\.:\\-]"
-puncts_to_pattern(c("|", "/", "."))  # returns "[\\.\\|/]"
-
-}

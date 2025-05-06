@@ -92,8 +92,8 @@ any_grepl <- function(pattern_vector, find_in_vector, ignore.case = FALSE, perl 
 #' @export
 #'
 #' @examples
-#' any_gsub(c("cat", "hat"), c("shoe dog", "hat dog", "cat dog"), "")
-any_gsub <- function(pattern_vector, replacement_value = "", find_in_vector, trimws_at_end = TRUE, ignore.case = FALSE, perl = FALSE, fixed = FALSE, useBytes = FALSE) {
+#' any_gsub(c("cat", "hat"), "", c("shoe dog", "hat dog", "cat dog"))
+any_gsub <- function(pattern_vector, replacement_value = "", find_in_vector, trimws_at_end = FALSE, ignore.case = FALSE, perl = FALSE, fixed = FALSE, useBytes = FALSE) {
 
   # Input validation
   if (!is.character(pattern_vector) || !is.character(find_in_vector)) {
@@ -214,7 +214,7 @@ insert_into_str <- function(string_to_insert_into, string_to_insert, string_to_f
   # handle cases where string_to_find not found
   if (!grepl(string_to_find, string_to_insert_into)) {
     if (insert_at_end_if_not_found == TRUE) {
-      warning(paste0("'", string_to_find, "' not found in '", string_to_insert_into, "'", "'. Inserting at end instead."))
+      warning(paste0("'", string_to_find, "' not found in '", string_to_insert_into, "'. Inserting at end instead."))
       return(paste0(string_to_insert_into, string_to_insert))
     } else {
       warning(paste0("'", string_to_find, "' not found in '", string_to_insert_into, "'. Returning without insertion."))
@@ -657,7 +657,7 @@ check_key_consistency <- function(temp_dat, key_name){
     dplyr::summarise(dplyr::across(dplyr::everything(), ~ dplyr::n_distinct(.) > 1))
 
   # If there are no non-unique columns, the key is consistent
-  if (!any(dplyr::select(dplyr::all_of(problem_matrix), -key_name) == TRUE)) {
+  if (!any(problem_matrix[, setdiff(names(problem_matrix), key_name)])) {
     return(TRUE)
   } else {
     # Return a data frame containing only the problematic rows and columns
@@ -676,6 +676,7 @@ check_key_consistency <- function(temp_dat, key_name){
 #' @param temp_dat a dataframe
 #' @param group_var the name of the grouping variable
 #'
+#' @importFrom rlang .data
 #' @return the grouped dataframe with concatenated values
 #' @export
 #'
@@ -713,3 +714,54 @@ concatenate_by_group <- function(temp_dat, group_var){
 
 }
 
+#' puncts_to_pattern
+#'
+#' Convert punctuation vector to regex pattern
+#'
+#' Takes a vector of punctuation characters or strings (allowing whitespace) and returns a regex-safe pattern
+#' that matches any one of them. Escapes special regex characters and whitespace.
+#'
+#' @param puncts Character vector of punctuation marks
+#' @return A string suitable for use in regex pattern matching
+
+puncts_to_pattern <- function(puncts) {
+  # Characters that need escaping in regex
+  special_chars <- c(".", "|", "(", ")", "[", "]", "{", "}", "^", "$", "*", "+", "?", "\\", " ")
+
+  # Split into single chars and multi-char strings
+  single_chars <- puncts[nchar(puncts) == 1]
+  multi_chars <- puncts[nchar(puncts) > 1]
+
+  # Process single characters
+  if (length(single_chars) > 0) {
+    escaped_singles <- sapply(single_chars, function(p) {
+      if(p == " ") "\\s"
+      else if(p %in% special_chars) paste0("\\", p)
+      else p
+    })
+    singles_pattern <- if (length(escaped_singles) > 0) {
+      sprintf("[%s]", paste0(escaped_singles, collapse = ""))
+    }
+  }
+
+  # Process multi-character strings
+  if (length(multi_chars) > 0) {
+    escaped_multis <- sapply(multi_chars, function(p) {
+      # Escape any special regex characters within the string
+      chars <- strsplit(p, "")[[1]]
+      escaped_chars <- sapply(chars, function(c) {
+        if(c == " ") "\\s"
+        else if(c %in% special_chars) paste0("\\", c)
+        else c
+      })
+      paste0(escaped_chars, collapse = "")
+    })
+    multis_pattern <- paste0("(", paste(escaped_multis, collapse = "|"), ")")
+  }
+
+  # Combine patterns
+  if (length(single_chars) == 0) return(multis_pattern)
+  if (length(multi_chars) == 0) return(singles_pattern)
+  paste0("(", singles_pattern, "|", multis_pattern, ")")
+
+}

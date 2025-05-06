@@ -4,10 +4,12 @@
 \alias{create_dict_with_metadata}
 \title{create_dict_with_metadata}
 \usage{
-create_dict_with_metadata(temp_dat)
+create_dict_with_metadata(temp_dat, noisy = 0)
 }
 \arguments{
 \item{temp_dat}{a survey data frame ('dat')}
+
+\item{noisy}{integer between 1 and 4, relating to how verbose to print.}
 }
 \value{
 a dpdict with metadata
@@ -16,7 +18,7 @@ a dpdict with metadata
 a wrapper around update_dict_with_metadata to create a dpdict from dat with metadata.
 }
 \details{
-calls create_dict() first and removes unneeded variables, so you can create a dpdict with metadata from a dat with a single function
+calls create_dict() first then adds metadata, so you can create a dpdict with metadata from a dat with a single function
 }
 \examples{
 create_dict_with_metadata(get_big_test_dat(n=10))
