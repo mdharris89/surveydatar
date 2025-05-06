@@ -192,6 +192,9 @@ realiselabelled <- function(data, max_labels = 12,
 
   # Process each column
   for (var_name in names(data)) {
+    # Get existing label if present
+    existing_label <- sjlabelled::get_label(data[[var_name]])
+
     # Skip if already labelled
     if (sjlabelled::is_labelled(data[[var_name]])) {
       next
@@ -215,23 +218,31 @@ realiselabelled <- function(data, max_labels = 12,
         data[[var_name]] <- sjlabelled::set_labels(data[[var_name]], labels = MRlabels)
       }
 
+      # Re-apply existing label
+      if (!is.null(existing_label) && nchar(existing_label) > 0) {
+        data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
+      }
+
     } else if (is.character(data[[var_name]])) {
       # Apply custom lookup if available
       if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
         data[[var_name]] <- character_to_labelled_via_dict(
           data[[var_name]],
-          new_variable_label = NA,
+          new_variable_label = existing_label,
           lookup_dict = value_label_lookup[[var_name]]
         )
       } else if (length(unique(stats::na.omit(data[[var_name]]))) <= max_labels) {
         # Convert to labelled if fewer than max_labels unique values
         data[[var_name]] <- character_to_labelled_via_dict(
           data[[var_name]],
-          new_variable_label = NA
+          new_variable_label = existing_label
         )
       }
 
     } else if (is.factor(data[[var_name]])) {
+      # Get levels for label creation
+      factor_levels <- levels(data[[var_name]])
+
       # Convert factor to labelled
       data[[var_name]] <- haven::labelled(as.numeric(data[[var_name]]))
 
@@ -240,11 +251,14 @@ realiselabelled <- function(data, max_labels = 12,
                                                    labels = value_label_lookup[[var_name]])
       } else {
         # Create labels from factor levels
-        level_labels <- stats::setNames(
-          levels(data[[var_name]]),
-          seq_along(levels(data[[var_name]]))
-        )
+        level_labels <- seq_along(factor_levels)
+        names(level_labels) <- factor_levels
         data[[var_name]] <- sjlabelled::set_labels(data[[var_name]], labels = level_labels)
+      }
+
+      # Re-apply existing label
+      if (!is.null(existing_label) && nchar(existing_label) > 0) {
+        data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
       }
 
     } else if (is.numeric(data[[var_name]])) {
@@ -253,13 +267,24 @@ realiselabelled <- function(data, max_labels = 12,
         data[[var_name]] <- haven::labelled(data[[var_name]])
         data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
                                                    labels = value_label_lookup[[var_name]])
+
+        # Re-apply existing label
+        if (!is.null(existing_label) && nchar(existing_label) > 0) {
+          data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
+        }
+
       } else if (length(unique(stats::na.omit(data[[var_name]]))) <= max_labels) {
         # Convert to labelled if fewer than max_labels unique values
         data[[var_name]] <- haven::labelled(data[[var_name]])
+
+        # Re-apply existing label
+        if (!is.null(existing_label) && nchar(existing_label) > 0) {
+          data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
+        }
       }
     }
 
-    # Apply variable labels if provided
+    # Apply variable labels if provided (overrides existing labels)
     if (!is.null(variable_labels) && var_name %in% variable_labels$`variable name`) {
       label_idx <- which(variable_labels$`variable name` == var_name)
       data[[var_name]] <- sjlabelled::set_label(
