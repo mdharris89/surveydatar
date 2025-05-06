@@ -262,24 +262,45 @@ realiselabelled <- function(data, max_labels = 12,
       }
 
     } else if (is.numeric(data[[var_name]])) {
-      # Apply custom lookup if available
-      if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
+      unique_values <- unique(stats::na.omit(data[[var_name]]))
+
+      # Check if the variable contains only 0s and 1s (multiple response variable)
+      if (length(unique_values) <= 2 && all(unique_values %in% c(0, 1))) {
+        # This looks like a multiple response variable
         data[[var_name]] <- haven::labelled(data[[var_name]])
-        data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
-                                                   labels = value_label_lookup[[var_name]])
+
+        # Apply multiresponse labels
+        if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
+          data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
+                                                     labels = value_label_lookup[[var_name]])
+        } else {
+          data[[var_name]] <- sjlabelled::set_labels(data[[var_name]], labels = MRlabels)
+        }
 
         # Re-apply existing label
         if (!is.null(existing_label) && nchar(existing_label) > 0) {
           data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
         }
+      } else {
+        # Apply custom lookup if available
+        if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
+          data[[var_name]] <- haven::labelled(data[[var_name]])
+          data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
+                                                     labels = value_label_lookup[[var_name]])
 
-      } else if (length(unique(stats::na.omit(data[[var_name]]))) <= max_labels) {
-        # Convert to labelled if fewer than max_labels unique values
-        data[[var_name]] <- haven::labelled(data[[var_name]])
+          # Re-apply existing label
+          if (!is.null(existing_label) && nchar(existing_label) > 0) {
+            data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
+          }
 
-        # Re-apply existing label
-        if (!is.null(existing_label) && nchar(existing_label) > 0) {
-          data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
+        } else if (length(unique_values) <= max_labels) {
+          # Convert to labelled if fewer than max_labels unique values
+          data[[var_name]] <- haven::labelled(data[[var_name]])
+
+          # Re-apply existing label
+          if (!is.null(existing_label) && nchar(existing_label) > 0) {
+            data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
+          }
         }
       }
     }
