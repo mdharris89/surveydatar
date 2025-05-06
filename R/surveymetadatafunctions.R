@@ -2043,7 +2043,12 @@ get_unique_suffixes <- function(temp_dpdict, var_with_unique_id = "variable_name
 
       question_group_solved <- FALSE
 
-      if (all(!sapply(question_group_list, is.na))) { # if all questions in question group have candidate suffixes
+      if ( all(
+        vapply(
+          question_group_list,
+          function(df) any(!is.na(df$affix_found)),
+          logical(1)
+        ))) { # if all questions in question group have candidate suffixes
         # find number of possibilities for a common sep_type and sep_count_from_end across all variables in the same question group
         min_candidates <- min(sapply(question_group_list, nrow))
         # first, attempt filtering for both type of sep and sep in same place
