@@ -607,11 +607,78 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
 #' @examples create_dict_with_metadata(get_big_test_dat(n=10))
 create_dict_with_metadata <- function(temp_dat, noisy = 0){
   # if no temp_dpdict provided, create one and initialize metadata columns
+
+  # if no label and labels attributes (e.g. from csv imports) add them, and if variable labels NA, use variable names
+  missing_var_labels <- FALSE
+  na_var_labels <- FALSE
+  for (var_name in names(temp_dat)){
+    if (is.null(attr(temp_dat[[var_name]], "label", exact = TRUE))){
+      attr(temp_dat[[var_name]], "label") <- var_name
+      missing_var_labels <- TRUE
+    }
+    if (is.na(attr(temp_dat[[var_name]], "label", exact = TRUE))){
+      attr(temp_dat[[var_name]], "label") <- var_name
+      na_var_labels <- TRUE
+    }
+    if (is.null(attr(temp_dat[[var_name]], "labels", exact = TRUE))){
+      attr(temp_dat[[var_name]], "labels") <- NULL
+    }
+  }
+  if(missing_var_labels){
+    warning("dat missing variable labels. Added variable names in place.")
+  }
+  if(na_var_labels){
+    warning("NA found for variable labels in dat.")
+  }
+
   temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
   temp_dpdict <- update_dict_with_metadata(survey_obj = NULL, temp_dat, temp_dpdict, noisy = noisy)
   return(temp_dpdict)
 }
 
+
+#' Standardise separators, in survey data and dpdict
+#'
+#' Required for update_dict_with_metadata
+#'
+#' @param temp_dat A data frame containing the survey data
+#' @param temp_dpdict Optional. The associated dpdict.
+#' @param seps Optional. A list specifying the separators to use. If NULL, current patterns detected in the data will be used.
+#'
+#' @return A list with dat and dpdict, both with standardised variable names
+#' @export
+#' @examples
+#' dat <- get_minimal_labelled_test_dat()
+#' dpdict <- create_dict(dat, prefill = TRUE)
+#' standardised <- standardise_survey_separators(dat, dpdict)
+standardise_survey_separators <- function(temp_dat, temp_dpdict = NULL, seps_to_use = NULL) {
+  # If dpdict not provided, create a minimal one
+  if (is.null(temp_dpdict)) {
+    temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
+  }
+
+  # Check seps
+  check_seps_result <- check_seps(temp_dat)
+  current_seps <- as.list(check_seps_result$separators)
+
+  # If seps_to_use not provided, use current seps
+  if (is.null(seps_to_use)) {
+    seps_to_use <- current_seps
+  }
+
+  # Standardize seps in variable names and labels
+  standardised_seps <- get_updated_seps(temp_dat, check_seps_result, seps_to_use)
+  temp_dpdict$variable_names <- standardised_seps$new_variable_names
+  temp_dpdict$variable_labels <- standardised_seps$new_variable_labels
+
+  # Also update dat variable names to match
+  names(temp_dat) <- standardised_seps$new_variable_names
+
+  # Store sep patterns as an attribute
+  attr(temp_dpdict, "sep_patterns") <- seps_to_use
+
+  return(list(dat = temp_dat, dpdict = temp_dpdict))
+}
 
 #' update_dict_with_metadata
 #'
@@ -749,6 +816,16 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   if (!is.logical(edit_aliases) || length(edit_aliases) != 1){
     stop("edit_aliases must be a single logical value", call. = FALSE)
   }
+
+  # Ensure variable names matching in dat and dpdict
+  if (!all(temp_dpdict$variable_names %in% names(temp_dat)) ||
+      !all(names(temp_dat) %in% temp_dpdict$variable_names)) {
+    stop("Variable names in dat and dpdict don't match. Try calling standardise_survey_separators first.")
+  }
+
+  # Ensure no duplicate variable names or labels
+  validate_no_dpdict_duplicates(temp_dpdict, check_variable_names = TRUE, check_variable_labels = TRUE)
+
   ## end of validation
 
   # if no variables_to_update provided, we'll update all
@@ -756,21 +833,13 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     variables_to_update <- rep(TRUE, ncol(temp_dat))
   }
 
-  # check seps
-  check_seps_result <- check_seps(temp_dat)
-  current_seps <- as.list(check_seps_result$separators)
-
-  # if seps_to_use not provided, use current seps
-  if(is.null(seps_to_use)) {
-    seps_to_use <- current_seps
+  # Get seps from dpdict attributes or from dat
+  seps_to_use <- attr(temp_dpdict, "sep_patterns")
+  if (is.null(seps_to_use)) {
+    check_seps_result <- check_seps(temp_dat)
+    seps_to_use <- as.list(check_seps_result$separators)
+    attr(temp_dpdict, "sep_patterns") <- seps_to_use
   }
-
-  # standardise seps in variable names and labels
-  standardised_seps <- get_updated_seps(temp_dat, check_seps_result, seps_to_use)
-  temp_dpdict$variable_names[variables_to_update] <- standardised_seps$new_variable_names[variables_to_update]
-  temp_dpdict$variable_labels[variables_to_update] <- standardised_seps$new_variable_labels[variables_to_update]
-
-  attr(temp_dpdict, "sep_patterns") <- seps_to_use
 
   # initialize any missing columns
   character_cols_to_initialize <- c("question_group", "question_lcs", "variable_class", "questiontype", "question_suffix", "question_alias", "question_description", "alias_with_suffix", "question_folder")
@@ -811,7 +880,9 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     if(noisy >= 2){print(paste0("Checking ", temp_dpdict$variable_names[variables_to_update][i], " for multiresponse"))}
 
     set_of_variable_names_in_question_group <- temp_dpdict$variable_names[temp_dpdict$question_group == temp_dpdict$question_group[i] & variables_to_update]
-    question_group_within_dat <- temp_dat[names(temp_dat[,variables_to_update]) %in% set_of_variable_names_in_question_group]
+
+    question_group_within_dat <- temp_dat[names(temp_dat)[variables_to_update]]
+    # question_group_within_dat <- temp_dat[names(temp_dat[,variables_to_update]) %in% set_of_variable_names_in_question_group] # ! error here. [, ] syntax changes _s to .s.
 
     count_within_question_group <- vapply(question_group_within_dat, function(x) any(!is.na(x) & x != 0), logical(1)) # within each variable in question group, check that there is at least one value that is not NA or 0
 
@@ -1299,8 +1370,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
       current_class <- class(temp_dat[[match(TRUE, names(temp_dat) == current_question_dpdict$variable_names[i])]])
       current_question_group <- gsub("_.*", "", current_question_dpdict$question_group[i]) # current_question defined WITHOUT any suffixes
 
-      # ! error here. current_question_dpdict is sometimes empty (mixed of NULLs and NAs)
-      current_numlabelledvalues <- length(sjlabelled::get_labels(temp_dat[, current_question_dpdict$variable_names[i], drop = FALSE])[[1]]) # we want character variables to always be given their own question group, so for example if two character variables have value labels and these obviously different, they're grouped separately
+      current_numlabelledvalues <- length(sjlabelled::get_labels(temp_dat[[current_question_dpdict$variable_names[i]]])) # we want character variables to always be given their own question group, so for example if two character variables have value labels and these obviously different, they're grouped separately
       current_index <- match(current_question_dpdict$variable_names[i], temp_dpdict$variable_names)
 
       if(findlongest == TRUE){
@@ -1891,22 +1961,40 @@ get_unique_suffixes <- function(temp_dpdict, var_with_unique_id = "variable_name
   # reduce to just the columns we need
   small_dpdict <- temp_dpdict %>% dplyr::select(dplyr::all_of(c(var_with_unique_id, var_with_strings, var_with_question_groups)))
 
-  # check that every label is unique - stops if not
-  duplicated_labels <- unique(small_dpdict$variable_labels[duplicated(small_dpdict$variable_labels)])
-  if(length(duplicated_labels) > 0){
-    duplicates_table <- lapply(duplicated_labels, function(x) {
-      paste(temp_dpdict[[var_with_unique_id]][temp_dpdict[[var_with_strings]] == x], collapse = " ")
-    })
-    for(i in 1:nrow(duplicates_table)){
-      print(paste0(duplicates_table[i,1], " FOUND AT: ", duplicates_table[i,2]))}
-    stop("get_unique_suffixes requires unique labels!")
+  # check for duplicates among non-NA labels only
+  non_na_indices <- !is.na(small_dpdict[[var_with_strings]])
+  if(sum(non_na_indices) > 0) {
+    non_na_labels <- small_dpdict[[var_with_strings]][non_na_indices]
+    duplicated_non_na <- duplicated(non_na_labels)
+
+    if(any(duplicated_non_na)){
+      duplicated_labels <- unique(non_na_labels[duplicated_non_na])
+      duplicates_message <- character(length(duplicated_labels))
+
+      for(i in seq_along(duplicated_labels)){
+        matching_vars <- temp_dpdict[[var_with_unique_id]][temp_dpdict[[var_with_strings]] == duplicated_labels[i]]
+        duplicates_message[i] <- paste0("'", duplicated_labels[i], "' FOUND AT: ", paste(matching_vars, collapse = ", "))
+      }
+      for(msg in duplicates_message){
+        message(msg)
+      }
+      stop("get_unique_suffixes requires unique non-NA labels!")
+    }
   }
 
   # get a list of lists with possible suffixes for every variable, or an NA if no suffix is found
   unique_question_groups <- unique(temp_dpdict[[var_with_question_groups]])
   comparison_list <- lapply(unique_question_groups, function(question_group) {
     question_group_data <- temp_dpdict[temp_dpdict[[var_with_question_groups]] == question_group, ]
-    question_group_list <- lapply(question_group_data[[var_with_strings]], get_affix_df, affix_type = "suffix", seps_priority = seps_priority, filter_results = FALSE)
+
+    question_group_list <- lapply(seq_along(question_group_data[[var_with_strings]]), function(i){
+      label <- question_group_data[[var_with_strings]][i]
+      if(is.na(label)){
+        return(NA)
+      } else {
+        return(get_affix_df(label, affix_type = "suffix", seps_priority = seps_priority, filter_results = FALSE))
+      }
+    })
 
     if (all(is.na(question_group_list))) {
       if (noisy >= 1) {
@@ -1914,7 +2002,12 @@ get_unique_suffixes <- function(temp_dpdict, var_with_unique_id = "variable_name
       }
     } else if (any(is.na(question_group_list))) {
       if (noisy >= 1) {
-        na_example <- question_group_data[[var_with_strings]][is.na(question_group_list)][1]
+        na_indices <- which(is.na(question_group_list))
+        na_example <- if(!is.na(question_group_data[[var_with_strings]][na_indices[1]])){
+          question_group_data[[var_with_strings]][na_indices[1]]
+        } else {
+          "NA label"
+        }
         print(paste0("Suffixes found for some but not all variables in question_group ", question_group, " e.g. ", na_example))
       }
     }
@@ -2558,12 +2651,29 @@ create_survey_data <- function(dat, dpdict = NULL) {
     stop("'dat' must be a data frame")
   }
 
-  # if dpdict is not provided, create it using create_dict_with_metadata
+  # if dpdict is not provided, create it, standardise it, and add metadata
   if (is.null(dpdict)) {
+    dpdict <- create_dict(dat)
+
+    # Standardise separators (updates both dat and dpdict)
+    standardised <- standardise_survey_separators(dat, dpdict)
+    dat <- standardised$dat
+    dpdict <- standardised$dpdict
+
+    # Fresh dpdict so reflects standardisation of variable names in dat
     dpdict <- create_dict_with_metadata(dat)
+
   } else if (!is.data.frame(dpdict)) {
     stop("'dpdict' must be a data frame")
+  } else {
+    # If dpdict was provided, ensure names are standardised in both
+    standardised <- standardise_survey_separators(dat, dpdict)
+    dat <- standardised$dat
+    dpdict <- standardised$dpdict
   }
+
+  # update dat from dpdict
+  dat <- update_dat_from_dpdict(dat, dpdict)
 
   # use validate_dat_dpdict_alignment to verify alignment between dat and dpdict
   if (!validate_dat_dpdict_alignment(dat, dpdict, warn_only = TRUE)) {
