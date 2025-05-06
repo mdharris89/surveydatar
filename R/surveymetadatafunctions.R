@@ -32,6 +32,32 @@ NULL
 
 ##### functions for viewing metadata #####
 
+#' Display a Data Frame in RStudio Viewer When Available
+#'
+#' This function displays a data frame or similar object using the RStudio data viewer
+#' if available. If RStudio is not detected, it falls back to the standard `utils::View()` function.
+#'
+#' This approach avoids issues on macOS where `utils::View()` may invoke XQuartz by default.
+#'
+#' @param x An object (typically a data frame, tibble, or similar) to be viewed.
+#' @param title An optional title for the viewer tab. Defaults to the name of the object.
+#'
+#' @return Invisibly returns the input object \code{x}.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' my_view(mtcars)
+#' }
+my_view <- function(x, title = deparse(substitute(x))) {
+  if ("tools:rstudio" %in% search() &&
+      exists("View", envir = as.environment("tools:rstudio"))) {
+    get("View", envir = as.environment("tools:rstudio"))(x, title)
+  } else {
+    my_view(x, title)
+  }
+}
+
 #' datamap
 #'
 #' creates a dataframe with variable names, labels and other useful info as rows (SPSS style)
@@ -70,15 +96,7 @@ datamap.survey_data <- function(x, view_or_return = "view") {
                        "value labels", "first values", "first unique values")]
 
   if (view_or_return == "view") {
-    if ("tools:rstudio" %in% search() && exists("View", envir = as.environment("tools:rstudio"))) {
-      get("View", envir = as.environment("tools:rstudio"))(result, paste0("datamap ", deparse(substitute(x))))
-    } else {
-      if ("tools:rstudio" %in% search() && exists("View", envir = as.environment("tools:rstudio"))) {
-        get("View", envir = as.environment("tools:rstudio"))(result, paste0("datamap ", deparse(substitute(x))))
-      } else {
-        utils::View(result, paste0("datamap ", deparse(substitute(x))))
-      }
-    }
+    my_view(result, paste0("datamap ", deparse(substitute(x))))
   } else {
     return(result)
   }
@@ -109,7 +127,7 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
   )
 
   if (view_or_return == "view") {
-    utils::View(out, paste0("datamap ", deparse(substitute(temp_dat))))
+    my_view(out, paste0("datamap ", deparse(substitute(temp_dat))))
     return(invisible(out))
   } else {
     return(out)
