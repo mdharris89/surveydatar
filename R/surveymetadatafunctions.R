@@ -70,7 +70,15 @@ datamap.survey_data <- function(x, view_or_return = "view") {
                        "value labels", "first values", "first unique values")]
 
   if (view_or_return == "view") {
-    utils::View(result, paste0("datamap ", deparse(substitute(x))))
+    if ("tools:rstudio" %in% search() && exists("View", envir = as.environment("tools:rstudio"))) {
+      get("View", envir = as.environment("tools:rstudio"))(result, paste0("datamap ", deparse(substitute(x))))
+    } else {
+      if ("tools:rstudio" %in% search() && exists("View", envir = as.environment("tools:rstudio"))) {
+        get("View", envir = as.environment("tools:rstudio"))(result, paste0("datamap ", deparse(substitute(x))))
+      } else {
+        utils::View(result, paste0("datamap ", deparse(substitute(x))))
+      }
+    }
   } else {
     return(result)
   }
