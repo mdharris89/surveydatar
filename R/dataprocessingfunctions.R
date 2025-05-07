@@ -409,7 +409,7 @@ update_labelled_values <- function(x,
   return(x)
 }
 
-#' replace_NAs_conditional_on_question
+#' conditionally_replace_NAs_in_multiresponse
 #'
 #' converts NAs to a specified code within multi-response question groups, but only where at least one option was selected
 #'
@@ -447,12 +447,12 @@ update_labelled_values <- function(x,
 #' )
 #'
 #' # Replace NAs conditionally
-#' out <- replace_NAs_conditional_on_question(NULL, dat, dpdict)
+#' out <- conditionally_replace_NAs_in_multiresponse(NULL, dat, dpdict)
 #'
 #' # Check results
 #' table(out$Q1_1, useNA = "ifany")
 #' sjlabelled::get_labels(out$Q1_1)
-replace_NAs_conditional_on_question <- function(survey_obj = NULL,
+conditionally_replace_NAs_in_multiresponse <- function(survey_obj = NULL,
                                                 temp_dat = NULL,
                                                 temp_dpdict = NULL,
                                                 newvalue = 0,
@@ -500,6 +500,16 @@ replace_NAs_conditional_on_question <- function(survey_obj = NULL,
                            function(v) is.numeric(v) && sjlabelled::is_labelled(v),
                            logical(1))
     if (!all(all_labelled)) next
+
+    # Make sure the group is binary, i.e. a multiresponse question
+    group_vals <- unique(unlist(lapply(temp_dat[vars], function(v) v[!is.na(v)])))
+    if (!all(group_vals %in% c(0, 1))) {          # anything else? → skip
+      if (noisy)
+        message(sprintf("Skipping group '%s': values other than 0/1 detected (%s).",
+                        vars,
+                        paste(setdiff(group_vals, c(0, 1)), collapse = ", ")))
+      next
+    }
 
     # Find rows where at least one option was selected
     any_resp <- rowSums(!is.na(temp_dat[vars])) > 0
