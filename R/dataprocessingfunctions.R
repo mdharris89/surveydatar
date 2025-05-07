@@ -317,3 +317,274 @@ realiselabelled <- function(data, max_labels = 12,
 
   return(data)
 }
+
+
+##### functions for creating or manipulating variables #####
+
+#' update_labelled_values
+#'
+#' replaces a value in a labelled vector and updates/adds value-labels to keep metadata consistent
+#'
+#' @param x A labelled vector (anything for which sjlabelled::is_labelled() is TRUE)
+#' @param old_value Value to be replaced (can be NA)
+#' @param new_value Value to replace old_value with
+#' @param new_label Label to attach to new_value (NULL or "" if no label desired)
+#' @param rows_to_ignore Logical vector of same length as x indicating which rows to leave unchanged (NULL = none)
+#' @param force_add_new_label Logical. If old_value not found, should label for new_value still be added/updated?
+#' @param noisy Logical. If TRUE, prints progress notes
+#'
+#' @return A labelled vector with both values and labels attribute updated
+#' @export
+#'
+#' @examples
+#' # Create a labelled vector
+#' v <- sjlabelled::set_labels(c(1, NA, 2, NA), labels = c("Yes" = 1, "Maybe" = 2))
+#'
+#' # Replace NA with 0 and label it
+#' v2 <- update_labelled_values(v, NA, 0, "No / missing")
+#' sjlabelled::get_labels(v2)
+#'
+#' # Change specific rows only
+#' rows_to_skip <- c(TRUE, TRUE, FALSE, FALSE)
+#' v3 <- update_labelled_values(v2, 0, 9, "Definitely maybe", rows_to_skip)
+#' sjlabelled::get_labels(v3)
+update_labelled_values <- function(x,
+                                   old_value,
+                                   new_value,
+                                   new_label = NULL,
+                                   rows_to_ignore = NULL,
+                                   force_add_new_label = FALSE,
+                                   noisy = FALSE) {
+
+  ### validation
+  if (!sjlabelled::is_labelled(x)) {
+    if (noisy) message("Input is not a labelled vector - returned unchanged.")
+    return(x)
+  }
+
+  n <- length(x)
+  if (is.null(rows_to_ignore)) {
+    rows_to_ignore <- rep(FALSE, n)
+  } else {
+    if (length(rows_to_ignore) != n) {
+      stop("rows_to_ignore must have the same length as x")
+    }
+  }
+
+  ### identify rows to modify
+  target_rows <- !rows_to_ignore & if (is.na(old_value)) {
+    is.na(x)
+  } else {
+    x == old_value
+  }
+
+  if (!force_add_new_label && !any(target_rows, na.rm = TRUE)) {
+    if (noisy) message("Nothing to replace - returned unchanged.")
+    return(x)
+  }
+
+  ### replace values
+  if (any(target_rows, na.rm = TRUE)) {
+    x[target_rows] <- new_value
+    if (noisy) message(sum(target_rows, na.rm = TRUE), " value(s) replaced.")
+  }
+
+  ### update labels attribute
+  labs <- attr(x, "labels")
+  if (is.null(labs)) labs <- numeric(0)  # initialize if no labels exist
+
+  # remove label for old_value if it exists and isn't NA
+  if (!is.na(old_value) && old_value %in% labs)
+    labs <- labs[labs != old_value]
+
+  # remove any existing label for new_value
+  labs <- labs[labs != new_value]
+
+  # add new label if provided
+  if (!is.null(new_label) && nzchar(new_label))
+    labs <- c(labs, stats::setNames(new_value, new_label))
+
+  attr(x, "labels") <- labs
+
+  return(x)
+}
+
+#' replace_NAs_conditional_on_question
+#'
+#' converts NAs to a specified code within multi-response question groups, but only where at least one option was selected
+#'
+#' intended for "select-all-that-apply" questions where each option is stored as a binary variable (1=selected, NA=not answered)
+#' after conversion, maintains metadata by properly labelling both the new value (e.g. 0="Not selected") and existing value (1="Selected")
+#'
+#' @param survey_obj A survey_data object, or NULL if using temp_dat + temp_dpdict directly
+#' @param temp_dat A data frame with labelled columns
+#' @param temp_dpdict A dpdict with at least variable_names column
+#' @param newvalue Value to use in place of NA (typically 0)
+#' @param newlabel Label for the new value
+#' @param variable_name_sep Separator used in variable names if deriving question_group
+#' @param relabelpositives Logical. Whether to also relabel the positive values (1)
+#' @param newpositivelabel Label to use for positive values when relabelpositives=TRUE
+#' @param noisy Logical. If TRUE, prints progress notes
+#'
+#' @return Updated temp_dat with NAs replaced and labels updated, or updated survey_obj if provided
+#' @export
+#'
+#' @examples
+#' # Create test data
+#' dat <- data.frame(
+#'   Q1_1 = sjlabelled::set_labels(c(1, NA, NA, 1), labels = c("Yes" = 1)),
+#'   Q1_2 = sjlabelled::set_labels(c(NA, 1, NA, NA), labels = c("Yes" = 1)),
+#'   Q1_3 = sjlabelled::set_labels(c(NA, NA, 1, NA), labels = c("Yes" = 1)),
+#'   Q2_1 = sjlabelled::set_labels(c(NA, NA, NA, NA)),
+#'   Q2_2 = sjlabelled::set_labels(c(NA, NA, NA, NA))
+#' )
+#'
+#' # Create dpdict
+#' dpdict <- data.frame(
+#'   variable_names = c("Q1_1","Q1_2","Q1_3","Q2_1","Q2_2"),
+#'   question_group = c("Q1","Q1","Q1","Q2","Q2"),
+#'   stringsAsFactors = FALSE
+#' )
+#'
+#' # Replace NAs conditionally
+#' out <- replace_NAs_conditional_on_question(NULL, dat, dpdict)
+#'
+#' # Check results
+#' table(out$Q1_1, useNA = "ifany")
+#' sjlabelled::get_labels(out$Q1_1)
+replace_NAs_conditional_on_question <- function(survey_obj = NULL,
+                                                temp_dat = NULL,
+                                                temp_dpdict = NULL,
+                                                newvalue = 0,
+                                                newlabel = "Not selected",
+                                                variable_name_sep = "_",
+                                                relabelpositives = TRUE,
+                                                newpositivelabel = "Selected",
+                                                noisy = FALSE) {
+
+  ### validation
+  is_survey <- !is.null(survey_obj) && inherits(survey_obj, "survey_data")
+
+  if (is_survey) {
+    temp_dat <- survey_obj$dat
+    temp_dpdict <- survey_obj$dpdict
+    if (noisy) message("Processing a survey_data object.")
+  }
+
+  stopifnot("temp_dat must be a data frame" = is.data.frame(temp_dat),
+            "temp_dpdict must be a data frame" = is.data.frame(temp_dpdict),
+            "variable_names column is required in temp_dpdict" = "variable_names" %in% names(temp_dpdict))
+
+  if (!requireNamespace("sjlabelled", quietly = TRUE)) {
+    stop("Package 'sjlabelled' is required but not installed.")
+  }
+
+  ### ensure question_group column exists
+  if (!"question_group" %in% names(temp_dpdict)) {
+    temp_dpdict$question_group <- sub(paste0(variable_name_sep, ".*"),
+                                      "",
+                                      temp_dpdict$variable_names)
+    if (noisy) message("question_group column derived from variable names.")
+  }
+
+  ### process each question group
+  group_list <- split(temp_dpdict$variable_names, temp_dpdict$question_group)
+
+  for (vars in group_list) {
+    # Only use variables that exist in the data
+    vars <- intersect(vars, names(temp_dat))
+    if (length(vars) == 0) next
+
+    # Skip if not all variables are numeric and labelled
+    all_labelled <- vapply(temp_dat[vars],
+                           function(v) is.numeric(v) && sjlabelled::is_labelled(v),
+                           logical(1))
+    if (!all(all_labelled)) next
+
+    # Find rows where at least one option was selected
+    any_resp <- rowSums(!is.na(temp_dat[vars])) > 0
+    if (!any(any_resp)) next
+
+    # Update each variable in the group
+    for (v in vars) {
+      # Replace NAs with newvalue
+      temp_dat[[v]] <- update_labelled_values(
+        x = temp_dat[[v]],
+        old_value = NA,
+        new_value = newvalue,
+        new_label = newlabel,
+        rows_to_ignore = !any_resp,
+        force_add_new_label = TRUE
+      )
+
+      # Optionally relabel positive values
+      if (relabelpositives && any(temp_dat[[v]] == 1, na.rm = TRUE)) {
+        temp_dat[[v]] <- update_labelled_values(
+          x = temp_dat[[v]],
+          old_value = 1,
+          new_value = 1,
+          new_label = newpositivelabel,
+          force_add_new_label = TRUE
+        )
+      }
+    }
+  }
+
+  ### return appropriate object
+  if (is_survey) {
+    survey_obj$dat <- temp_dat
+    survey_obj$dpdict <- temp_dpdict
+    return(survey_obj)
+  } else {
+    return(temp_dat)
+  }
+}
+
+##### functions for exporting #####
+
+#' Fix Integer/Double Type Issues for SPSS Export
+#'
+#' Converts numeric columns with integer values to actual integer type
+#' while properly preserving labels for SPSS export.
+#'
+#' @param data A data frame or survey_data object
+#' @return A modified data frame ready for haven::write_sav()
+#' @export
+fix_for_spss_export <- function(data) {
+  # Extract data from survey_data object if needed
+  if (inherits(data, "survey_data")) {
+    data <- data$dat
+  }
+  # Create a copy to avoid modifying the original
+  result <- data
+  # Process each column
+  for (col_name in names(result)) {
+    col <- result[[col_name]]
+    # Skip non-numeric columns
+    if (!is.numeric(col)) next
+    # Check if this column has integer values only
+    if (all(is.na(col) | (col == floor(col)))) {
+      # Store labels before conversion
+      var_label <- attr(col, "label", exact = TRUE)
+      value_labels <- attr(col, "labels", exact = TRUE)
+      # Convert to integer first (plain conversion without labels)
+      result[[col_name]] <- as.integer(col)
+      # If it was labelled, rebuild labels properly
+      if (!is.null(value_labels)) {
+        # Ensure value labels are also integers
+        int_labels <- as.integer(value_labels)
+        names(int_labels) <- names(value_labels)
+        # Apply the labels using haven directly
+        result[[col_name]] <- haven::labelled(
+          result[[col_name]],
+          labels = int_labels
+        )
+        # Restore variable label if it exists
+        if (!is.null(var_label)) {
+          attr(result[[col_name]], "label") <- var_label
+        }
+      }
+    }
+  }
+  return(result)
+}
