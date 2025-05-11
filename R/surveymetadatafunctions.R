@@ -900,7 +900,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   # define question_type based on metadata
   temp_dpdict$questiontype[variables_to_update] <- with(temp_dpdict[variables_to_update,], dplyr::case_when(
     ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (singlevariablequestion == TRUE)) ~ "numeric",
-    ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (multiresponse == TRUE)) ~ "multinumeric",
+    ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (multiresponse == TRUE) & (dichotomousvariable == FALSE | has_value_labels == FALSE)) ~ "multinumeric",
     (grepl("POSIXct|POSIXt|Date", variable_class)) ~ "date",
     variable_class == "difftime" ~ "difftime",
     variable_class == "character" ~ "text",
@@ -3191,6 +3191,59 @@ mutate.survey_data <- function(.data, ...) {
   }
 
   # Return updated survey_data object
+  structure(
+    list(
+      dat = new_dat,
+      dpdict = new_dpdict
+    ),
+    class = "survey_data"
+  )
+}
+
+
+#' Reorder columns in a survey_data object
+#'
+#' Changes the positions of columns in the survey data and maintains metadata order.
+#'
+#' @param .data A survey_data object.
+#' @param ... Column selections to move, passed to dplyr::relocate.
+#' @param .before,.after Column selections used for relative relocations.
+#' @importFrom dplyr relocate
+#' @return A new survey_data object with reordered columns and matching metadata.
+#' @exportS3Method dplyr::relocate survey_data
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' # Move csat to be the first column
+#' relocated <- dplyr::relocate(survey_obj, csat)
+#' # Move csat after uid
+#' relocated <- dplyr::relocate(survey_obj, csat, .after = uid)
+relocate.survey_data <- function(.data, ..., .before = NULL, .after = NULL) {
+  if (!is.survey_data(.data)) stop("'.data' must be a survey_data object")
+
+  # Capture .before and .after as quosures to properly handle tidy evaluation
+  before_quo <- rlang::enquo(.before)
+  after_quo <- rlang::enquo(.after)
+
+  # Check if both .before and .after are provided
+  if (!rlang::quo_is_null(before_quo) && !rlang::quo_is_null(after_quo)) {
+    stop("Can't supply both `.before` and `.after`.")
+  }
+
+  # Reorder data columns using dplyr::relocate with correct tidy evaluation
+  if (!rlang::quo_is_null(before_quo)) {
+    new_dat <- dplyr::relocate(.data$dat, ..., .before = !!before_quo)
+  } else if (!rlang::quo_is_null(after_quo)) {
+    new_dat <- dplyr::relocate(.data$dat, ..., .after = !!after_quo)
+  } else {
+    new_dat <- dplyr::relocate(.data$dat, ...)
+  }
+
+  # Get the new column order
+  new_names <- names(new_dat)
+
+  # Reorder dpdict to match the new data column order
+  new_dpdict <- .data$dpdict[match(new_names, .data$dpdict$variable_names), ]
+
   structure(
     list(
       dat = new_dat,
