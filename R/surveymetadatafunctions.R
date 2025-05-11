@@ -900,13 +900,9 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   # define question_type based on metadata
   temp_dpdict$questiontype[variables_to_update] <- with(temp_dpdict[variables_to_update,], dplyr::case_when(
     variable_class == "character" ~ "text",
-    (grepl("factor", variable_class) & (multiresponse == FALSE)) ~ "categorical",
-    (has_value_labels == TRUE & (multiresponse == FALSE)) ~ "categorical",
-    grepl("logical", variable_class) ~ "categorical",
-    (grepl("factor", variable_class) & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
-    (has_value_labels == TRUE & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
-    (grepl("factor", variable_class) & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
-    (has_value_labels == TRUE & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
+    ((grepl("factor", variable_class | grepl("logical", variable_class) | has_value_labels == TRUE)) & (multiresponse == FALSE)) ~ "categorical",
+    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
+    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
     ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (singlevariablequestion == TRUE)) ~ "numeric",
     ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (multiresponse == TRUE) & (dichotomousvariable == FALSE | has_value_labels == FALSE)) ~ "multinumeric",
     (grepl("POSIXct|POSIXt|Date", variable_class)) ~ "date",
