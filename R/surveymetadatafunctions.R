@@ -881,8 +881,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 
     set_of_variable_names_in_question_group <- temp_dpdict$variable_names[temp_dpdict$question_group == temp_dpdict$question_group[i] & variables_to_update]
 
-    question_group_within_dat <- temp_dat[names(temp_dat)[variables_to_update]]
-    # question_group_within_dat <- temp_dat[names(temp_dat[,variables_to_update]) %in% set_of_variable_names_in_question_group] # ! error here. [, ] syntax changes _s to .s.
+    question_group_within_dat <- temp_dat[set_of_variable_names_in_question_group]
 
     count_within_question_group <- vapply(question_group_within_dat, function(x) any(!is.na(x) & x != 0), logical(1)) # within each variable in question group, check that there is at least one value that is not NA or 0
 
@@ -900,9 +899,9 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   # define question_type based on metadata
   temp_dpdict$questiontype[variables_to_update] <- with(temp_dpdict[variables_to_update,], dplyr::case_when(
     variable_class == "character" ~ "text",
-    ((grepl("factor", variable_class) | grepl("logical", variable_class) | has_value_labels == TRUE) & (multiresponse == FALSE)) ~ "categorical",
-    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
-    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
+    ((grepl("factor", variable_class) | grepl("logical", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == TRUE) & (multiresponse == FALSE)) ~ "categorical",
+    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == FALSE) & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
+    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == FALSE) & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
     ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (singlevariablequestion == TRUE)) ~ "numeric",
     ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (multiresponse == TRUE) & (dichotomousvariable == FALSE | has_value_labels == FALSE)) ~ "multinumeric",
     (grepl("POSIXct|POSIXt|Date", variable_class)) ~ "date",
