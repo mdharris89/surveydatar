@@ -4,7 +4,7 @@
 \alias{mutate.survey_data}
 \title{Adds or modifies columns in the survey data, automatically updating metadata for new variables
 using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
-Supports custom variable labels using the with_label() function.}
+Supports custom variable labels using the realiselabelled_vec() function.}
 \usage{
 \method{mutate}{survey_data}(.data, ...)
 }
@@ -12,7 +12,7 @@ Supports custom variable labels using the with_label() function.}
 \item{.data}{A survey_data object.}
 
 \item{...}{Mutation expressions passed to dplyr::mutate. Variable labels can be specified
-using with_label(expr, "label").}
+using realiselabelled_vec(expr, variable_label="label").}
 }
 \value{
 A new survey_data object with mutated data and updated metadata.
@@ -20,15 +20,15 @@ A new survey_data object with mutated data and updated metadata.
 \description{
 Adds or modifies columns in the survey data, automatically updating metadata for new variables
 using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
-Supports custom variable labels using the with_label() function.
+Supports custom variable labels using the realiselabelled_vec() function.
 }
 \examples{
 # Add a new variable with a custom label
 survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
 survey_obj \%>\%
-  dplyr::mutate(new_var = with_label(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
+  dplyr::mutate(new_var = realiselabelled_vec(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
 
 # Modify an existing variable with a new label
 survey_obj \%>\%
-  dplyr::mutate(uid = with_label(uid * 2, "uid doubled"))
+  dplyr::mutate(uid = realiselabelled_vec(uid * 2, "uid doubled"))
 }

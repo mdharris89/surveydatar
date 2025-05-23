@@ -146,21 +146,147 @@ character_to_labelled_via_dict <- function(character_vector, new_variable_label 
 }
 
 
-#' Convert Data Frame Columns to Labelled Variables
+#' Convert a single atomic vector to a labelled vector
+#'
+#' This is the workhorse that "realises" labels for one variable.
+#' It handles logical, character, factor, and numeric (incl. 0/1-coded) vectors.
+#'
+#' @param x A logical, character, factor or numeric vector to convert
+#' @param max_labels Maximum number of distinct values to auto-label
+#' @param MRpositivelabel Label for value 1 in multiresponse vars
+#' @param MRnegativelabel Label for value 0 in multiresponse vars
+#' @param variable_label Optional string to force as the variable's label
+#' @param value_label_lookup Optional named list of per-variable lookup tables
+#' @param var_name Internal parameter: the name of x, used for lookup in value_label_lookup
+#'
+#' @return A labelled vector (from haven/sjlabelled), or x unchanged if ineligible
+#' @export
+realiselabelled_vec <- function(x,
+                                 max_labels = 12,
+                                 MRpositivelabel = "Selected",
+                                 MRnegativelabel = "Not selected",
+                                 variable_label = NULL,
+                                 value_label_lookup = NULL,
+                                 var_name = NULL) {
+
+  # Preserve existing variable label
+  existing_label <- sjlabelled::get_label(x)
+
+  # Default multi-response labels
+  MRlabels <- c(0, 1)
+  names(MRlabels) <- c(MRnegativelabel, MRpositivelabel)
+
+  # Skip Date variables - can't be labelled
+  if (inherits(x, "Date")) {
+    return(x)
+  }
+
+  # If already labelled, only update variable label if requested
+  if (sjlabelled::is_labelled(x)) {
+    if (!is.null(variable_label) && nzchar(variable_label)) {
+      x <- sjlabelled::set_label(x, label = variable_label)
+    }
+    return(x)
+  }
+
+  # Process by type
+  if (is.logical(x)) {
+    y <- haven::labelled(as.numeric(x))
+
+    if (!is.null(value_label_lookup[[var_name]])) {
+      y <- sjlabelled::set_labels(y, labels = value_label_lookup[[var_name]])
+    } else {
+      y <- sjlabelled::set_labels(y, labels = MRlabels)
+    }
+
+  } else if (is.character(x)) {
+    # Use custom dictionary if provided
+    if (!is.null(value_label_lookup[[var_name]])) {
+      y <- character_to_labelled_via_dict(
+        x,
+        new_variable_label = existing_label,
+        lookup_dict = value_label_lookup[[var_name]]
+      )
+    } else if (length(unique(stats::na.omit(x))) <= max_labels) {
+      y <- character_to_labelled_via_dict(
+        x,
+        new_variable_label = existing_label
+      )
+    } else {
+      return(x)  # Too many unique values
+    }
+
+  } else if (is.factor(x)) {
+    levs <- levels(x)
+    y <- haven::labelled(as.numeric(x))
+
+    if (!is.null(value_label_lookup[[var_name]])) {
+      labels_to_use <- value_label_lookup[[var_name]]
+    } else {
+      labels_to_use <- stats::setNames(seq_along(levs), levs)
+    }
+    y <- sjlabelled::set_labels(y, labels = labels_to_use)
+
+  } else if (is.numeric(x)) {
+    unique_vals <- unique(stats::na.omit(x))
+
+    if (length(unique_vals) <= 2 && all(unique_vals %in% c(0, 1))) {
+      # Multiple-response pattern
+      y <- haven::labelled(x)
+      if (!is.null(value_label_lookup[[var_name]])) {
+        labels_to_use <- value_label_lookup[[var_name]]
+      } else {
+        labels_to_use <- MRlabels
+      }
+      y <- sjlabelled::set_labels(y, labels = labels_to_use)
+
+    } else if (!is.null(value_label_lookup[[var_name]])) {
+      y <- haven::labelled(x)
+      y <- sjlabelled::set_labels(y, labels = value_label_lookup[[var_name]])
+
+    } else if (length(unique_vals) <= max_labels) {
+      # Just convert to labelled without value labels
+      y <- haven::labelled(x)
+
+    } else {
+      return(x)  # Too many unique values
+    }
+
+  } else {
+    # Other types left untouched
+    return(x)
+  }
+
+  # Apply variable label
+  if (!is.null(variable_label) && nzchar(variable_label)) {
+    y <- sjlabelled::set_label(y, label = variable_label)
+  } else if (!is.null(existing_label) && nzchar(existing_label)) {
+    y <- sjlabelled::set_label(y, label = existing_label)
+  }
+
+  return(y)
+}
+
+
+#' Convert selected columns of a data frame to labelled variables
 #'
 #' Attempts to convert columns in a data frame to labelled variables where possible.
 #' Character variables with up to max_labels unique values are converted to numeric
 #' with value labels. Existing labelled variables are preserved.
 #'
 #' @param data A data frame to process
+#' @param cols Columns to transform. Can be column names (character vector),
+#'   column indices (integer vector), or tidyselect expression if dplyr is loaded.
+#'   If NULL, processes all columns.
 #' @param max_labels Maximum number of unique values to consider for labelling
 #' @param MRpositivelabel Label to use for positive values in multiresponse variables
 #' @param MRnegativelabel Label to use for negative values in multiresponse variables
-#' @param variable_labels Optional data frame with variable names and labels
+#' @param variable_labels Optional data frame with columns 'variable name' and
+#'   'question with suffix' to override variable labels
 #' @param value_label_lookup Optional named list of label lookup tables with names
-#'                          corresponding to variable names
+#'   corresponding to variable names
 #'
-#' @return A data frame with columns converted to labelled variables where appropriate
+#' @return A data frame with specified columns converted to labelled variables where appropriate
 #' @export
 #'
 #' @examples
@@ -171,153 +297,91 @@ character_to_labelled_via_dict <- function(character_vector, new_variable_label 
 #'   score = c(10, 20, 15, 5, 25)
 #' )
 #' realiselabelled(test_data)
-realiselabelled <- function(data, max_labels = 12,
-                            MRpositivelabel = "Selected",
-                            MRnegativelabel = "Not selected",
-                            variable_labels = NULL,
-                            value_label_lookup = NULL) {
+realiselabelled <- function(data,
+                             cols = NULL,
+                             max_labels = 12,
+                             MRpositivelabel = "Selected",
+                             MRnegativelabel = "Not selected",
+                             variable_labels = NULL,
+                             value_label_lookup = NULL) {
 
   # Input validation
   if (!is.data.frame(data)) {
-    stop("Input must be a data frame")
+    stop("'data' must be a data frame")
   }
 
-  if (!is.numeric(max_labels) || max_labels < 1) {
-    stop("max_labels must be a positive number")
+  if (ncol(data) == 0) {
+    return(data)
   }
 
-  # Default multiresponse labels
-  MRlabels <- c(0, 1)
-  names(MRlabels) <- c(MRnegativelabel, MRpositivelabel)
-
-  # Process each column
-  for (var_name in names(data)) {
-    # Get existing label if present
-    existing_label <- sjlabelled::get_label(data[[var_name]])
-
-    # Skip if already labelled
-    if (sjlabelled::is_labelled(data[[var_name]])) {
-      next
+  # Validate variable_labels if provided
+  if (!is.null(variable_labels)) {
+    if (!is.data.frame(variable_labels)) {
+      stop("'variable_labels' must be a data frame")
     }
-
-    # Skip Date variables
-    if (inherits(data[[var_name]], "Date")) {
-      next
+    required_cols <- c("variable name", "question with suffix")
+    missing_cols <- setdiff(required_cols, names(variable_labels))
+    if (length(missing_cols) > 0) {
+      stop("'variable_labels' must contain columns: ",
+           paste(missing_cols, collapse = ", "))
     }
+  }
 
-    # Apply value labels based on variable type
-    if (is.logical(data[[var_name]])) {
-      # Convert logical to numeric
-      data[[var_name]] <- haven::labelled(as.numeric(data[[var_name]]))
+  # Determine which columns to process
+  if (is.null(cols)) {
+    cols_to_process <- names(data)
+  } else if (is.character(cols)) {
+    cols_to_process <- cols
+  } else if (is.numeric(cols)) {
+    if (any(cols < 1) || any(cols > ncol(data))) {
+      stop("Column indices out of range")
+    }
+    cols_to_process <- names(data)[cols]
+  } else {
+    # Try tidyselect if available and cols is not simple vector
+    if (requireNamespace("dplyr", quietly = TRUE) &&
+        requireNamespace("tidyselect", quietly = TRUE)) {
+      tryCatch({
+        cols_to_process <- names(tidyselect::eval_select(rlang::enquo(cols), data))
+      }, error = function(e) {
+        stop("Invalid column specification. Use column names, indices, or tidyselect expressions.")
+      })
+    } else {
+      stop("For complex column selection, please install dplyr and tidyselect packages, or use column names/indices directly")
+    }
+  }
 
-      # Apply multiresponse labels
-      if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
-        data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
-                                                   labels = value_label_lookup[[var_name]])
-      } else {
-        data[[var_name]] <- sjlabelled::set_labels(data[[var_name]], labels = MRlabels)
-      }
+  # Validate that specified columns exist
+  missing_cols <- setdiff(cols_to_process, names(data))
+  if (length(missing_cols) > 0) {
+    stop("Columns not found in data: ", paste(missing_cols, collapse = ", "))
+  }
 
-      # Re-apply existing label
-      if (!is.null(existing_label) && nchar(existing_label) > 0) {
-        data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
-      }
-
-    } else if (is.character(data[[var_name]])) {
-      # Apply custom lookup if available
-      if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
-        data[[var_name]] <- character_to_labelled_via_dict(
-          data[[var_name]],
-          new_variable_label = existing_label,
-          lookup_dict = value_label_lookup[[var_name]]
-        )
-      } else if (length(unique(stats::na.omit(data[[var_name]]))) <= max_labels) {
-        # Convert to labelled if fewer than max_labels unique values
-        data[[var_name]] <- character_to_labelled_via_dict(
-          data[[var_name]],
-          new_variable_label = existing_label
-        )
-      }
-
-    } else if (is.factor(data[[var_name]])) {
-      # Get levels for label creation
-      factor_levels <- levels(data[[var_name]])
-
-      # Convert factor to labelled
-      data[[var_name]] <- haven::labelled(as.numeric(data[[var_name]]))
-
-      if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
-        data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
-                                                   labels = value_label_lookup[[var_name]])
-      } else {
-        # Create labels from factor levels
-        level_labels <- seq_along(factor_levels)
-        names(level_labels) <- factor_levels
-        data[[var_name]] <- sjlabelled::set_labels(data[[var_name]], labels = level_labels)
-      }
-
-      # Re-apply existing label
-      if (!is.null(existing_label) && nchar(existing_label) > 0) {
-        data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
-      }
-
-    } else if (is.numeric(data[[var_name]])) {
-      unique_values <- unique(stats::na.omit(data[[var_name]]))
-
-      # Check if the variable contains only 0s and 1s (multiple response variable)
-      if (length(unique_values) <= 2 && all(unique_values %in% c(0, 1))) {
-        # This looks like a multiple response variable
-        data[[var_name]] <- haven::labelled(data[[var_name]])
-
-        # Apply multiresponse labels
-        if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
-          data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
-                                                     labels = value_label_lookup[[var_name]])
-        } else {
-          data[[var_name]] <- sjlabelled::set_labels(data[[var_name]], labels = MRlabels)
-        }
-
-        # Re-apply existing label
-        if (!is.null(existing_label) && nchar(existing_label) > 0) {
-          data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
-        }
-      } else {
-        # Apply custom lookup if available
-        if (!is.null(value_label_lookup) && var_name %in% names(value_label_lookup)) {
-          data[[var_name]] <- haven::labelled(data[[var_name]])
-          data[[var_name]] <- sjlabelled::set_labels(data[[var_name]],
-                                                     labels = value_label_lookup[[var_name]])
-
-          # Re-apply existing label
-          if (!is.null(existing_label) && nchar(existing_label) > 0) {
-            data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
-          }
-
-        } else if (length(unique_values) <= max_labels) {
-          # Convert to labelled if fewer than max_labels unique values
-          data[[var_name]] <- haven::labelled(data[[var_name]])
-
-          # Re-apply existing label
-          if (!is.null(existing_label) && nchar(existing_label) > 0) {
-            data[[var_name]] <- sjlabelled::set_label(data[[var_name]], label = existing_label)
-          }
-        }
+  # Process each specified column
+  for (col_name in cols_to_process) {
+    # Get variable label if provided
+    var_label <- NULL
+    if (!is.null(variable_labels)) {
+      idx <- match(col_name, variable_labels[["variable name"]])
+      if (!is.na(idx)) {
+        var_label <- variable_labels[["question with suffix"]][idx]
       }
     }
 
-    # Apply variable labels if provided (overrides existing labels)
-    if (!is.null(variable_labels) && var_name %in% variable_labels$`variable name`) {
-      label_idx <- which(variable_labels$`variable name` == var_name)
-      data[[var_name]] <- sjlabelled::set_label(
-        data[[var_name]],
-        label = variable_labels$`question with suffix`[label_idx]
-      )
-    }
+    # Transform the column
+    data[[col_name]] <- realiselabelled_vec(
+      data[[col_name]],
+      max_labels = max_labels,
+      MRpositivelabel = MRpositivelabel,
+      MRnegativelabel = MRnegativelabel,
+      variable_label = var_label,
+      value_label_lookup = value_label_lookup,
+      var_name = col_name
+    )
   }
 
   return(data)
 }
-
 
 ##### functions for creating or manipulating variables #####
 

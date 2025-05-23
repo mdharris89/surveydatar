@@ -96,7 +96,7 @@ datamap.survey_data <- function(x, view_or_return = "view") {
                        "value labels", "first values", "first unique values")]
 
   if (view_or_return == "view") {
-    my_view(result, paste0("datamap ", deparse(substitute(x))))
+    View(result, paste0("datamap ", deparse(substitute(x))))
   } else {
     return(result)
   }
@@ -2976,28 +2976,13 @@ select.survey_data <- function(.data, ...) {
   )
 }
 
-#' Create a labeled value for use within mutate.survey_data
-#'
-#' @param x The value expression
-#' @param label The variable label to apply
-#' @return The value with an attribute indicating the desired label
-#' @export
-#' @examples
-#' # Used within mutate.survey_data for labeling new variables
-#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
-#' result <- dplyr::mutate(survey_obj, new_var = with_label(uid * 2, "Doubled ID"))
-with_label <- function(x, label) {
-  attr(x, "variable_label") <- label
-  x
-}
-
 #' Adds or modifies columns in the survey data, automatically updating metadata for new variables
 #' using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
-#' Supports custom variable labels using the with_label() function.
+#' Supports custom variable labels using the realiselabelled_vec() function.
 #'
 #' @param .data A survey_data object.
 #' @param ... Mutation expressions passed to dplyr::mutate. Variable labels can be specified
-#'   using with_label(expr, "label").
+#'   using realiselabelled_vec(expr, variable_label="label").
 #' @importFrom dplyr mutate
 #' @importFrom rlang enquos
 #' @return A new survey_data object with mutated data and updated metadata.
@@ -3006,11 +2991,11 @@ with_label <- function(x, label) {
 #' # Add a new variable with a custom label
 #' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
 #' survey_obj %>%
-#'   dplyr::mutate(new_var = with_label(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
+#'   dplyr::mutate(new_var = realiselabelled_vec(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
 #'
 #' # Modify an existing variable with a new label
 #' survey_obj %>%
-#'   dplyr::mutate(uid = with_label(uid * 2, "uid doubled"))
+#'   dplyr::mutate(uid = realiselabelled_vec(uid * 2, "uid doubled"))
 mutate.survey_data <- function(.data, ...) {
   if (!is.survey_data(.data)) {
     stop("'.data' must be a survey_data object")
@@ -3024,15 +3009,8 @@ mutate.survey_data <- function(.data, ...) {
   original_names <- names(.data$dat)
   original_dat <- .data$dat
 
-  # Create environment with with_label function
-  with_label_fn <- function(x, label) {
-    attr(x, "variable_label") <- label
-    x
-  }
-
   # Perform the mutation
   new_dat <- dplyr::mutate(original_dat, ...)
-
   new_names <- names(new_dat)
 
   # Identify new variables (not in original dataset)
@@ -3041,10 +3019,8 @@ mutate.survey_data <- function(.data, ...) {
   # Identify existing variables that were modified
   changed_vars <- modified_vars[modified_vars %in% original_names]
 
-  # Process labels for new and modified variables
+  # Extract custom labels from variables that have the variable_label attribute
   custom_labels <- list()
-
-  # Extract custom labels from attributes created by with_label
   for (var in c(new_vars, changed_vars)) {
     if (!is.null(attr(new_dat[[var]], "variable_label"))) {
       custom_labels[[var]] <- attr(new_dat[[var]], "variable_label")
@@ -3053,24 +3029,38 @@ mutate.survey_data <- function(.data, ...) {
     }
   }
 
-  # Set default labels for new variables that don't have custom labels
+  # Process new variables with realiselabelled_vec
   if (length(new_vars) > 0) {
     for (var in new_vars) {
-      if (!var %in% names(custom_labels)) {
-        # Use variable name as the default label
-        attr(new_dat[[var]], "label") <- var
+      # Get custom label if available, otherwise use variable name
+      var_label <- if (var %in% names(custom_labels)) {
+        custom_labels[[var]]
       } else {
-        # Apply custom label
-        attr(new_dat[[var]], "label") <- custom_labels[[var]]
+        var  # Use variable name as default label
       }
+
+      # Apply realiselabelled_vec to properly process the variable
+      new_dat[[var]] <- realiselabelled_vec(
+        new_dat[[var]],
+        variable_label = var_label
+      )
     }
   }
 
-  # Apply custom labels to modified variables
+  # Apply custom labels to modified existing variables
   if (length(changed_vars) > 0) {
     for (var in changed_vars) {
       if (var %in% names(custom_labels)) {
-        attr(new_dat[[var]], "label") <- custom_labels[[var]]
+        # If it's already labelled, just update the label
+        if (sjlabelled::is_labelled(new_dat[[var]])) {
+          new_dat[[var]] <- sjlabelled::set_label(new_dat[[var]], label = custom_labels[[var]])
+        } else {
+          # Otherwise run full realiselabelled_vec processing
+          new_dat[[var]] <- realiselabelled_vec(
+            new_dat[[var]],
+            variable_label = custom_labels[[var]]
+          )
+        }
       }
     }
   }
@@ -3160,15 +3150,15 @@ mutate.survey_data <- function(.data, ...) {
 
   # Generate informative messages
   if (length(new_vars) > 0) {
-    labeled_new <- new_vars[new_vars %in% names(custom_labels)]
-    if (length(labeled_new) > 0) {
-      message("New variables added with custom labels: ",
-              paste(labeled_new, collapse = ", "))
-    }
-    unlabeled_new <- new_vars[!new_vars %in% names(custom_labels)]
-    if (length(unlabeled_new) > 0) {
-      message("New variables added with default labels: ",
-              paste(unlabeled_new, collapse = ", "))
+    message("New variables added and processed with realiselabelled_vec: ",
+            paste(new_vars, collapse = ", "))
+  }
+
+  if (length(changed_vars) > 0) {
+    labeled_changed <- changed_vars[changed_vars %in% names(custom_labels)]
+    if (length(labeled_changed) > 0) {
+      message("Existing variables modified with new labels: ",
+              paste(labeled_changed, collapse = ", "))
     }
   }
 

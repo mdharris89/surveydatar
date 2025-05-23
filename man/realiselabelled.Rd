@@ -2,10 +2,11 @@
 % Please edit documentation in R/dataprocessingfunctions.R
 \name{realiselabelled}
 \alias{realiselabelled}
-\title{Convert Data Frame Columns to Labelled Variables}
+\title{Convert selected columns of a data frame to labelled variables}
 \usage{
 realiselabelled(
   data,
+  cols = NULL,
   max_labels = 12,
   MRpositivelabel = "Selected",
   MRnegativelabel = "Not selected",
@@ -16,19 +17,24 @@ realiselabelled(
 \arguments{
 \item{data}{A data frame to process}
 
+\item{cols}{Columns to transform. Can be column names (character vector),
+column indices (integer vector), or tidyselect expression if dplyr is loaded.
+If NULL, processes all columns.}
+
 \item{max_labels}{Maximum number of unique values to consider for labelling}
 
 \item{MRpositivelabel}{Label to use for positive values in multiresponse variables}
 
 \item{MRnegativelabel}{Label to use for negative values in multiresponse variables}
 
-\item{variable_labels}{Optional data frame with variable names and labels}
+\item{variable_labels}{Optional data frame with columns 'variable name' and
+'question with suffix' to override variable labels}
 
 \item{value_label_lookup}{Optional named list of label lookup tables with names
 corresponding to variable names}
 }
 \value{
-A data frame with columns converted to labelled variables where appropriate
+A data frame with specified columns converted to labelled variables where appropriate
 }
 \description{
 Attempts to convert columns in a data frame to labelled variables where possible.
