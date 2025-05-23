@@ -264,6 +264,46 @@ test_that("create_dict_with_metadata works", {
 
   expect_equal(temp_dpdict$multiresponse, rep(TRUE, 4))
 
+  # test 3: some are multiresponse
+
+  temp_dat <- data.frame(
+    # Single-variable group - even with non-zero values, shouldn't be multiresponse
+    "Q1_1" = haven::labelled(c(1, 0, 1, NA_real_),
+                             label = "Q1_1: Single variable question",
+                             labels = c("Not selected" = 0, "Selected" = 1)),
+
+    # Multi-variable group - should be detected as multiresponse
+    "Q2_1" = haven::labelled(c(0, 1, 0, NA_real_),
+                             label = "Q2_1: Multi variable question - Statement 1",
+                             labels = c("Not selected" = 0, "Selected" = 1)),
+    "Q2_2" = haven::labelled(c(1, 0, 0, 0),
+                             label = "Q2_2: Multi variable question - Statement 2",
+                             labels = c("Not selected" = 0, "Selected" = 1))
+  )
+
+  # Create dpdict and run update_dict_with_metadata
+  temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
+  updated_dpdict <- update_dict_with_metadata(NULL, temp_dat, temp_dpdict)
+
+  # Check question groups are assigned correctly
+  q1_group <- updated_dpdict$question_group[updated_dpdict$variable_names == "Q1_1"]
+  q2_group_1 <- updated_dpdict$question_group[updated_dpdict$variable_names == "Q2_1"]
+  q2_group_2 <- updated_dpdict$question_group[updated_dpdict$variable_names == "Q2_2"]
+
+  # First verify the grouping is as expected
+  expect_false(q1_group %in% c(q2_group_1, q2_group_2)) # Q1 should be in a different group
+  expect_equal(q2_group_1, q2_group_2) # Q2 variables should be in the same group
+
+  # Then verify multiresponse flags
+  expect_false(updated_dpdict$multiresponse[updated_dpdict$variable_names == "Q1_1"])
+  expect_true(updated_dpdict$multiresponse[updated_dpdict$variable_names == "Q2_1"])
+  expect_true(updated_dpdict$multiresponse[updated_dpdict$variable_names == "Q2_2"])
+
+  # Verify questiontype assignment
+  expect_equal(updated_dpdict$questiontype[updated_dpdict$variable_names == "Q1_1"], "categorical")
+  expect_equal(updated_dpdict$questiontype[updated_dpdict$variable_names == "Q2_1"], "multiresponse")
+  expect_equal(updated_dpdict$questiontype[updated_dpdict$variable_names == "Q2_2"], "multiresponse")
+
   # TO DO: need to add a lot more tests here, including for ill-formed dats
 
 })
