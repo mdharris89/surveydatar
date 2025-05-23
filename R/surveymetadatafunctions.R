@@ -127,7 +127,7 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
   )
 
   if (view_or_return == "view") {
-    my_view(out, paste0("datamap ", deparse(substitute(temp_dat))))
+    View(out, paste0("datamap ", deparse(substitute(temp_dat))))
     return(invisible(out))
   } else {
     return(out)
