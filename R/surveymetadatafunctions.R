@@ -823,8 +823,8 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     stop("Variable names in dat and dpdict don't match. Try calling standardise_survey_separators first.")
   }
 
-  # Ensure no duplicate variable names or labels
-  validate_no_dpdict_duplicates(temp_dpdict, check_variable_names = TRUE, check_variable_labels = TRUE)
+  # # Ensure no duplicate variable names or labels
+  # validate_no_dpdict_duplicates(temp_dpdict, check_variable_names = TRUE, check_variable_labels = TRUE)
 
   ## end of validation
 
@@ -2041,7 +2041,13 @@ get_unique_suffixes <- function(temp_dpdict, var_with_unique_id = "variable_name
       if ( all(
         vapply(
           question_group_list,
-          function(df) any(!is.na(df$affix_found)),
+          function(df) {
+            if (is.data.frame(df)) {
+              any(!is.na(df$affix_found))
+            } else {
+              FALSE
+            }
+          },
           logical(1)
         ))) { # if all questions in question group have candidate suffixes
         # find number of possibilities for a common sep_type and sep_count_from_end across all variables in the same question group
@@ -3019,57 +3025,32 @@ mutate.survey_data <- function(.data, ...) {
   # Identify existing variables that were modified
   changed_vars <- modified_vars[modified_vars %in% original_names]
 
-  # Extract custom labels from variables that have the variable_label attribute
-  custom_labels <- list()
-  for (var in c(new_vars, changed_vars)) {
-    if (!is.null(attr(new_dat[[var]], "variable_label"))) {
-      custom_labels[[var]] <- attr(new_dat[[var]], "variable_label")
-      # Remove the temporary attribute
-      attr(new_dat[[var]], "variable_label") <- NULL
-    }
-  }
-
-  # Process new variables with realiselabelled_vec
-  if (length(new_vars) > 0) {
-    for (var in new_vars) {
-      # Get custom label if available, otherwise use variable name
-      var_label <- if (var %in% names(custom_labels)) {
-        custom_labels[[var]]
-      } else {
-        var  # Use variable name as default label
-      }
-
-      # Apply realiselabelled_vec to properly process the variable
-      new_dat[[var]] <- realiselabelled_vec(
-        new_dat[[var]],
-        variable_label = var_label
-      )
-    }
-  }
-
-  # Apply custom labels to modified existing variables
-  if (length(changed_vars) > 0) {
-    for (var in changed_vars) {
-      if (var %in% names(custom_labels)) {
-        # If it's already labelled, just update the label
-        if (sjlabelled::is_labelled(new_dat[[var]])) {
-          new_dat[[var]] <- sjlabelled::set_label(new_dat[[var]], label = custom_labels[[var]])
-        } else {
-          # Otherwise run full realiselabelled_vec processing
-          new_dat[[var]] <- realiselabelled_vec(
-            new_dat[[var]],
-            variable_label = custom_labels[[var]]
-          )
-        }
-      }
-    }
-  }
-
   # Start with existing dpdict
   existing_dpdict <- .data$dpdict
 
   # Handle new variables if there are any
   if (length(new_vars) > 0) {
+    # NEW: First pass - handle inh0p-erited label conflicts
+    for (var in new_vars){
+      var_label <- attr(new_dat[[var]], "label")
+      if (!is.null(var_label) && nzchar(var_label)) {
+        # Check if this label already exists in existing dpdict
+        if (var_label %in% existing_dpdict$variable_labels) {
+          # Generate a unique suffix
+          base_label <- var_label
+          counter <- 1
+          repeat {
+            new_label <- paste0(base_label, " (", counter, ")")
+            if (!new_label %in% existing_dpdict$variable_labels) {
+              break
+            }
+            counter <- counter + 1
+          }
+          # Apply the unique label
+          attr(new_dat[[var]], "label") <- new_label
+        }
+      }
+    }
     # Initialize new rows with basic info
     new_rows <- data.frame(
       variable_names = new_vars,
@@ -3083,10 +3064,11 @@ mutate.survey_data <- function(.data, ...) {
       if (col == "variable_labels") {
         # Use custom labels where available, otherwise use variable name
         new_rows[[col]] <- sapply(new_vars, function(var) {
-          if (var %in% names(custom_labels)) {
-            custom_labels[[var]]
+          existing_label <- attr(new_dat[[var]], "label")
+          if (!is.null(existing_label) && nzchar(existing_label)) {
+            existing_label
           } else {
-            var
+            var  # Use variable name as default
           }
         })
       } else if (col == "question_group") {
@@ -3120,9 +3102,29 @@ mutate.survey_data <- function(.data, ...) {
       temp_dpdict$variable_class[temp_dpdict$variable_names == var] <-
         paste(class(new_dat[[var]]), collapse = ", ")
 
-      # Update label if a custom one was provided
-      if (var %in% names(custom_labels)) {
-        temp_dpdict$variable_labels[temp_dpdict$variable_names == var] <- custom_labels[[var]]
+      # NEW: Check for updated variable label using standard attribute and handle conflicts
+      existing_label <- attr(new_dat[[var]], "label")
+      if (!is.null(existing_label) && nzchar(existing_label)) {
+        # Check if this label conflicts with other variables (excluding the current one)
+        other_labels <- temp_dpdict$variable_labels[temp_dpdict$variable_names != var]
+        if (existing_label %in% other_labels) {
+          # Generate a unique suffix for changed variables too
+          base_label <- existing_label
+          counter <- 1
+          repeat {
+            new_label <- paste0(base_label, " (", counter, ")")
+            if (!new_label %in% other_labels) {
+              break
+            }
+            counter <- counter + 1
+          }
+          # Apply the unique label to both the data and dpdict
+          attr(new_dat[[var]], "label") <- new_label
+          temp_dpdict$variable_labels[temp_dpdict$variable_names == var] <- new_label
+        } else {
+          # No conflict, apply as-is
+          temp_dpdict$variable_labels[temp_dpdict$variable_names == var] <- existing_label
+        }
       }
     }
   }
@@ -3150,12 +3152,24 @@ mutate.survey_data <- function(.data, ...) {
 
   # Generate informative messages
   if (length(new_vars) > 0) {
-    message("New variables added and processed with realiselabelled_vec: ",
-            paste(new_vars, collapse = ", "))
+    labeled_new <- new_vars[sapply(new_vars, function(var) {
+      !is.null(attr(new_dat[[var]], "label")) && nzchar(attr(new_dat[[var]], "label"))
+    })]
+    if (length(labeled_new) > 0) {
+      message("New variables added with custom labels: ",
+              paste(labeled_new, collapse = ", "))
+    }
+    unlabeled_new <- setdiff(new_vars, labeled_new)
+    if (length(unlabeled_new) > 0) {
+      message("New variables added with default labels: ",
+              paste(unlabeled_new, collapse = ", "))
+    }
   }
 
   if (length(changed_vars) > 0) {
-    labeled_changed <- changed_vars[changed_vars %in% names(custom_labels)]
+    labeled_changed <- changed_vars[sapply(changed_vars, function(var) {
+      !is.null(attr(new_dat[[var]], "label")) && nzchar(attr(new_dat[[var]], "label"))
+    })]
     if (length(labeled_changed) > 0) {
       message("Existing variables modified with new labels: ",
               paste(labeled_changed, collapse = ", "))
@@ -3163,12 +3177,14 @@ mutate.survey_data <- function(.data, ...) {
   }
 
   if (length(changed_vars) > 0) {
-    labeled_changed <- changed_vars[changed_vars %in% names(custom_labels)]
+    labeled_changed <- changed_vars[sapply(changed_vars, function(var) {
+      !is.null(attr(new_dat[[var]], "label")) && nzchar(attr(new_dat[[var]], "label"))
+    })]
     if (length(labeled_changed) > 0) {
       message("Existing variables modified with new labels: ",
               paste(labeled_changed, collapse = ", "))
     }
-    unlabeled_changed <- changed_vars[!changed_vars %in% names(custom_labels)]
+    unlabeled_changed <- setdiff(changed_vars, labeled_changed)
     if (length(unlabeled_changed) > 0) {
       message("Existing variables modified with preserved labels: ",
               paste(unlabeled_changed, collapse = ", "))

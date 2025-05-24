@@ -176,8 +176,11 @@ realiselabelled_vec <- function(x,
   MRlabels <- c(0, 1)
   names(MRlabels) <- c(MRnegativelabel, MRpositivelabel)
 
-  # Skip Date variables - can't be labelled
+
   if (inherits(x, "Date")) {
+    if (!is.null(variable_label) && nzchar(variable_label)) {
+      attr(x, "label") <- variable_label
+    }
     return(x)
   }
 
@@ -213,6 +216,9 @@ realiselabelled_vec <- function(x,
         new_variable_label = existing_label
       )
     } else {
+      if (!is.null(variable_label) && nzchar(variable_label)) {
+        attr(x, "label") <- variable_label
+      }
       return(x)  # Too many unique values
     }
 
@@ -249,6 +255,9 @@ realiselabelled_vec <- function(x,
       y <- haven::labelled(x)
 
     } else {
+      if (!is.null(variable_label) && nzchar(variable_label)) {
+        attr(x, "label") <- variable_label
+      }
       return(x)  # Too many unique values
     }
 

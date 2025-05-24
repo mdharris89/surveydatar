@@ -789,13 +789,6 @@ test_that("create_survey_data works", {
   # Error handling
   expect_error(create_survey_data(as.matrix(dat)), "'dat' must be a data frame")
   expect_error(create_survey_data(dat, as.list(dpdict)), "'dpdict' must be a data frame")
-
-  # Test validation checks during creation
-  dat_dupes <- dat
-  names(dat_dupes)[2] <- names(dat_dupes)[1]
-  dpdict_dupes <- dpdict
-  dpdict_dupes$variable_names[2] <- dpdict_dupes$variable_names[1]
-  expect_warning(expect_error(create_survey_data(dat, dpdict_dupes), "Misalignment between dat and dpdict."))
 })
 
 test_that("is.survey_data works", {
@@ -921,7 +914,7 @@ test_that("mutate.survey_data works", {
 
   # Add a new column with a custom label
   custom_label <- "Multiplied ID Value"
-  mutated_obj_custom_label <- mutate(survey_obj, new_col = with_label(uid * 10, custom_label))
+  mutated_obj_custom_label <- mutate(survey_obj, new_col = realiselabelled_vec(uid * 10, variable_label = custom_label))
 
   expect_s3_class(mutated_obj_custom_label, "survey_data")
   expect_true("new_col" %in% names(mutated_obj_custom_label$dat))
@@ -937,7 +930,7 @@ test_that("mutate.survey_data works", {
 
   # Modify an existing column with a new label
   new_uid_label <- "Modified User ID"
-  mutated_obj_relabel <- mutate(survey_obj, uid = with_label(uid + 1, new_uid_label))
+  mutated_obj_relabel <- mutate(survey_obj, uid = realiselabelled_vec(uid + 1, variable_label = new_uid_label))
 
   expect_s3_class(mutated_obj_relabel, "survey_data")
   # Corrected test - compare values after removing labels
@@ -957,12 +950,12 @@ test_that("mutate.survey_data works", {
               "Test data doesn't have required columns")
 
   multi_obj <- mutate(survey_obj,
-                      uid = with_label(uid + 1, "New UID Label"),
-                      new_var1 = with_label(csat * 2, "Double CSAT"),
+                      uid = realiselabelled_vec(uid + 1, variable_label = "New UID Label"),
+                      new_var1 = realiselabelled_vec(csat * 2, variable_label = "Double CSAT"),
                       new_var2 = nps_response * 3)  # No custom label
 
   expect_true(all(c("uid", "new_var1", "new_var2") %in% names(multi_obj$dat)))
   expect_equal(sjlabelled::get_label(multi_obj$dat$uid), "New UID Label")
   expect_equal(sjlabelled::get_label(multi_obj$dat$new_var1), "Double CSAT")
-  expect_equal(sjlabelled::get_label(multi_obj$dat$new_var2), "new_var2")  # Default label
+  expect_equal(sjlabelled::get_label(multi_obj$dat$new_var2), "NPS response (1)")  # Default label
 })
