@@ -3253,3 +3253,80 @@ relocate.survey_data <- function(.data, ..., .before = NULL, .after = NULL) {
     class = "survey_data"
   )
 }
+
+
+#' Helper to create labeled value
+#' @param value The value to assign
+#' @param label The label for this value
+lv <- function(value, label) {
+  structure(value, label = label)
+}
+
+#' Simple labelled case_when with proper class inheritance
+#'
+#' @param ... case_when conditions using lv(value, "label") syntax
+#' @param .variable_label Variable label to apply
+#' @return A properly labelled vector using haven::labelled class
+#' @export
+labelled_case_when <- function(..., .variable_label = NULL) {
+
+  dots <- rlang::enquos(...)
+  case_exprs <- dots[names(dots) != ".variable_label"]
+
+  conditions <- list()
+  values <- c()
+  value_labels <- c()
+
+  # Parse the lv() expressions
+  for (i in seq_along(case_exprs)) {
+    expr <- case_exprs[[i]]
+
+    # Get the formula from the quosure
+    formula <- rlang::quo_get_expr(expr)
+
+    # Extract condition (left side of ~) and value expression (right side of ~)
+    condition <- formula[[2]]  # LHS of formula
+    value_expr <- formula[[3]]  # RHS of formula
+
+    conditions[[i]] <- condition
+
+    # Check if the RHS is an lv() call or just a plain value
+    if (is.call(value_expr) && identical(value_expr[[1]], quote(lv))) {
+      # It's an lv() call - evaluate it
+      labeled_value <- rlang::eval_tidy(value_expr, env = rlang::quo_get_env(expr))
+      values[i] <- as.vector(labeled_value)
+      value_labels[i] <- attr(labeled_value, "label")
+    } else {
+      # It's a plain value (like NA) - use as-is with no label
+      plain_value <- rlang::eval_tidy(value_expr, env = rlang::quo_get_env(expr))
+      values[i] <- plain_value
+      value_labels[i] <- NA_character_
+    }
+  }
+
+  # Create and execute standard case_when
+  standard_case_args <- list()
+  for (i in seq_along(conditions)) {
+    # Create formula in the original environment
+    standard_case_args[[i]] <- rlang::new_formula(conditions[[i]], values[i], env = rlang::quo_get_env(case_exprs[[i]]))
+  }
+
+  # Execute case_when in the calling environment
+  result <- rlang::eval_tidy(rlang::expr(dplyr::case_when(!!!standard_case_args)), env = rlang::caller_env())
+
+  # Apply proper labelled class using haven::labelled
+  result_labelled <- haven::labelled(result)
+
+  # Apply value labels
+  value_lookup_vec <- setNames(values, value_labels)
+  # Remove any NA labels (in case some lv() calls didn't have labels)
+  value_lookup_vec <- value_lookup_vec[!is.na(names(value_lookup_vec))]
+
+  if (length(value_lookup_vec) > 0) {
+    result_labelled <- sjlabelled::set_labels(result_labelled, labels = value_lookup_vec)
+  }
+
+  attr(result_labelled, "label") <- .variable_label
+
+  return(result_labelled)
+}

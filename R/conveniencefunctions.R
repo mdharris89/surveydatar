@@ -723,7 +723,6 @@ concatenate_by_group <- function(temp_dat, group_var){
 #'
 #' @param puncts Character vector of punctuation marks
 #' @return A string suitable for use in regex pattern matching
-
 puncts_to_pattern <- function(puncts) {
   # Characters that need escaping in regex
   special_chars <- c(".", "|", "(", ")", "[", "]", "{", "}", "^", "$", "*", "+", "?", "\\", " ")
@@ -764,4 +763,129 @@ puncts_to_pattern <- function(puncts) {
   if (length(multi_chars) == 0) return(singles_pattern)
   paste0("(", singles_pattern, "|", multis_pattern, ")")
 
+}
+
+#' Reorder Substrings Within a String
+#'
+#' Takes a string with multiple parts separated by a specified separator and reorders
+#' those parts according to a given order vector.
+#'
+#' @param string A character string containing substrings separated by a separator
+#' @param separator A character string specifying the separator between substrings. Defaults to " - "
+#' @param new_order A numeric vector specifying the new order of substrings. Defaults to c(1, 3, 2)
+#'
+#' @return A character string with substrings reordered according to new_order.
+#'         If the number of substrings doesn't match the length of new_order,
+#'         returns the original string unchanged with a warning.
+#' @export
+#'
+#' @examples
+#' reorder_substrings("A - B - C", " - ", c(1, 3, 2))
+#' reorder_substrings("Question - Statement - Brand", " - ", c(3, 1, 2))
+reorder_substrings <- function(string, separator = " - ", new_order = c(1, 3, 2)){
+  parts <- strsplit(string, separator, fixed = TRUE)[[1]]
+
+  if(length(parts) != length(new_order)){
+    warning(paste0("Number of substrings found does not match length of new_order vector for ", string, ". returning string unchanged."))
+    return(string)
+  }
+
+  reordered <- parts[new_order]
+  return(paste(reordered, collapse = separator))
+}
+
+#' Get Unique Substrings Containing a Specified String
+#'
+#' Searches through character strings, splits them by a separator, and returns
+#' unique substrings that contain a specified search string.
+#'
+#' @param full_string A character vector of strings to search through
+#' @param string_to_find A character string to search for within the substrings
+#' @param separator A character string specifying the separator to split by. Defaults to " - "
+#'
+#' @return A character vector of unique substrings that contain the specified string.
+#'         Returns NULL if no matches are found.
+#' @export
+#'
+#' @examples
+#' strings <- c("Q1 - Brand A - Statement", "Q2 - Brand B - Statement", "Q3 - Brand A - Other")
+#' get_unique_substrings_containing_string(strings, "Brand A")
+#' get_unique_substrings_containing_string(strings, "Statement")
+get_unique_substrings_containing_string <- function(full_string, string_to_find, separator = " - ") {
+  result <- unique(unlist(lapply(full_string, function(x) {
+    parts <- unlist(strsplit(x, separator, fixed = TRUE))
+    matches <- parts[grepl(string_to_find, parts, fixed = TRUE)]
+    if (length(matches) > 0) matches else NULL
+  })))
+  return(result)
+}
+
+#' Find All Duplicated Values in a Vector
+#'
+#' Identifies all values that appear more than once in a vector, including both
+#' the first and subsequent occurrences (unlike base R's duplicated() which only
+#' identifies subsequent occurrences).
+#'
+#' @param x A vector to check for duplicates
+#' @param return_type A character string specifying the return format:
+#'        "logical" returns a logical vector, "indices" returns numeric indices,
+#'        "values" returns the actual duplicated values
+#'
+#' @return Depending on return_type:
+#'         - "logical": A logical vector the same length as x
+#'         - "indices": A numeric vector of indices where duplicates occur
+#'         - "values": A vector of the actual duplicated values
+#' @export
+#'
+#' @examples
+#' x <- c("a", "b", "c", "b", "d", "a")
+#' all_duplicated(x, "logical")
+#' all_duplicated(x, "indices")
+#' all_duplicated(x, "values")
+all_duplicated <- function(x, return_type = "logical") {
+  duplicated_logical <- duplicated(x) | duplicated(x, fromLast = TRUE)
+  if(return_type == "logical") {
+    return(unlist(duplicated_logical))
+  } else if (return_type == "indices") {
+    return(which(duplicated_logical))
+  } else if (return_type == "values") {
+    return(x[which(duplicated_logical)])
+  } else {
+    stop("Invalid return_type. Use 'logical', 'indices', or 'values'.")
+  }
+}
+
+#' Append "oe" to Variable Labels for Open-Ended Duplicates
+#'
+#' Identifies character variables in survey data that have duplicate variable labels
+#' with their non-open-ended counterparts and appends "oe" to the variable name prefix
+#' in their labels to distinguish them.
+#'
+#' @param temp_dat A survey data dataframe
+#' @param temp_dpdict A dpdict dataframe with variable metadata including variable_labels
+#'
+#' @return The updated dpdict with "oe" appended to variable labels for open-ended
+#'         duplicates. Variable labels are modified from format "Q1 - Statement" to
+#'         "Q1oe - Statement" for affected variables.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Assumes temp_dat has character variables with duplicate labels
+#' temp_dat <- data.frame(
+#'   Q1_1 = c(1, 2, 3),
+#'   Q1_1_oe = c("Other text", "More text", "Additional text")
+#' )
+#' attr(temp_dat$Q1_1, "label") <- "Q1 - Brand preference"
+#' attr(temp_dat$Q1_1_oe, "label") <- "Q1 - Brand preference"
+#'
+#' temp_dpdict <- create_dict(temp_dat)
+#' updated_dpdict <- append_oe_to_oe_duplicates(temp_dat, temp_dpdict)
+#' }
+append_oe_to_oe_duplicates <- function(temp_dat, temp_dpdict){
+  # gets all variable labels that are oes with labels that are duplicates of the non oe version
+  duplicates_to_oes <- unname(all_duplicated(temp_dpdict$variable_labels) & unlist(map_vec(temp_dat, is.character)))
+  # appends "oe" to variable name prefix for these variables
+  temp_dpdict$variable_labels[duplicates_to_oes] <- gsub("^([A-Za-z0-9]+)( - )", "\\1oe\\2", temp_dpdict$variable_labels[duplicates_to_oes])
+  return(temp_dpdict)
 }
