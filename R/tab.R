@@ -321,9 +321,19 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     stringsAsFactors = FALSE
   )
 
-  # Add base sizes for each column
-  for (i in seq_along(col_bases)) {
-    base_row[[names(result_df)[i + 1]]] <- col_bases[i]
+  # Handle empty data case
+  if (nrow(data) == 0 || length(col_bases) == 0) {
+    # For empty data, create a minimal base row with NA values
+    for (col_name in names(result_df)[-1]) {
+      base_row[[col_name]] <- 0
+    }
+  } else {
+    # Add base sizes for each column (normal case)
+    for (i in seq_along(col_bases)) {
+      if (i + 1 <= ncol(result_df)) {  # Extra safety check
+        base_row[[names(result_df)[i + 1]]] <- col_bases[i]
+      }
+    }
   }
 
   # Add base row to the result
@@ -347,38 +357,71 @@ print.tab_result <- function(x, ...) {
   cat("\nCross-tabulation (", statistic, ")\n", sep = "")
   cat(rep("-", 50), "\n", sep = "")
 
+  # Create a copy for formatting to avoid modifying the original
+  x_formatted <- x
+
+  # Identify the base row (should be the last row with "Base (n)" label)
+  base_row_idx <- which(x_formatted$row_label == "Base (n)")
+
   # Format percentages, but exclude the base row
   if (statistic %in% c("column_pct", "row_pct")) {
-    base_row_index <- which(x$row_label == "Base (n)")
+    for (col in names(x_formatted)[-1]) {
+      # Store original values to preserve numeric type checking
+      original_values <- x[[col]]
 
-    for (col in names(x)[-1]) {
-      x[[col]] <- ifelse(
-        is.numeric(x[[col]]),
-        sprintf("%.1f%%", x[[col]]),
-        as.character(x[[col]])
-      )
-      # Format all rows except base as percentages
-      x[[col]][-base_row_index] <- sprintf("%.1f%%", x[[col]][-base_row_index])
-      # Format base row as integers
-      if (length(base_row_index) > 0) {
-        x[[col]][base_row_index] <- sprintf("%.0f", x[[col]][base_row_index])
+      # Create a character vector to store formatted results
+      formatted_col <- character(length(original_values))
+
+      for (i in seq_len(nrow(x_formatted))) {
+        if (i %in% base_row_idx) {
+          # Keep base row as plain number
+          formatted_col[i] <- as.character(original_values[i])
+        } else {
+          # Format all other rows with % if they were originally numeric
+          if (is.numeric(original_values[i]) && !is.na(original_values[i])) {
+            formatted_col[i] <- sprintf("%.1f%%", original_values[i])
+          } else {
+            formatted_col[i] <- as.character(original_values[i])
+          }
+        }
       }
+
+      # Replace the entire column with formatted results
+      x_formatted[[col]] <- formatted_col
     }
   } else if (statistic == "mean") {
-    for (col in names(x)[-1]) {
-      x[[col]] <- ifelse(
-        is.numeric(x[[col]]),
-        sprintf("%.2f", x[[col]]),
-        as.character(x[[col]])
-      )
+    for (col in names(x_formatted)[-1]) {
+      # Store original values to preserve numeric type checking
+      original_values <- x[[col]]
+
+      # Create a character vector to store formatted results
+      formatted_col <- character(length(original_values))
+
+      for (i in seq_len(nrow(x_formatted))) {
+        if (i %in% base_row_idx) {
+          # Keep base row as plain number
+          formatted_col[i] <- as.character(original_values[i])
+        } else {
+          # Format all other rows if they were originally numeric
+          if (is.numeric(original_values[i]) && !is.na(original_values[i])) {
+            formatted_col[i] <- sprintf("%.2f", original_values[i])
+          } else {
+            formatted_col[i] <- as.character(original_values[i])
+          }
+        }
+      }
+
+      # Replace the entire column with formatted results
+      x_formatted[[col]] <- formatted_col
     }
   } else {
-    for (col in names(x)[-1]) {
-      x[[col]] <- as.character(x[[col]])
+    # For count statistic, just convert to character
+    for (col in names(x_formatted)[-1]) {
+      x_formatted[[col]] <- as.character(x_formatted[[col]])
     }
   }
 
-  print.data.frame(x, row.names = FALSE, ...)
+  print.data.frame(x_formatted, row.names = FALSE, ...)
 
   # Print base sizes
   col_bases <- attr(x, "col_bases")
