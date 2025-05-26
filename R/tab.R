@@ -350,11 +350,23 @@ print.tab_result <- function(x, ...) {
   # Format percentages
   if (statistic %in% c("column_pct", "row_pct")) {
     for (col in names(x)[-1]) {
-      x[[col]] <- sprintf("%.1f%%", x[[col]])
+      x[[col]] <- ifelse(
+        is.numeric(x[[col]]),
+        sprintf("%.1f%%", x[[col]]),
+        as.character(x[[col]])
+      )
     }
   } else if (statistic == "mean") {
     for (col in names(x)[-1]) {
-      x[[col]] <- sprintf("%.2f", x[[col]])
+      x[[col]] <- ifelse(
+        is.numeric(x[[col]]),
+        sprintf("%.2f", x[[col]]),
+        as.character(x[[col]])
+      )
+    }
+  } else {
+    for (col in names(x)[-1]) {
+      x[[col]] <- as.character(x[[col]])
     }
   }
 
