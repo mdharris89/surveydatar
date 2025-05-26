@@ -3258,6 +3258,8 @@ relocate.survey_data <- function(.data, ..., .before = NULL, .after = NULL) {
 #' Helper to create labeled value
 #' @param value The value to assign
 #' @param label The label for this value
+#' @return The original `value` with an additional `label` attribute.
+#' @export
 lv <- function(value, label) {
   structure(value, label = label)
 }
