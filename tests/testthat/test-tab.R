@@ -923,3 +923,305 @@ test_that("NET with edge case: overlapping conditions", {
   expect_true(as.numeric(gsub("%", "", net_row$`region: North`)) >=
                 as.numeric(gsub("%", "", low_income_row$`region: North`)))
 })
+
+
+
+##### unit tests for labelled variable expansion #####
+# Unit tests for labelled variable expansion in tab()
+
+# Helper function to create test data with labelled variables
+create_labelled_test_data <- function(n = 100) {
+  set.seed(123)
+
+  # Create basic data frame
+  data <- data.frame(
+    id = 1:n,
+    age = sample(18:65, n, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  # Create labelled satisfaction variable (5-point scale)
+  satisfaction_values <- sample(1:5, n, replace = TRUE)
+  data$satisfaction <- haven::labelled(
+    satisfaction_values,
+    labels = c("Very dissatisfied" = 1, "Dissatisfied" = 2, "Neutral" = 3,
+               "Satisfied" = 4, "Very satisfied" = 5)
+  )
+
+  # Create labelled region variable (4 regions)
+  region_values <- sample(1:4, n, replace = TRUE)
+  data$region <- haven::labelled(
+    region_values,
+    labels = c("North" = 1, "South" = 2, "East" = 3, "West" = 4)
+  )
+
+  # Create labelled variable with many categories (like the 17-value example)
+  brand_values <- sample(1:17, n, replace = TRUE)
+  brand_labels <- setNames(1:17, paste0("Brand_", LETTERS[1:17]))
+  data$brand <- haven::labelled(brand_values, labels = brand_labels)
+
+  # Create binary labelled variable (multiresponse style)
+  binary_values <- sample(0:1, n, replace = TRUE)
+  data$binary_var <- haven::labelled(
+    binary_values,
+    labels = c("Not selected" = 0, "Selected" = 1)
+  )
+
+  # Create regular factor for comparison
+  data$factor_var <- factor(sample(c("Option A", "Option B", "Option C"), n, replace = TRUE))
+
+  return(data)
+}
+
+# Helper function to create dpdict for labelled test data
+create_labelled_dpdict <- function() {
+  data.frame(
+    variable_names = c("id", "age", "satisfaction", "region", "brand", "binary_var", "factor_var"),
+    variable_labels = c("ID", "Age", "Satisfaction Level", "Geographic Region",
+                        "Brand Preference", "Binary Variable", "Factor Variable"),
+    question_group = c(NA, NA, NA, NA, NA, NA, NA),
+    stringsAsFactors = FALSE
+  )
+}
+
+# Test labelled variable expansion in rows
+test_that("labelled variables expand correctly in rows", {
+  data <- create_labelled_test_data()
+
+  # Test satisfaction (5-point scale) expansion
+  result <- tab(data, satisfaction)
+
+  # Should have 5 rows (one for each satisfaction level)
+  expect_equal(nrow(result) - 1, 5)  # -1 for base row
+
+  # Check that all satisfaction labels are present
+  satisfaction_labels <- c("Very dissatisfied", "Dissatisfied", "Neutral", "Satisfied", "Very satisfied")
+  for (label in satisfaction_labels) {
+    expect_true(any(grepl(label, result$row_label)))
+  }
+})
+
+# Test labelled variable expansion in columns
+test_that("labelled variables expand correctly in columns", {
+  data <- create_labelled_test_data()
+
+  # Test region expansion in columns
+  result <- tab(data, satisfaction, region)
+
+  # Should have 4 columns for region + 1 for row_label
+  expect_equal(ncol(result) - 1, 4)  # -1 for row_label column
+
+  # Check that all region labels are present in column names
+  region_labels <- c("North", "South", "East", "West")
+  for (label in region_labels) {
+    expect_true(any(grepl(label, names(result))))
+  }
+})
+
+# Test labelled variable with many categories (17 brands)
+test_that("labelled variables with many categories expand correctly", {
+  data <- create_labelled_test_data()
+
+  # Test brand variable (17 categories) in rows
+  result <- tab(data, brand)
+
+  # Should have 17 rows (one for each brand) + base row
+  expect_equal(nrow(result) - 2, 17)  # -1 for base row and -1 for NET
+
+  # Check that brand labels follow expected pattern
+  for (i in 1:17) {
+    brand_label <- paste0("Brand_", LETTERS[i])
+    expect_true(any(grepl(brand_label, result$row_label)))
+  }
+})
+
+# Test cross-tabulation with two labelled variables
+test_that("cross-tabulation works with two labelled variables", {
+  data <- create_labelled_test_data()
+
+  # Cross-tab satisfaction by region
+  result <- tab(data, satisfaction, region)
+
+  # Should have 5 rows (satisfaction levels) + base row
+  expect_equal(nrow(result) - 2, 5)
+
+  # Should have 4 columns (regions) + row_label column
+  expect_equal(ncol(result) - 1, 4)
+
+  # Check that percentages are calculated correctly
+  # Each column should sum to approximately 100%
+
+  numeric_cols <- result[1:(nrow(result)-2), -1]  # Exclude base row and row_label
+  col_sums <- sapply(numeric_cols, function(x) {
+    sum(as.numeric(gsub("%", "", x)), na.rm = TRUE)
+  })
+
+  # Allow for small rounding differences
+  expect_true(all(abs(col_sums - 100) < 0.1))
+})
+
+# Test binary labelled variable (multiresponse style)
+test_that("binary labelled variables expand correctly", {
+  data <- create_labelled_test_data()
+
+  result <- tab(data, binary_var)
+
+  # Should have 2 rows (Selected, Not selected) + base row
+  expect_equal(nrow(result) - 2, 2)
+
+  # Check labels
+  expect_true(any(grepl("Not selected", result$row_label)))
+  expect_true(any(grepl("Selected", result$row_label)))
+})
+
+# Test mixed labelled and factor variables
+test_that("mixed labelled and factor variables work together", {
+  data <- create_labelled_test_data()
+
+  # Cross-tab labelled satisfaction by factor variable
+  result <- tab(data, satisfaction, factor_var)
+
+  # Should have 5 rows (satisfaction) + base row
+  expect_equal(nrow(result) - 2, 5)
+
+  # Should have 3 columns (factor levels) + row_label
+  expect_equal(ncol(result) - 1, 3)
+
+  # Check that factor levels appear in column names
+  factor_levels <- c("Option A", "Option B", "Option C")
+  for (level in factor_levels) {
+    expect_true(any(grepl(level, names(result))))
+  }
+})
+
+# Test that labelled variables work with survey_data objects
+test_that("labelled variables work with survey_data objects", {
+  data <- create_labelled_test_data()
+  dpdict <- create_labelled_dpdict()
+
+  survey_obj <- structure(
+    list(dat = data, dpdict = dpdict),
+    class = "survey_data"
+  )
+
+  result <- tab(survey_obj, satisfaction, region)
+
+  # Should work the same as with regular data frame
+  expect_equal(nrow(result) - 2, 5)  # 5 satisfaction levels
+  expect_equal(ncol(result) - 1, 4)  # 4 regions
+
+  # Should use labels from dpdict where available
+  expect_true(any(grepl("Satisfaction Level", result$row_label)))
+})
+
+# Test edge cases with labelled variables
+test_that("edge cases with labelled variables are handled", {
+  data <- create_labelled_test_data(10)  # Small dataset
+
+  # Test with all same values
+  data$satisfaction[] <- 1  # All "Very dissatisfied"
+
+  result <- tab(data, satisfaction)
+
+  # Should still create all categories, but most will be 0%
+  expect_equal(nrow(result) - 2, 5)  # All 5 categories should appear
+
+  # Only one category should have 100%
+  numeric_values <- as.numeric(gsub("%", "", result$Total[1:(nrow(result)-2)]))
+  expect_equal(sum(numeric_values > 0), 1)
+  expect_equal(max(numeric_values), 100)
+})
+
+# Test that label extraction works correctly
+test_that("label extraction from labelled variables is correct", {
+  data <- create_labelled_test_data()
+
+  # Manually check that labels are extracted correctly
+  satisfaction_labels <- attr(data$satisfaction, "labels")
+  expect_equal(length(satisfaction_labels), 5)
+  expect_equal(names(satisfaction_labels),
+               c("Very dissatisfied", "Dissatisfied", "Neutral", "Satisfied", "Very satisfied"))
+
+  region_labels <- attr(data$region, "labels")
+  expect_equal(length(region_labels), 4)
+  expect_equal(names(region_labels), c("North", "South", "East", "West"))
+
+  # Test the expansion
+  result <- tab(data, satisfaction)
+
+  # Each satisfaction level should appear in row labels
+  for (label_name in names(satisfaction_labels)) {
+    expect_true(any(grepl(label_name, result$row_label)))
+  }
+})
+
+# Test performance with large labelled variable
+test_that("performance is acceptable with large labelled variable", {
+  # Create data with many categories (simulate the 17-category case)
+  large_data <- create_labelled_test_data(1000)  # Larger dataset
+
+  # Time the operation
+  start_time <- Sys.time()
+  result <- tab(large_data, brand, region)
+  end_time <- Sys.time()
+
+  # Should complete in reasonable time (less than 5 seconds)
+  expect_true(as.numeric(end_time - start_time) < 5)
+
+  # Should have correct dimensions
+  expect_equal(nrow(result) - 2, 17)  # 17 brands
+  expect_equal(ncol(result) - 1, 4)   # 4 regions
+})
+
+# Test that counts are accurate for labelled variables
+test_that("counts are mathematically correct for labelled variables", {
+  # Create deterministic test data
+  set.seed(456)
+  data <- data.frame(id = 1:100)
+
+  # Create satisfaction with known distribution
+  # 20 each of values 1-5
+  satisfaction_values <- rep(1:5, each = 20)
+  data$satisfaction <- haven::labelled(
+    satisfaction_values,
+    labels = c("Level 1" = 1, "Level 2" = 2, "Level 3" = 3, "Level 4" = 4, "Level 5" = 5)
+  )
+
+  # Create region with known distribution
+  # 25 each of values 1-4
+  region_values <- rep(1:4, each = 25)
+  data$region <- haven::labelled(
+    region_values,
+    labels = c("North" = 1, "South" = 2, "East" = 3, "West" = 4)
+  )
+
+  # Test simple count
+  result_count <- tab(data, satisfaction, statistic = "count")
+
+  # Each satisfaction level should have count of 20
+  for (i in 1:5) {
+    level_row <- result_count[grepl(paste0("Level ", i), result_count$row_label), ]
+    expect_equal(as.numeric(level_row$Total), 20)
+  }
+
+  # Test cross-tab counts
+  result_cross <- tab(data, satisfaction, region, statistic = "count")
+
+  # Expected counts based on overlapping rep() patterns
+  expected_counts <- matrix(c(
+    20,  0,  0,  0,  # Level 1: all in North
+    5, 15,  0,  0,  # Level 2: 5 in North, 15 in South
+    0, 10, 10,  0,  # Level 3: 10 in South, 10 in East
+    0,  0, 15,  5,  # Level 4: 15 in East, 5 in West
+    0,  0,  0, 20   # Level 5: all in West
+  ), nrow = 5, byrow = TRUE)
+
+  region_names <- c("region: North", "region: South", "region: East", "region: West")
+
+  for (i in 1:5) {
+    for (j in 1:4) {
+      level_row <- result_cross[grepl(paste0("Level ", i), result_cross$row_label), ]
+      expect_equal(as.numeric(level_row[[region_names[j]]]), expected_counts[i, j])
+    }
+  }
+})
