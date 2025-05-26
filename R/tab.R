@@ -347,14 +347,25 @@ print.tab_result <- function(x, ...) {
   cat("\nCross-tabulation (", statistic, ")\n", sep = "")
   cat(rep("-", 50), "\n", sep = "")
 
-  # Format percentages
+  # Format percentages, but exclude the base row
   if (statistic %in% c("column_pct", "row_pct")) {
+    base_row_index <- which(x$row_label == "Base (n)")
+
     for (col in names(x)[-1]) {
+<<<<<<< HEAD
       x[[col]] <- ifelse(
         is.numeric(x[[col]]),
         sprintf("%.1f%%", x[[col]]),
         as.character(x[[col]])
       )
+=======
+      # Format all rows except base as percentages
+      x[[col]][-base_row_index] <- sprintf("%.1f%%", x[[col]][-base_row_index])
+      # Format base row as integers
+      if (length(base_row_index) > 0) {
+        x[[col]][base_row_index] <- sprintf("%.0f", x[[col]][base_row_index])
+      }
+>>>>>>> 333c4d53a35136c5c3e1f49a26f30eb809480594
     }
   } else if (statistic == "mean") {
     for (col in names(x)[-1]) {
@@ -558,9 +569,9 @@ expand_variables <- function(var_spec, data, dpdict = NULL) {
   if (var_name %in% names(data)) {
     var_data <- data[[var_name]]
 
-    # Check if it's labelled
-    if (inherits(var_data, "haven_labelled")) {
-      labels <- attr(var_data, "labels")
+    # Check if it's labelled (generic approach)
+    labels <- attr(var_data, "labels")
+    if (!is.null(labels) && length(labels) > 0) {
       return(lapply(seq_along(labels), function(i) {
         list(
           type = "expression",
