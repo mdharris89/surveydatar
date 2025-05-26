@@ -11,6 +11,9 @@ lv(value, label)
 
 \item{label}{The label for this value}
 }
+\value{
+The original \code{value} with an additional \code{label} attribute.
+}
 \description{
 Helper to create labeled value
 }
