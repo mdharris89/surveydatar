@@ -996,9 +996,17 @@ copy_tab <- function(tab_result) {
 
   # Convert percentages to decimals for percentage statistics
   if (statistic %in% c("column_pct", "row_pct")) {
+    # Identify base row(s) to exclude from percentage conversion
+    base_row_idx <- which(output_data$row_label == "Base (n)")
+
     # Convert all numeric columns (excluding row_label) from percentages to decimals
     numeric_cols <- sapply(output_data[, -1, drop = FALSE], is.numeric)
-    output_data[, -1][, numeric_cols] <- output_data[, -1][, numeric_cols] / 100
+
+    for (i in seq_len(nrow(output_data))) {
+      if (!i %in% base_row_idx) {  # Skip base rows
+        output_data[i, -1][numeric_cols] <- output_data[i, -1][numeric_cols] / 100
+      }
+    }
   }
 
   # Create column headers row
