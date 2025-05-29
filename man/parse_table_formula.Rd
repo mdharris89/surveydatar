@@ -4,7 +4,7 @@
 \alias{parse_table_formula}
 \title{Parse table formula expressions using NSE}
 \usage{
-parse_table_formula(expr, data, dpdict = NULL)
+parse_table_formula(expr, data, dpdict = NULL, helpers = NULL)
 }
 \arguments{
 \item{expr}{An expression captured using rlang::enquo}

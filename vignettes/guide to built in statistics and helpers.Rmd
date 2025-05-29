@@ -1,0 +1,169 @@
+# Guide to built-in statistics and helpers
+
+## Statistics
+
+### 1. Median (median)
+
+Calculate the median value instead of mean for continuous variables.
+
+``` r
+# Median income by gender and region
+tab(data, gender, region, statistic = "median", values = "income")
+
+# Compare mean vs median
+mean_income <- tab(data, gender, region, statistic = "mean", values = "income")
+median_income <- tab(data, gender, region, statistic = "median", values = "income")
+```
+
+### 2. Standard Deviation (sd)
+
+Measure the variability of values within each cell.
+
+``` r
+# Income variability by demographic groups
+tab(data, age_group, region, statistic = "sd", values = "income")
+
+# Satisfaction score variability
+tab(data, gender, product_type, statistic = "sd", values = "satisfaction_score")
+```
+
+### 3. Coefficient of Variation (cv)
+
+Relative measure of variability (SD/Mean × 100), useful for comparing variability across groups with different means.
+
+``` r
+# Which demographic has most consistent income?
+tab(data, education_level, region, statistic = "cv", values = "income")
+
+# Product rating consistency
+tab(data, product_type, purchase_frequency, statistic = "cv", values = "rating")
+```
+
+### 4. Index (index)
+
+Shows how each cell compares to the total (100 = average). Values above 100 indicate over-representation.
+
+``` r
+# Which regions over-index for each gender?
+tab(data, gender, region, statistic = "index")
+
+# Product preference indexing
+tab(data, product_preference, age_group, statistic = "index")
+```
+
+### 5. Percentiles (p25, p75)
+
+Calculate specific percentiles of a numeric variable.
+
+``` r
+# Income quartiles by demographics
+tab(data, education_level, region, statistic = "p25", values = "income")  # 25th percentile
+tab(data, education_level, region, statistic = "p75", values = "income")  # 75th percentile
+```
+
+## Helpers
+
+### 1. Value Range (value_range)
+
+Select respondents within a specific numeric range.
+
+``` r
+# Age ranges
+tab(data, value_range(age, 25, 34), region)
+
+# Income brackets
+tab(data, 
+    rows = rows_list(
+      "Low Income" = value_range(income, 0, 30000),
+      "Middle Income" = value_range(income, 30001, 70000),
+      "High Income" = value_range(income, 70001, 999999)
+    ),
+    cols = education_level)
+
+# Exclusive boundaries
+tab(data, value_range(satisfaction_score, 3, 4, inclusive = FALSE), product_type)
+```
+
+### 2. Pattern Matching (pattern)
+
+Find text patterns in open-ended or categorical responses.
+
+``` r
+# Find specific mentions in comments
+tab(data, pattern(comments, "excellent|outstanding"), gender)
+
+# Email domain analysis
+tab(data, pattern(email, "@gmail\\.com$"), age_group)
+
+# Case-sensitive matching
+tab(data, pattern(product_code, "^PRO-", ignore_case = FALSE), region)
+```
+
+### 3. Percentile Selection (percentile)
+
+Select respondents above or below a certain percentile of a numeric variable.
+
+``` r
+# Top 10% of spenders
+tab(data, percentile(total_spend, "above", 90), product_category)
+
+# Bottom quartile of engagement
+tab(data, percentile(engagement_score, "below", 25), channel)
+
+# Combined with filters
+tab(data, 
+    rows = rows_list(
+      "High Earners" = percentile(income, "above", 75),
+      "Low Earners" = percentile(income, "below", 25)
+    ),
+    cols = satisfaction)
+```
+
+### 4. Negation (not)
+
+Logical NOT operation for any condition.
+
+``` r
+# Everyone except the satisfied
+tab(data, not(top_box(satisfaction, 2)), gender)
+
+# Outside age range
+tab(data, not(value_range(age, 25, 34)), region)
+
+# Exclude pattern matches
+tab(data, not(pattern(email, "@internal\\.com$")), department)
+
+# Complex negations
+tab(data, not(top_box(satisfaction, 2) * value_range(age, 18, 24)), product_type)
+```
+
+## Advanced Usage Examples
+
+### Comprehensive Satisfaction Analysis
+
+``` r
+# Multi-dimensional satisfaction breakdown
+tab(data,
+    rows = rows_list(
+      "Very Satisfied" = top_box(satisfaction, 1),
+      "Satisfied" = top_box(satisfaction, 2) * not(top_box(satisfaction, 1)),
+      "Neutral" = mid_box(satisfaction, 1),
+      "Dissatisfied" = bottom_box(satisfaction, 2) * not(bottom_box(satisfaction, 1)),
+      "Very Dissatisfied" = bottom_box(satisfaction, 1)
+    ),
+    cols = rows_list(
+      "High Income" = percentile(income, "above", 75),
+      "Middle Income" = not(percentile(income, "above", 75)) * not(percentile(income, "below", 25)),
+      "Low Income" = percentile(income, "below", 25)
+    ))
+```
+
+### Statistical Comparison Table
+
+``` r
+# Create multiple statistics for the same breakdown
+mean_table <- tab(data, age_group, region, statistic = "mean", values = "satisfaction_score")
+median_table <- tab(data, age_group, region, statistic = "median", values = "satisfaction_score")
+sd_table <- tab(data, age_group, region, statistic = "sd", values = "satisfaction_score")
+cv_table <- tab(data, age_group, region, statistic = "cv", values = "satisfaction_score")
+```

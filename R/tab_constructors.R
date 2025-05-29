@@ -1,0 +1,149 @@
+#' Internal registry for tab helpers and statistics
+#' @keywords internal
+.tab_registry <- new.env(parent = emptyenv())
+.tab_registry$helpers <- list()
+.tab_registry$stats <- list()
+
+#' Low-level constructor for tab helpers
+#' @param id Character identifier for the helper
+#' @param processor Function that processes the helper
+#' @param ... Additional attributes
+#' @keywords internal
+new_tab_helper <- function(id, processor, ...) {
+  stopifnot(is.character(id), length(id) == 1, nzchar(id))
+  stopifnot(is.function(processor))
+
+  structure(
+    list(
+      id = id,
+      processor = processor,
+      ...
+    ),
+    class = "tab_helper"
+  )
+}
+
+#' Low-level constructor for tab statistics
+#' @param id Character identifier for the statistic
+#' @param processor Function that processes the statistic
+#' @param format_fn Function to format values
+#' @param requires_values Whether 'values' parameter required
+#' @param base_label Label for Base row
+#' @param ... Additional attributes
+#' @keywords internal
+new_tab_stat <- function(id, processor,
+                         summary_row = NULL,
+                         summary_col = NULL,
+                         format_fn = NULL,
+                         requires_values = FALSE,
+                         base_label = "Base (n)",
+                         ...) {
+  stopifnot(is.character(id), length(id) == 1, nzchar(id))
+  stopifnot(is.function(processor))
+
+  # Default formatter if none provided
+  if (is.null(format_fn)) {
+    format_fn <- function(x) as.character(x)
+  }
+
+  structure(
+    list(
+      id = id,
+      processor = processor,
+      summary_row = summary_row,
+      summary_col = summary_col,
+      format_fn = format_fn,
+      requires_values = requires_values,
+      base_label = base_label,
+      ...
+    ),
+    class = "tab_stat"
+  )
+}
+
+#' Create and register a custom helper
+#' @param id Character identifier for the helper
+#' @param processor Function that processes the helper specification
+#' @param ... Additional attributes
+#' @return The created helper object (invisibly)
+#' @export
+create_helper <- function(id, processor, ...) {
+  if (id %in% names(.tab_registry$helpers)) {
+    warning("Overwriting existing helper '", id, "'")
+  }
+
+  obj <- new_tab_helper(id, processor, ...)
+  .tab_registry$helpers[[id]] <- obj
+  invisible(obj)
+}
+
+#' Create and register a custom statistic
+#' @param id Character identifier for the statistic
+#' @param processor Function that processes the statistic
+#' @param summary_row Type of summary row ("NET", "Avg", "Total", or NULL)
+#' @param summary_col Type of summary column ("NET", "Avg", "Total", or NULL)
+#' @param format_fn Function to format values for display
+#' @param requires_values Whether this statistic requires a 'values' parameter
+#' @param base_label Label for the base row
+#' @param ... Additional attributes
+#' @return The created statistic object (invisibly)
+#' @export
+create_statistic <- function(id, processor,
+                             summary_row = NULL,
+                             summary_col = NULL,
+                             format_fn = NULL,
+                             requires_values = FALSE,
+                             base_label = "Base (n)",
+                             ...) {
+  if (id %in% names(.tab_registry$stats)) {
+    warning("Overwriting existing statistic '", id, "'")
+  }
+
+  obj <- new_tab_stat(id          = id,
+                      processor    = processor,
+                      summary_row  = summary_row,
+                      summary_col  = summary_col,
+                      format_fn    = format_fn,
+                      requires_values = requires_values,
+                      base_label   = base_label,
+                      ...)
+
+  .tab_registry$stats[[id]] <- obj
+  invisible(obj)
+}
+
+#' Get registered helper by ID
+#' @param id Character identifier
+#' @keywords internal
+get_helper <- function(id) {
+  .tab_registry$helpers[[id]]
+}
+
+#' Get registered statistic by ID
+#' @param id Character identifier
+#' @keywords internal
+get_statistic <- function(id) {
+  .tab_registry$stats[[id]]
+}
+
+# Add these functions to the existing R/tab-constructors.R file:
+
+#' Clear all registered helpers and statistics (useful for testing)
+#' @export
+clear_tab_registry <- function() {
+  .tab_registry$helpers <- list()
+  .tab_registry$stats <- list()
+  invisible(NULL)
+}
+
+#' List all registered helpers
+#' @export
+list_tab_helpers <- function() {
+  names(.tab_registry$helpers)
+}
+
+#' List all registered statistics
+#' @export
+list_tab_statistics <- function() {
+  names(.tab_registry$stats)
+}

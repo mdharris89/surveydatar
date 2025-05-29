@@ -11,6 +11,10 @@ tab(
   filter = NULL,
   weight = NULL,
   statistic = c("column_pct", "count", "row_pct", "mean"),
+  values = NULL,
+  helpers = NULL,
+  stats = NULL,
+  resolve_report = FALSE,
   ...
 )
 }
@@ -26,6 +30,14 @@ tab(
 \item{weight}{Weight variable name (optional)}
 
 \item{statistic}{Type of statistic: "column_pct", "count", "row_pct", "mean"}
+
+\item{values}{Variable name to aggregate for value-based statistics like mean (optional)}
+
+\item{helpers}{List of custom tab_helper objects}
+
+\item{stats}{List of custom tab_stat objects}
+
+\item{resolve_report}{Whether to return variable resolution details}
 
 \item{...}{Additional arguments}
 }

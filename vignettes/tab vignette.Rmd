@@ -1,0 +1,527 @@
+# Creating Cross-Tabulations with surveydatar::tab()
+
+## Introduction
+
+The `tab()` function in surveydatar provides a flexible and powerful way to create cross-tabulation tables from survey data. This guide will walk you through its features, from basic frequency tables to advanced custom statistics and helper functions.
+
+## Basic Usage
+
+### Simple Frequency Tables
+
+Let's start with the most basic use case - creating a frequency table for a single variable:
+
+``` r
+library(surveydatar)
+
+# Create some example data
+set.seed(123)
+survey_data <- data.frame(
+  gender = factor(sample(c("Male", "Female", "Other"), 200, 
+                        replace = TRUE, prob = c(0.45, 0.45, 0.1))),
+  age_group = factor(sample(c("18-24", "25-34", "35-44", "45-54", "55+"), 200,
+                           replace = TRUE)),
+  satisfaction = sample(1:5, 200, replace = TRUE),
+  region = factor(sample(c("North", "South", "East", "West"), 200, replace = TRUE)),
+  income = sample(20000:120000, 200, replace = TRUE),
+  age = sample(18:65, 200, replace = TRUE)
+)
+
+# Simple frequency table
+tab(survey_data, gender)
+```
+
+This produces a frequency table showing the percentage of respondents in each gender category, with a NET row showing the total (always 100% for a single variable) and a base row showing sample sizes.
+
+### Cross-Tabulations
+
+To create a cross-tabulation, simply add a column specification:
+
+``` r
+# Cross-tab gender by region
+tab(survey_data, gender, region)
+```
+
+This shows the distribution of gender within each region (column percentages by default).
+
+### Different Statistics
+
+The `tab()` function supports several built-in statistics:
+
+``` r
+# Count instead of percentages
+tab(survey_data, gender, region, statistic = "count")
+
+# Row percentages (distribution of regions within each gender)
+tab(survey_data, gender, region, statistic = "row_pct")
+
+# Column percentages (default)
+tab(survey_data, gender, region, statistic = "column_pct")
+
+# Mean of a numeric variable
+tab(survey_data, gender, region, statistic = "mean", values = "income")
+```
+
+### Value-Based Statistics
+
+Some statistics, like `mean`, require a `values` parameter to specify which numeric variable to aggregate:
+
+``` r
+# Average income by gender and region
+tab(survey_data, gender, region, statistic = "mean", values = "income")
+```
+
+Note that for mean calculations: - The `values` parameter must reference a numeric variable - An "Avg" row is automatically added instead of "NET" to show overall averages - Results are formatted with two decimal places by default
+
+### Using Weights
+
+Survey data often requires weighting. Add weights easily:
+
+``` r
+# Add a weight variable to our data
+survey_data$weight <- runif(200, 0.5, 2.0)
+
+# Weighted cross-tabulation
+tab(survey_data, gender, region, weight = "weight")
+
+# Weighted mean calculation
+tab(survey_data, gender, region, weight = "weight", 
+    statistic = "mean", values = "income")
+```
+
+## Formula Syntax and Filtering
+
+### Modern Formula Syntax
+
+While `tab()` supports traditional string syntax for backward compatibility, the modern formula syntax is more flexible:
+
+``` r
+# Instead of: tab(survey_data, "gender", "region")
+# Use:
+tab(survey_data, gender, region)
+```
+
+### Filtering Within Variables
+
+One of the most powerful features is the ability to filter data inline using the `*` operator:
+
+``` r
+# Only show females
+tab(survey_data, gender * (gender == "Female"), region)
+
+# Only show older respondents
+tab(survey_data, gender * (age > 40), region)
+
+# Combine multiple filters
+tab(survey_data, gender * (age > 40) * (satisfaction >= 4), region)
+
+# Calculate mean income for filtered groups
+tab(survey_data, gender * (age > 40), region, 
+    statistic = "mean", values = "income")
+```
+
+### Table-Wide Filters
+
+You can also apply filters to the entire table:
+
+``` r
+# Only include satisfied respondents (4 or 5) in the entire analysis
+tab(survey_data, gender, region, filter = satisfaction >= 4)
+
+# Mean income among satisfied respondents only
+tab(survey_data, gender, region, 
+    filter = satisfaction >= 4,
+    statistic = "mean", values = "income")
+```
+
+## Question Groups and Expansion
+
+### Automatic Variable Expansion
+
+If your data contains question batteries (e.g., q1_1, q1_2, q1_3), `tab()` can automatically expand them:
+
+``` r
+# Add a question battery
+survey_data$q1_1 <- sample(0:1, 200, replace = TRUE)
+survey_data$q1_2 <- sample(0:1, 200, replace = TRUE)
+survey_data$q1_3 <- sample(0:1, 200, replace = TRUE)
+
+# This will create rows for q1_1, q1_2, and q1_3
+tab(survey_data, q1, region)
+```
+
+### Categorical Variable Expansion
+
+Labelled variables and factors are automatically expanded into their categories:
+
+``` r
+# Create a labelled satisfaction variable
+survey_data$satisfaction <- haven::labelled(
+  survey_data$satisfaction,
+  labels = c("Very Dissatisfied" = 1, "Dissatisfied" = 2, 
+             "Neutral" = 3, "Satisfied" = 4, "Very Satisfied" = 5)
+)
+
+# This creates a row for each satisfaction level
+tab(survey_data, satisfaction, gender)
+```
+
+## Built-in Helper Functions
+
+### Top and Bottom Box Analysis
+
+Survey analysis often requires looking at the top or bottom response options:
+
+``` r
+# Top 2 box (satisfied + very satisfied)
+tab(survey_data, top_box(satisfaction, 2), gender)
+
+# Bottom 2 box (very dissatisfied + dissatisfied)
+tab(survey_data, bottom_box(satisfaction, 2), gender)
+
+# Mean income among top 2 box satisfied respondents
+tab(survey_data, top_box(satisfaction, 2), gender,
+    statistic = "mean", values = "income")
+```
+
+### Named Row Groups
+
+Create multiple analyses in a single table using `rows_list()`:
+
+``` r
+tab(survey_data,
+    rows = rows_list(
+      "Overall Satisfaction" = satisfaction,
+      "High Satisfaction" = top_box(satisfaction, 2),
+      "Young Adults" = gender * (age < 35),
+      "Older Adults" = gender * (age >= 35)
+    ),
+    cols = region)
+
+# With mean calculations
+tab(survey_data,
+    rows = rows_list(
+      "All Respondents" = gender,
+      "High Earners" = gender * (income > 75000),
+      "Low Earners" = gender * (income <= 75000)
+    ),
+    cols = region,
+    statistic = "mean",
+    values = "satisfaction")
+```
+
+## Creating Custom Helpers
+
+As your analysis needs grow, you may want to create custom helper functions. Here's how:
+
+### Understanding Helper Structure
+
+A custom helper consists of two parts:
+
+1.  **The Helper Function**: This is what users call (e.g., `age_range(age, 25, 40)`)
+2.  **The Processor Function**: This does the actual work when `tab()` evaluates the helper
+
+The helper function must: - Register a processor function using `create_helper()` - Return a special object with class `"tab_helper"` - Include any parameters the processor will need
+
+The processor function receives: - `formula_spec`: Contains the components passed to your helper - `data`: The data frame being analyzed - `...`: Additional arguments (rarely used)
+
+The processor must return a numeric vector of 0s and 1s (same length as `nrow(data)`) indicating which rows match the condition.
+
+### Add some rating questions
+
+``` r
+survey_data$service_rating <- sample(1:5, 200, replace = TRUE)
+survey_data$quality_rating <- sample(1:5, 200, replace = TRUE) 
+survey_data$value_rating <- sample(1:5, 200, replace = TRUE)
+```
+
+### Step 1: Register the processor
+
+``` r
+# Helper for ratings in a specific range
+create_helper(
+  id = "row_avg_between",
+  processor = function(formula_spec, data, ...) {
+    components <- formula_spec$components
+    var_pattern <- as.character(components$var_pattern)
+    min_val <- as.numeric(components$min_val)
+    max_val <- as.numeric(components$max_val)
+    
+    # Find matching columns
+    matching_cols <- grep(var_pattern, names(data), value = TRUE)
+    
+    if (length(matching_cols) == 0) {
+      stop("No variables found matching pattern: '", var_pattern, "'")
+    }
+    
+    # Calculate row averages
+    if (length(matching_cols) == 1) {
+      row_avgs <- data[[matching_cols]]
+    } else {
+      row_avgs <- rowMeans(data[matching_cols], na.rm = TRUE)
+    }
+    
+    # Return binary indicator for range
+    as.numeric(row_avgs > min_val & row_avgs <= max_val)
+  }
+)
+```
+
+### Step 2: Define the helper function
+
+``` r
+row_avg_between <- function(var_pattern, min_val, max_val) {
+  structure(
+    list(
+      var_pattern = as.character(var_pattern),
+      min_val = as.numeric(min_val),
+      max_val = as.numeric(max_val)
+    ),
+    class = "tab_helper",
+    helper_type = "row_avg_between"
+  )
+}
+```
+
+### Use it to find high-rating customers
+
+``` r
+tab(survey_data,
+    rows = rows_list(
+        "High Raters (>4)" = row_avg_above("_rating$", 4),
+        "Medium Raters (3-4)" = row_avg_between("_rating$", 3, 4),
+        "Low Raters (≤3)" = row_avg_above("_rating$", 0)  # Everyone above 0, then invert
+    ),
+    cols = gender)
+```
+
+## Creating Custom Statistics
+
+Beyond the built-in statistics (count, column_pct, row_pct, mean), you can create your own:
+
+### Understanding Statistic Structure
+
+Custom statistics calculate a single value for each cell in the cross-tabulation. The processor function receives:
+
+-   **`base_array`**: Represents the base population (including any weights and table-wide filters)
+-   **`row_array`**: Binary array (0/1) indicating which rows match the row condition
+-   **`col_array`**: Binary array (0/1) indicating which rows match the column condition
+-   **`values`**: Optional numeric array for value-based statistics (like mean)
+-   **`...`**: Additional arguments
+
+To calculate a cell value, you typically: 1. Multiply arrays element-wise to get the rows in that cell 2. Perform your calculation on these rows 3. Return a single numeric value
+
+### Configuring Custom Statistics
+
+When creating a statistic, you can specify:
+
+``` r
+create_statistic(
+  id = "my_stat",                    # Unique identifier
+  processor = function(...) {},       # Calculation function
+  summary_row = "NET",               # Or "Avg", "Total", or NULL
+  summary_col = "NET",               # Or "Avg", "Total", or NULL
+  format_fn = function(x) sprintf("%.1f", x),  # Display format
+  requires_values = FALSE,           # Whether values parameter needed
+  base_label = "Base (n)"           # Label for base row
+)
+```
+
+### Example: Median Statistic
+
+Let's create a statistic that calculates the median instead of mean:
+
+``` r
+# Create the median statistic
+median_stat <- function() {
+  if (!"median" %in% names(.tab_registry$stats)) {
+    create_statistic(
+      id = "median",
+      processor = function(base_array, row_array, col_array, values = NULL, ...) {
+        if (is.null(values)) {
+          stop("Median statistic requires 'values' parameter")
+        }
+        
+        # Find which rows belong to this cell
+        cell_membership <- base_array * row_array * col_array
+        
+        # Get values for rows in this cell
+        cell_values <- values[cell_membership > 0]
+        
+        if (length(cell_values) == 0) return(NA_real_)
+        
+        # Calculate median
+        return(median(cell_values, na.rm = TRUE))
+      },
+      summary_row = "Avg",  # Use "Avg" label for summary
+      format_fn = function(x) sprintf("%.1f", x),
+      requires_values = TRUE,
+      base_label = "Base (n)"
+    )
+  }
+  
+  .tab_registry$stats[["median"]]
+}
+
+# Use the median statistic
+tab(survey_data, gender, region, 
+    statistic = median_stat(), 
+    values = "income")
+```
+
+### Example: Confidence Interval Width
+
+A statistic that shows the width of the 95% confidence interval:
+
+``` r
+# Create the custom statistic
+ci_width_stat <- function() {
+  # Register the statistic processor (only once)
+  if (!"ci_width" %in% names(.tab_registry$stats)) {
+    create_statistic(
+      id = "ci_width",  # Unique identifier
+      processor = function(base_array, row_array, col_array, ...) {
+        # Step 1: Find which rows belong to this cell
+        # This is the intersection of base, row condition, and column condition
+        cell_membership <- base_array * row_array * col_array
+        
+        # Step 2: Calculate the statistic
+        # For CI width, we need the proportion and sample size
+        numerator <- sum(cell_membership)  # Count in this cell
+        denominator <- sum(base_array * col_array)  # Column total
+        
+        if (denominator == 0) return(NA_real_)
+        
+        p <- numerator / denominator  # Proportion
+        n <- denominator  # Sample size
+        
+        if (n <= 1) return(NA_real_)
+        
+        # Step 3: Calculate 95% CI width
+        # Width = 2 * z-score * standard error
+        # Standard error = sqrt(p * (1-p) / n)
+        ci_width <- 2 * 1.96 * sqrt(p * (1 - p) / n) * 100
+        return(ci_width)
+      },
+      format_fn = function(x) sprintf("±%.1f%%", x),
+      summary_row = NULL  # No summary for CI width
+    )
+  }
+  
+  # Return the registered statistic object
+  .tab_registry$stats[["ci_width"]]
+}
+
+# Use the custom statistic
+# First create a binary variable
+survey_data$satisfied <- as.numeric(survey_data$satisfaction >= 4)
+
+tab(survey_data, satisfied, gender, statistic = ci_width_stat())
+```
+
+### Another Example: Effective Sample Size
+
+For weighted data, the effective sample size accounts for the loss of precision due to unequal weights:
+
+``` r
+eff_sample_size_stat <- function() {
+  if (!"eff_sample_size" %in% names(.tab_registry$stats)) {
+    create_statistic(
+      id = "eff_sample_size",
+      processor = function(base_array, row_array, col_array, ...) {
+        # Get the weights for this cell
+        weights <- base_array * row_array * col_array
+        weights <- weights[weights > 0]  # Remove zeros
+        
+        if (length(weights) == 0) return(NA_real_)
+        
+        # Effective sample size formula:
+        # n_eff = (sum of weights)^2 / sum of (weights^2)
+        sum_weights <- sum(weights)
+        sum_weights_sq <- sum(weights^2)
+        
+        if (sum_weights_sq == 0) return(NA_real_)
+        
+        eff_n <- sum_weights^2 / sum_weights_sq
+        return(eff_n)
+      },
+      format_fn = function(x) sprintf("%.0f", x),
+      summary_row = "Total"  # Sum for effective sample sizes
+    )
+  }
+  
+  .tab_registry$stats[["eff_sample_size"]]
+}
+
+# See how weights affect effective sample size
+tab(survey_data, gender, region, 
+    weight = "weight", 
+    statistic = eff_sample_size_stat())
+```
+
+### How Statistics Work in tab()
+
+The calculation flow for each cell:
+
+1.  `tab()` creates the base_array (1s for included rows, incorporating weights)
+2.  For the current row condition, it creates row_array (1s where condition is true)
+3.  For the current column condition, it creates col_array (1s where condition is true)
+4.  It calls your statistic processor with these arrays (and values if needed)
+5.  Element-wise multiplication (`base * row * col`) gives you the actual cell membership
+6.  Your processor calculates and returns a single value for that cell
+
+## Putting It All Together
+
+Here's a comprehensive example combining multiple features:
+
+``` r
+# !!!! THIS ALSO NEEDS FIXING
+# Complex analysis with multiple features
+result <- tab(survey_data,
+    rows = rows_list(
+      "Satisfaction Levels" = satisfaction,
+      "High Satisfaction" = top_box(satisfaction, 2),
+      "High Raters" = row_avg_above("_rating$", 4),
+      "Young High Raters" = row_avg_above("_rating$", 4) * age_range(age, 18, 35)
+    ),
+    cols = region,
+    filter = gender != "Other",  # Exclude small group for this analysis
+    weight = "weight",
+    statistic = "column_pct"
+)
+
+print(result)
+
+# Mean income analysis for the same groups
+income_result <- tab(survey_data,
+    rows = rows_list(
+      "Satisfaction Levels" = satisfaction,
+      "High Satisfaction" = top_box(satisfaction, 2),
+      "High Raters" = row_avg_above("_rating$", 4),
+      "Young High Raters" = row_avg_above("_rating$", 4) * age_range(age, 18, 35)
+    ),
+    cols = region,
+    filter = gender != "Other",
+    weight = "weight",
+    statistic = "mean",
+    values = "income"
+)
+
+print(income_result)
+
+# Copy to clipboard for pasting into spreadsheets
+copy_tab(result)
+```
+
+## Best Practices
+
+1.  **Start Simple**: Begin with basic cross-tabs and gradually add complexity
+2.  **Use Named Row Groups**: The `rows_list()` function makes your code more readable
+3.  **Filter Thoughtfully**: Inline filters (`*`) are great for one-off analyses; table-wide filters are better for consistent subsetting
+4.  **Choose Appropriate Statistics**: Use percentages for distributions, counts for raw numbers, and mean/median for continuous variables
+5.  **Document Custom Helpers**: When creating custom helpers, include clear error messages and validation
+6.  **Test with Small Data**: When developing custom statistics or helpers, test with small, known datasets first
+7.  **Consider Summary Rows/Columns**: Built-in statistics automatically add NET or Avg rows/columns when appropriate
+
+## Conclusion
+
+The `tab()` function provides a flexible foundation for survey analysis, from simple frequency tables to complex custom analyses. By mastering its formula syntax, built-in helpers, value-based statistics, and extension mechanisms, you can create sophisticated analyses while keeping your code clean and readable.
