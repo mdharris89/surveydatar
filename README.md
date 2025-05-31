@@ -1,20 +1,12 @@
-This package provides a suite of tools designed to streamline the processing and management of complex survey data in R. Survey data often involves dealing with complex metadata and question structures. This package aims to simplify tasks such as:
 
--   Viewing and understanding data structure
--   Creating and enriching metadata dictionaries (`dpdict`)
--   Standardizing separator patterns in names and labels
--   Automatically grouping variables into logical questions
--   Updating survey data based on metadata changes
--   Validating the consistency of data and metadata
+Surveydatar provides a suite of tools designed to streamline the processing, management and analysis of survey data in R.
 
-The core of the package revolves around the `survey_data` object and the associated metadata dictionary (`dpdict`).
+The core of the package revolves around the survey_data object and the associated metadata dictionary (dpdict). Functions are provided to automatically infer metadata from data structure and labels (create_dict_with_metadata()) and view metadata (datamap()), alongside various functions to make wrangling survey data faster and easier.
 
-This package is still in active development but is fully functional as an MVP. Core features are working, but you may encounter some bugs or incomplete documentation. Feedback and contributions are welcome.
+Tab then builds on the dpdict as a foundation to provide a single and intuitive but highly flexible function to cover most crosstab needs for a market research context. Key features include:
 
-Other functions in-development but not yet committed include functionality for:
-- Restructuring grid-style questions
-- Converting between long and wide format
-- Stacking
-- Creating common derived quantitative variables (e.g. top 2 box, numeric bands)
-- Creating quantitative variables from open-ended text responses
-- Merging datasets including harmonisation of names and labels
+- Composable in-line expressions: define complex row and column definitions in-line rather than needing to pre-process the data, enabling faster, frictionless analysis
+- Extendable, modular design: ‘helpers’ make common row and column expressions like ‘top box’ simple to use, while ‘statistics’ determine how data is aggregated at row and column intersections in the table. New helpers and statistics can be easily created and plugged in, making tab extendable to any functionality that fits within the framework of array-based calculations followed by aggregation.
+- Fuzzy variable matching and question group expansion: easily navigate around large datasets without needing to remember the exact variable name in every case. Tab resolves variable specification based on fuzzy matching to names or labels, and entire question groups can be easily added to a tab with a single reference.
+
+The package is still in development with some common survey data processing needs planned but not yet implemented, e.g. stacking, merging and weighting.
