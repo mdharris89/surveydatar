@@ -1,0 +1,437 @@
+# Getting Started with surveydatar
+
+## Introduction
+
+The surveydatar package provides a comprehensive toolkit for processing and analyzing survey data in R. Survey data presents unique challenges: complex metadata, inconsistent naming conventions, question batteries, multiresponse questions, and the need to maintain the relationship between data and its documentation throughout the analysis pipeline.
+
+This package addresses these challenges through:
+
+-   **Integrated metadata management** via the `dpdict` (data processing dictionary)
+-   **Automatic question grouping** and type detection
+-   **Standardization tools** for variable names and labels
+-   **The `survey_data` object** that keeps data and metadata synchronized
+-   **Flexible analysis** with the `tab()` function for cross-tabulations
+-   **Validation functions** to ensure data integrity
+
+## Core Concepts
+
+### The survey_data Object
+
+At the heart of surveydatar is the `survey_data` S3 object. Think of it as a container that bundles your survey data with its complete metadata, ensuring they stay synchronized through all transformations.
+
+``` r
+library(surveydatar)
+
+# Load some example survey data
+raw_data <- get_minimal_labelled_test_dat()
+
+# Create a survey_data object - metadata is inferred automatically
+survey_obj <- create_survey_data(raw_data)
+
+# The object contains two components:
+names(survey_obj)
+#> [1] "dat"    "dpdict"
+
+# Check object type and validity
+is.survey_data(survey_obj)
+#> [1] TRUE
+
+validate_survey_data(survey_obj)
+#> [1] TRUE
+```
+
+The `survey_data` object supports standard data manipulation while maintaining metadata integrity:
+
+``` r
+# These operations preserve the survey_data structure
+filtered <- dplyr::filter(survey_obj, uid > 50)
+selected <- dplyr::select(survey_obj, uid, csat, nps)
+with_new_var <- dplyr::mutate(survey_obj, 
+                               high_satisfaction = with_label(csat >= 4, 
+                                                            "High Satisfaction Flag"))
+```
+
+### The Metadata Dictionary (dpdict)
+
+The `dpdict` is a data frame where each row describes a variable in your survey. It captures both current and original metadata, enabling full traceability of changes:
+
+``` r
+# Create a basic dpdict
+dpdict <- create_dict(raw_data)
+head(dpdict, 3)
+```
+
+Key columns in the dpdict include:
+
+-   **Tracking columns**: `old_variable_names`, `old_variable_labels`, `old_value_labels`
+-   **Current metadata**: `variable_names`, `variable_labels`, `value_labels`
+-   **Question structure**: `question_group`, `questiontype`, `question_alias`
+-   **Display helpers**: `question_suffix`, `alias_with_suffix`
+-   **Type indicators**: `variable_class`, `singlevariablequestion`, `multiresponse`
+
+## Getting Started: Viewing Your Data
+
+### Initial Data Exploration
+
+Before processing, understand your data structure using `datamap()`:
+
+``` r
+# Load a more complex example dataset
+survey_data <- get_big_test_dat(100)
+
+# View an SPSS-style variable listing
+datamap(survey_data)  # Opens in viewer if in RStudio
+
+# Or get as a data frame
+dm <- datamap(survey_data, view_or_return = "return")
+head(dm[, c("variable", "variable label", "class", "n unique")])
+```
+
+For `survey_data` objects, `datamap()` includes additional metadata:
+
+``` r
+survey_obj <- create_survey_data(survey_data)
+dm_enhanced <- datamap(survey_obj, view_or_return = "return")
+# Now includes question type, alias with suffix, etc.
+```
+
+### Question-Level View
+
+See your data organized by question groups rather than individual variables:
+
+``` r
+# Get question-level summary
+q_summary <- datamap_questions(survey_obj)
+head(q_summary[, c("question_group", "var_count", "question_types")])
+```
+
+## Creating and Enriching Metadata
+
+### Starting Simple
+
+For basic metadata capture and editing:
+
+``` r
+# Create an editable dpdict
+raw_data <- get_minimal_labelled_test_dat()
+basic_dpdict <- create_dict(raw_data, prefill = TRUE)
+
+# Modify as needed
+basic_dpdict$variable_labels[1] <- "Unique Identifier"
+basic_dpdict$variable_names[2] <- "satisfaction_score"
+
+# Apply changes back to data
+updated_data <- update_dat_from_dpdict(raw_data, basic_dpdict)
+```
+
+### Automatic Metadata Inference
+
+For a complete metadata setup with automatic inference:
+
+``` r
+# This does everything: separators, grouping, type detection
+survey_obj <- create_survey_data(get_big_test_dat(50))
+
+# Or create dpdict with full metadata separately
+full_dpdict <- create_dict_with_metadata(get_big_test_dat(50))
+head(full_dpdict[, c("variable_names", "question_group", "questiontype")])
+```
+
+## Handling Separators
+
+Survey software often produces inconsistent separator patterns. The package can detect and standardize these:
+
+``` r
+# Load data with messy separators
+messy_data <- get_big_test_dat_with_prefixes()
+
+# Analyze current separator patterns
+sep_analysis <- check_seps(messy_data)
+print(sep_analysis$separators)
+#> var_name_sep    prefix_sep statement_sep 
+#>         "_"          ": "         " - " 
+
+print(sep_analysis$consistency)
+#> var_name_sep    prefix_sep statement_sep 
+#>         TRUE         TRUE         TRUE
+
+# Generate standardized names and labels
+if (!all(sep_analysis$consistency)) {
+  standardized <- get_updated_seps(messy_data, sep_analysis)
+  # Shows old vs new names and labels
+  head(standardized[, c("old_variable_names", "new_variable_names")])
+}
+
+# Or specify your preferred separators
+custom_seps <- list(var_name_sep = "_", 
+                   prefix_sep = ": ", 
+                   statement_sep = " - ")
+standardized <- get_updated_seps(messy_data, sep_analysis, 
+                                seps_to_use = custom_seps)
+```
+
+## Automatic Question Grouping
+
+One of surveydatar's most powerful features is automatic detection of question groups. This is handled by `update_dict_with_metadata()`:
+
+### How Question Grouping Works
+
+The package uses `split_into_question_groups()` internally to:
+
+1.  **Initialize groups** based on variable name prefixes (e.g., Q1_1, Q1_2 → group "Q1_a")
+2.  **Split groups** when it detects:
+    -   Change in variable class (`splitbyclass`)
+    -   Different number of value labels (`splitbynumlabelledvalues`)
+    -   Non-contiguous variables (`splitbynoncontiguous`)\
+    -   Different common labels (`splitbycommonlabel`)
+
+``` r
+# Basic usage with default settings
+survey_obj <- create_survey_data(get_big_test_dat(100))
+survey_obj <- update_dict_with_metadata(survey_obj)
+
+# See the detected groups
+unique(survey_obj$dpdict$question_group)
+
+# Custom configuration for specific needs
+config <- list(
+  splitbyclass = TRUE,           # Split when variable type changes
+  splitbycommonlabel = TRUE,     # Split when label pattern changes
+  findlongest = FALSE,           # Use fast label parsing (vs. LCS algorithm)
+  min_common_strings = 5         # For findlongest = TRUE
+)
+
+survey_obj_custom <- update_dict_with_metadata(
+  survey_obj, 
+  split_into_groups_config = config,
+  noisy = 1  # Show progress
+)
+```
+
+### Understanding Question Types
+
+The function automatically determines question types based on variable characteristics:
+
+``` r
+# View the inferred question types
+table(survey_obj$dpdict$questiontype)
+#> categorical  multiresponse  numeric  text
+#>         15            12        8     3
+```
+
+Question types include: - **numeric**: Single numeric variables - **categorical**: Factor or labelled variables - **multiresponse**: Binary variables in the same group - **text**: Character variables - **date**: Date/time variables
+
+## Working with Question Metadata
+
+### Question-Level Operations
+
+Create and edit question-level metadata:
+
+``` r
+# Get a question-level summary
+questions_dict <- create_questions_dict(survey_obj, editfirst = FALSE)
+head(questions_dict)
+
+# Manually update aliases
+questions_dict$question_alias[1] <- "brand_awareness"
+questions_dict$question_folder[1] <- "Marketing"
+
+# Apply changes back
+survey_obj <- update_aliases(survey_obj, questions_dict)
+```
+
+### Handling Grid Questions
+
+For matrix/grid questions where the same items are asked about multiple subjects:
+
+``` r
+# Example: Brand perception grid
+# Variables like: Q5_1_1 (Brand A - Quality), Q5_1_2 (Brand A - Value), 
+#                Q5_2_1 (Brand B - Quality), Q5_2_2 (Brand B - Value)
+
+survey_obj <- split_grid_labels(
+  survey_obj,
+  alias_to_split = "brand_perception_a",
+  example_stem_to_add = "Brand A",
+  count_before_repeat = 3,  # 3 attributes per brand
+  sep = " - "
+)
+
+# This reorganizes the metadata so you can analyze by brand
+```
+
+### Unique Suffixes
+
+The package automatically determines the unique part of each variable label within its group:
+
+``` r
+# This happens automatically in update_dict_with_metadata
+# but you can also call it directly
+suffixes <- get_unique_suffixes(
+  survey_obj$dpdict,
+  seps_priority = c(" - ", ": ", " ")
+)
+
+# Results in clean suffixes like "Very satisfied", "Satisfied", etc.
+# instead of full repeated question text
+```
+
+## Data Processing Tasks
+
+### Converting Variable Types
+
+Ensure variables have appropriate types and labels:
+
+``` r
+# Convert string variables to labelled factors where appropriate
+survey_obj$dat <- realiselabelled(
+  survey_obj$dat,
+  max_labels = 20,  # Don't convert if too many unique values
+  MRpositivelabel = "Selected",
+  MRnegativelabel = "Not selected"
+)
+```
+
+### Handling Multiresponse Questions
+
+Process "select all that apply" questions correctly:
+
+``` r
+# Convert NAs to 0s only where at least one option was selected
+survey_obj <- conditionally_replace_NAs_in_multiresponse(
+  survey_obj,
+  newvalue = 0,
+  newlabel = "Not selected"
+)
+```
+
+### Adding Derived Variables
+
+Create new variables while preserving metadata:
+
+``` r
+# Add calculated variables with labels
+survey_obj <- survey_obj %>%
+  dplyr::mutate(
+    # Create satisfaction groups
+    sat_group = with_label(
+      dplyr::case_when(
+        csat <= 2 ~ "Dissatisfied",
+        csat == 3 ~ "Neutral", 
+        csat >= 4 ~ "Satisfied"
+      ),
+      "Satisfaction Group"
+    ),
+    # Calculate average score
+    avg_score = with_label(
+      (Q1_1 + Q1_2 + Q1_3) / 3,
+      "Average Score Q1"
+    )
+  )
+```
+
+## Validation and Quality Checks
+
+Ensure data integrity throughout processing:
+
+``` r
+# Check that data and metadata align
+validate_dat_dpdict_alignment(survey_obj$dat, survey_obj$dpdict)
+
+# Check for duplicate variable names or labels
+validate_no_dpdict_duplicates(survey_obj$dpdict)
+
+# Validate variable naming patterns
+validate_variable_names(names(survey_obj$dat))
+
+# Comprehensive validation
+validate_survey_data(survey_obj)
+```
+
+## Quick Analysis with tab()
+
+The `tab()` function provides flexible cross-tabulation capabilities:
+
+``` r
+# Simple frequency table
+tab(survey_obj, satisfaction)
+
+# Cross-tabulation 
+tab(survey_obj, satisfaction, gender)
+
+# With filters and weights
+tab(survey_obj, 
+    satisfaction * (age > 30), 
+    region,
+    weight = "weight_var")
+
+# Mean calculation
+tab(survey_obj, gender, region, 
+    statistic = "mean", 
+    values = "age")
+```
+
+For comprehensive tab() documentation, see the dedicated tab vignette.
+
+## A Complete Example
+
+Let's walk through processing a customer satisfaction survey:
+
+``` r
+# 1. Import raw data
+raw_data <- haven::read_sav("customer_survey.sav")
+
+# 2. Create survey_data object with automatic metadata
+survey <- create_survey_data(raw_data)
+
+# 3. Check current state
+datamap(survey, view_or_return = "return") %>% head()
+check_seps(survey$dat)
+
+# 4. Update metadata with custom settings
+survey <- update_dict_with_metadata(
+  survey,
+  split_into_groups_config = list(
+    splitbycommonlabel = TRUE,
+    findlongest = FALSE
+  ),
+  noisy = 1
+)
+
+# 5. Process multiresponse questions
+survey <- conditionally_replace_NAs_in_multiresponse(survey)
+
+# 6. Add derived variables
+survey <- survey %>%
+  dplyr::mutate(
+    nps_category = with_label(
+      dplyr::case_when(
+        nps <= 6 ~ "Detractor",
+        nps <= 8 ~ "Passive",
+        nps >= 9 ~ "Promoter"
+      ),
+      "NPS Category"
+    )
+  )
+
+# 7. Quick analysis
+tab(survey, nps_category, region)
+
+# 8. Export if needed
+export_data <- fix_for_spss_export(survey$dat)
+haven::write_sav(export_data, "processed_survey.sav")
+```
+
+## Conclusion
+
+The surveydatar package streamlines survey data processing by:
+
+-   **Maintaining synchronized metadata** through the survey_data object
+-   **Automatically detecting structure** via intelligent question grouping
+-   **Standardizing formats** while preserving original information
+-   **Providing flexible analysis** through the tab() function
+-   **Ensuring quality** with comprehensive validation tools
+
+This structured approach reduces errors, improves reproducibility, and makes survey data analysis more efficient. The package handles the tedious aspects of survey data management, letting you focus on insights rather than data wrangling.
+
+For more details on specific functions, see the package documentation. For advanced cross-tabulation features, see the tab vignette.

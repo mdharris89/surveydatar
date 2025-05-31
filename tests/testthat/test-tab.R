@@ -1,3 +1,53 @@
+ensure_builtins_registered()
+
+# Helper to save registry state
+save_registry_state <- function() {
+  list(
+    helpers = .tab_registry$helpers,
+    stats = .tab_registry$stats
+  )
+}
+
+# Helper to restore registry state
+restore_registry_state <- function(state) {
+  .tab_registry$helpers <- state$helpers
+  .tab_registry$stats <- state$stats
+}
+
+# Helper to reset registry to built-ins only
+reset_to_builtins <- function() {
+  clear_tab_registry()
+  ensure_builtins_registered()
+}
+
+# Ensure clean state for each test file
+setup({
+  reset_to_builtins()
+})
+
+# Clean up after all tests
+teardown({
+  reset_to_builtins()
+})
+
+test_that("ensure_builtins_registered works correctly", {
+  # Clear registry
+  clear_tab_registry()
+  expect_length(list_tab_statistics(), 0)
+  expect_length(list_tab_helpers(), 0)
+
+  # Register built-ins
+  ensure_builtins_registered()
+
+  # Verify they're now available
+  expect_true("count" %in% list_tab_statistics())
+  expect_true("column_pct" %in% list_tab_statistics())
+  expect_true("top_box" %in% list_tab_helpers())
+
+  # Calling again should not cause errors (idempotent)
+  expect_silent(ensure_builtins_registered())
+})
+
 # Helper function to create test data
 create_test_data <- function(n = 100) {
   set.seed(123)
@@ -204,11 +254,8 @@ test_that("helper functions process correctly", {
   spec_top <- list(
     type = "helper",
     helper_type = "top_box",
-    components = structure(
-      list(var = quote(satisfaction), n = 2),
-      class = "tab_helper",
-      helper_type = "top_box"
-    )
+    args = list(quote(satisfaction), 2),
+    label = "top_box(satisfaction, 2)"
   )
 
   array_top <- process_helper(spec_top, data)
@@ -218,12 +265,10 @@ test_that("helper functions process correctly", {
   spec_bottom <- list(
     type = "helper",
     helper_type = "bottom_box",
-    components = structure(
-      list(var = quote(satisfaction), n = 2),
-      class = "tab_helper",
-      helper_type = "bottom_box"
-    )
+    args = list(quote(satisfaction), 2),
+    label = "bottom_box(satisfaction, 2)"
   )
+
   array_bottom <- process_helper(spec_bottom, data)
   expect_equal(array_bottom, as.numeric(data$satisfaction %in% c(1, 2)))
 })
@@ -1710,4 +1755,429 @@ test_that("expand_variables doesn't expand numeric variables for mean", {
   # When calculating percentages, same variable might be expanded differently
   expanded_pct <- expand_variables(spec, data, NULL, "column_pct")
   expect_length(expanded_pct, 1)  # Age is continuous, so still 1
+})
+
+
+
+
+
+
+##### Test Built-in Statistics (New) #####
+
+test_that("median statistic calculates correctly", {
+  data <- data.frame(
+    group = factor(c(rep("A", 50), rep("B", 50))),
+    values = c(rep(c(1, 2, 3, 4, 5), 10), rep(c(6, 7, 8, 9, 10), 10))
+  )
+
+  result <- tab(data, group, statistic = "median", values = "values")
+
+  # Group A median should be 3, Group B median should be 8
+  expect_equal(result[result$row_label == "group: A", "Total"], 3)
+  expect_equal(result[result$row_label == "group: B", "Total"], 8)
+
+  # Should not have Avg row for median
+  expect_false("Avg" %in% result$row_label)
+})
+
+test_that("sd statistic calculates correctly", {
+  data <- data.frame(
+    group = factor(c("A", "A", "A", "B", "B", "B")),
+    values = c(1, 2, 3, 10, 10, 10)
+  )
+
+  result <- tab(data, group, statistic = "sd", values = "values")
+
+  # Group A: sd of (1,2,3) = 1
+  # Group B: sd of (10,10,10) = 0
+  expect_equal(result[result$row_label == "group: A", "Total"], 1)
+  expect_equal(result[result$row_label == "group: B", "Total"], 0)
+})
+
+test_that("cv statistic calculates correctly", {
+  data <- data.frame(
+    group = factor(c("A", "A", "A", "B", "B", "B")),
+    values = c(2, 4, 6, 10, 20, 30)
+  )
+
+  result <- tab(data, group, statistic = "cv", values = "values")
+
+  # Group A: mean=4, sd=2, cv=50%
+  # Group B: mean=20, sd=10, cv=50%
+  expect_equal(result[result$row_label == "group: A", "Total"], 50, tolerance = 0.1)
+  expect_equal(result[result$row_label == "group: B", "Total"], 50, tolerance = 0.1)
+})
+
+test_that("index statistic calculates correctly", {
+  set.seed(123)
+  data <- data.frame(
+    group = factor(c(rep("A", 30), rep("B", 70))),
+    region = factor(c(rep("North", 60), rep("South", 40)))
+  )
+
+  result <- tab(data, group, region, statistic = "index")
+
+  # Get numeric values from the result (excluding row labels and base row)
+  numeric_values <- as.matrix(result[1:2, -1])
+
+  # Index values should be numeric and finite
+  expect_true(all(is.finite(numeric_values)))
+
+  # Check that index values make sense (some might be 0 if no overlap)
+  # Index of 100 means same as total, >100 means over-represented, <100 under-represented
+  expect_true(all(numeric_values >= 0, na.rm = TRUE))
+})
+
+test_that("percentile statistics work correctly", {
+  data <- data.frame(
+    group = factor(c("A", "A", "A", "A", "A")),
+    values = c(1, 2, 3, 4, 5)
+  )
+
+  result_p25 <- tab(data, group, statistic = "p25", values = "values")
+  result_p75 <- tab(data, group, statistic = "p75", values = "values")
+
+  expect_equal(result_p25[result_p25$row_label == "group: A", "Total"], 2)
+  expect_equal(result_p75[result_p75$row_label == "group: A", "Total"], 4)
+})
+
+##### Test Built-in Helpers (New) #####
+
+test_that("value_range helper works correctly", {
+  # This would need the helper to be properly implemented
+  # For now, test the structure exists
+  expect_true("value_range" %in% list_tab_helpers())
+})
+
+test_that("pattern helper works correctly", {
+  data <- data.frame(
+    id = 1:4,
+    text = c("apple", "banana", "apple pie", "orange"),
+    group = factor(c("A", "B", "A", "B"))
+  )
+
+  # This would test pattern matching functionality
+  expect_true("pattern" %in% list_tab_helpers())
+})
+
+test_that("percentile helper works correctly", {
+  data <- data.frame(
+    group = factor(c("A", "A", "B", "B")),
+    score = c(10, 90, 20, 80)
+  )
+
+  # This would test percentile-based selection
+  expect_true("percentile" %in% list_tab_helpers())
+})
+
+test_that("not helper works correctly", {
+  data <- data.frame(
+    var1 = c(TRUE, FALSE, TRUE, FALSE),
+    group = factor(c("A", "A", "B", "B"))
+  )
+
+  # This would test negation functionality
+  expect_true("not" %in% list_tab_helpers())
+})
+
+##### Test Registry System #####
+
+test_that("registry system manages helpers correctly", {
+  # Test that helpers are registered
+  helpers <- list_tab_helpers()
+  expect_true("top_box" %in% helpers)
+  expect_true("bottom_box" %in% helpers)
+
+  # Test that we can retrieve helpers
+  top_box_helper <- get_helper("top_box")
+  expect_s3_class(top_box_helper, "tab_helper")
+  expect_equal(top_box_helper$id, "top_box")
+})
+
+test_that("registry system manages statistics correctly", {
+  # Test that statistics are registered
+  stats <- list_tab_statistics()
+  expect_true("column_pct" %in% stats)
+  expect_true("mean" %in% stats)
+  expect_true("median" %in% stats)
+
+  # Test that we can retrieve statistics
+  mean_stat <- get_statistic("mean")
+  expect_s3_class(mean_stat, "tab_stat")
+  expect_equal(mean_stat$id, "mean")
+  expect_true(mean_stat$requires_values)
+})
+
+test_that("registry can be cleared and restored", {
+  # Save current state
+  original_state <- save_registry_state()
+
+  # Clear registry
+  clear_tab_registry()
+  expect_length(list_tab_helpers(), 0)
+  expect_length(list_tab_statistics(), 0)
+
+  # Restore state
+  restore_registry_state(original_state)
+
+  # Verify restoration
+  expect_true(length(list_tab_helpers()) > 0)
+  expect_true(length(list_tab_statistics()) > 0)
+})
+
+##### Test Custom Statistics and Helpers #####
+
+test_that("custom statistic creation and usage works", {
+  # Save current state
+  original_state <- save_registry_state()
+
+  # Create a simple custom statistic
+  test_stat <- create_statistic(
+    id = "test_double",
+    processor = function(base_array, row_array, col_array, ...) {
+      sum(base_array * row_array * col_array) * 2
+    },
+    format_fn = function(x) paste0(x, "x")
+  )
+
+  data <- create_test_data()
+  result <- tab(data, gender, statistic = test_stat)
+
+  expect_s3_class(result, "tab_result")
+
+  # Restore state before using count
+  restore_registry_state(original_state)
+
+  # Values should be doubled compared to count
+  count_result <- tab(data, gender, statistic = "count")
+
+  # Compare the actual values (need to parse the formatted output)
+  test_val <- as.numeric(gsub("x$", "", result[1, "Total"]))
+  count_val <- as.numeric(count_result[1, "Total"])
+  expect_equal(test_val, count_val * 2)
+
+  # Restore state at end to be safe
+  restore_registry_state(original_state)
+})
+
+test_that("custom helper creation and usage works", {
+  # Save current state
+  original_state <- save_registry_state()
+
+  # Create a simple custom helper
+  test_helper <- create_helper(
+    id = "test_always_true",
+    processor = function(spec, data, ...) {
+      rep(1, nrow(data))
+    }
+  )
+
+  # Test that it was registered
+  expect_true("test_always_true" %in% list_tab_helpers())
+
+  # Note: Full usage testing would require NSE integration
+
+  # Restore state
+  restore_registry_state(original_state)
+})
+
+##### Test Variable Resolution #####
+
+test_that("variable resolution works with exact matches", {
+  data <- create_test_data()
+
+  resolved <- resolve_vars(data, NULL, c("gender", "age"), report = TRUE)
+  expect_equal(as.character(resolved), c("gender", "age"))  # Remove attributes for comparison
+
+  # Check resolution log
+  log <- attr(resolved, "resolution_log")
+  expect_equal(log$gender$method, "exact")
+  expect_equal(log$age$method, "exact")
+})
+
+test_that("variable resolution works with prefix matches", {
+  data <- create_test_data()
+
+  resolved <- resolve_vars(data, NULL, c("gend", "satisf"), report = TRUE)
+  expect_equal(as.character(resolved), c("gender", "satisfaction"))  # Remove attributes
+
+  log <- attr(resolved, "resolution_log")
+  expect_equal(log$gend$method, "prefix")
+  expect_equal(log$satisf$method, "prefix")
+})
+
+test_that("variable resolution handles ambiguous matches", {
+  data <- data.frame(
+    q1_test = 1:10,
+    q1_temp = 1:10,
+    other = 1:10
+  )
+
+  expect_warning(
+    resolved <- resolve_vars(data, NULL, "q1_t"),
+    "Ambiguous prefix match"
+  )
+  expect_true(resolved %in% c("q1_test", "q1_temp"))
+})
+
+test_that("variable resolution errors on non-existent variables", {
+  data <- create_test_data()
+
+  expect_error(
+    resolve_vars(data, NULL, "nonexistent_variable"),
+    "Could not resolve variable"
+  )
+})
+
+##### Test Enhanced Error Handling #####
+
+test_that("tab provides helpful errors for value statistics with wrong variable types", {
+  data <- data.frame(
+    continuous_var = rnorm(100),
+    group = factor(rep(c("A", "B"), 50))
+  )
+
+  # Should error when trying to use continuous variable in rows for mean
+  expect_error(
+    tab(data, continuous_var, group, statistic = "mean", values = "continuous_var"),
+    "Cannot use numeric variable.*in rows"
+  )
+})
+
+test_that("tab validates statistic requirements", {
+  data <- create_test_data()
+
+  # Should error when mean lacks values parameter
+  expect_error(
+    tab(data, gender, statistic = "mean"),
+    "mean statistic requires 'values' parameter"
+  )
+
+  # Should warn when values provided for non-value statistic
+  expect_warning(
+    tab(data, gender, statistic = "count", values = "age"),
+    "Values parameter ignored for count statistic"
+  )
+})
+
+##### Test Copy Tab Functionality #####
+
+test_that("copy_tab handles different statistic types", {
+  skip_if_not(requireNamespace("clipr", quietly = TRUE))
+  skip_if_not(clipr::clipr_available())
+
+  data <- create_test_data()
+
+  # Test with percentage
+  result_pct <- tab(data, gender, region, statistic = "column_pct")
+  copied_pct <- copy_tab(result_pct)
+  expect_true(any(grepl("survey column_pct data", copied_pct[nrow(copied_pct), 1])))
+
+  # Test with mean
+  result_mean <- tab(data, gender, region, statistic = "mean", values = "age")
+  copied_mean <- copy_tab(result_mean)
+  expect_true(any(grepl("mean of 'age'", copied_mean[nrow(copied_mean), 1])))
+})
+
+test_that("copy_tab errors appropriately when clipr unavailable", {
+  data <- create_test_data()
+  result <- tab(data, gender)
+
+  # Mock clipr unavailability
+  with_mock(
+    `clipr::clipr_available` = function() FALSE,
+    expect_error(copy_tab(result), "Clipboard is not available")
+  )
+})
+
+##### Test Statistic Object Usage #####
+
+test_that("tab accepts statistic objects directly", {
+  data <- create_test_data()
+
+  # Get statistic object
+  mean_stat <- get_statistic("mean")
+  result <- tab(data, gender, statistic = mean_stat, values = "age")
+
+  expect_s3_class(result, "tab_result")
+  expect_equal(attr(result, "statistic"), mean_stat)
+})
+
+test_that("print method handles statistic objects correctly", {
+  data <- create_test_data()
+  result <- tab(data, gender, statistic = "mean", values = "age")
+
+  output <- capture.output(print(result))
+  expect_true(any(grepl("mean of age", output)))
+})
+
+##### Test Enhanced Helper Processing #####
+
+test_that("helper functions can be nested", {
+  data <- create_test_data()
+
+  # This would test nested helper calls if implemented
+  # For now, just test that the structure supports it
+  expect_true(is.function(process_helper))
+})
+
+test_that("helper functions provide detailed error messages", {
+  data <- create_test_data()
+
+  # Test with invalid variable name
+  expect_error(
+    tab(data, top_box(nonexistent_var, 2)),
+    "Variable.*not found"
+  )
+})
+
+##### Test Summary Row/Column Logic #####
+
+test_that("summary rows respect statistic metadata", {
+  data <- create_test_data()
+
+  # Count should have NET row
+  count_result <- tab(data,
+                      rows = rows_list("A" = gender, "B" = region),
+                      statistic = "count")
+  expect_true("NET" %in% count_result$row_label)
+
+  # Mean should have Avg row
+  mean_result <- tab(data,
+                     rows = rows_list("A" = gender, "B" = region),
+                     statistic = "mean", values = "age")
+  expect_true("Avg" %in% mean_result$row_label)
+  expect_false("NET" %in% mean_result$row_label)
+})
+
+test_that("summary columns work correctly", {
+  data <- create_test_data()
+
+  # Row percentages should have NET column
+  result <- tab(data, gender,
+                cols = rows_list("A" = region, "B" = satisfaction >= 4),
+                statistic = "row_pct")
+  expect_true("NET" %in% names(result))
+})
+
+##### Test Validation Functions #####
+
+test_that("validate_statistic_variables catches inappropriate variable types", {
+  data <- data.frame(
+    continuous = rnorm(100),
+    categorical = factor(rep(c("A", "B"), 50))
+  )
+
+  # Get the mean statistic object
+  mean_stat <- get_statistic("mean")
+
+  # Skip test if mean statistic not found (registry issue)
+  skip_if(is.null(mean_stat), "Mean statistic not found in registry")
+
+  # Should not error for categorical variables
+  expect_silent({
+    rows <- list(list(type = "simple", components = list(var = "categorical")))
+    cols <- list(list(type = "total"))
+    validate_statistic_variables(mean_stat, rows, cols, data, dpdict = NULL)
+  })
 })

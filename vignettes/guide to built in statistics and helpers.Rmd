@@ -1,4 +1,4 @@
-# Guide to built-in statistics and helpers
+# Guide to built-in statistics and helpers  (note: not fully tested)
 
 ## Statistics
 

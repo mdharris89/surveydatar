@@ -12,6 +12,8 @@ tab(
   weight = NULL,
   statistic = c("column_pct", "count", "row_pct", "mean"),
   values = NULL,
+  show_column_net = TRUE,
+  show_column_total = TRUE,
   helpers = NULL,
   stats = NULL,
   resolve_report = FALSE,
@@ -32,6 +34,10 @@ tab(
 \item{statistic}{Type of statistic: "column_pct", "count", "row_pct", "mean"}
 
 \item{values}{Variable name to aggregate for value-based statistics like mean (optional)}
+
+\item{show_column_net}{Whether to show column NET/Avg}
+
+\item{show_column_total}{Whether to show a “Total” column}
 
 \item{helpers}{List of custom tab_helper objects}
 

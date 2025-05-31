@@ -1,7 +1,6 @@
 # ! TO DOs:
 # - Allow for no row parameter if a value is given (calculate value on total sample)
-# - Add optional Total column
-# - Implement sig testing and correlations
+# - Implement sig testing and correlations (will require significant work as doesn't fit neatly into current framework)
 # - Visualisation via Flourish
 
 
@@ -231,7 +230,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Apply whole-table filter
   if (!missing(filter)) {
     filter_quo <- rlang::enquo(filter)
-    filter_parsed <- parse_table_formula(filter_quo, data, dpdict)
+    filter_parsed <- parse_table_formula(filter_quo, data, dpdict, all_helpers)
     filter_logic <- formula_to_array(filter_parsed, data)
     base_array <- base_array * filter_logic
   }
@@ -364,7 +363,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   # validate rows and columns for value statistics
   if(!is.null(stat_obj) && stat_obj$requires_values){
-    validate_statistic_variables(stat_obj, rows_expanded, cols_expanded, data)
+    validate_statistic_variables(stat_obj, rows_expanded, cols_expanded, data, dpdict)
   }
 
   # Create arrays for each specification
@@ -624,7 +623,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 #' accidentally creating meaningless cross-tabs with many numeric categories.
 #' Variables with >15 unique values trigger errors with suggestions to use
 #' factor(), cut(), add value labels, or use correlation statistics instead.
-validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded, data) {
+validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded, data, dpdict = NULL) {
   if (stat_obj$requires_values) {
     # For value-based statistics (like mean), require categorical rows/columns
 
@@ -635,12 +634,20 @@ validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded,
         if (var_name %in% names(data)) {
           var_data <- data[[var_name]]
 
-          # Check if it's a raw numeric variable (not categorical)
-          if (is.numeric(var_data) &&
-              is.null(attr(var_data, "labels")) &&
-              !is.factor(var_data)) {
-
-            stop("Cannot use numeric variable '", var_name, ") in rows for '", stat_obj$id, "' statistic.\n")
+          # Check questiontype first if available
+          if (!is.null(dpdict) && "questiontype" %in% names(dpdict) && var_name %in% dpdict$variable_names) {
+            questiontype <- dpdict$questiontype[dpdict$variable_names == var_name]
+            if (questiontype %in% c("numeric", "multinumeric")) {
+              stop("Cannot use numeric variable '", var_name, "' (questiontype: ", questiontype, ") in rows for '", stat_obj$id, "' statistic")
+            }
+          } else {
+            # Fallback to R class checking
+            if (is.numeric(var_data) &&
+                is.null(attr(var_data, "labels")) &&
+                !is.factor(var_data) &&
+                length(unique(na.omit(var_data))) > 15) {
+              stop("Cannot use numeric variable '", var_name, "' with ", length(unique(na.omit(var_data))), " unique values in rows for '", stat_obj$id, "' statistic")
+            }
           }
         }
       }
@@ -732,22 +739,12 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
   # Check if it's a tab_helper object (evaluated helper function)
   if (inherits(actual_expr, "tab_helper")) {
     helper_type <- attr(actual_expr, "helper_type")
-    label <- if (helper_type == "age_range") {
-      paste0(helper_type, "(", deparse(actual_expr$var), ", ",
-             actual_expr$min_age, ", ", actual_expr$max_age, ")")
-    } else if (helper_type %in% c("top_box", "bottom_box")) {
-      paste0(helper_type, "(", deparse(actual_expr$var), ", ", actual_expr$n, ")")
-    } else if (helper_type == "row_avg_above") {
-      paste0(helper_type, "(\"", actual_expr$var_pattern, "\", ", actual_expr$threshold, ")")
-    } else {
-      # Generic fallback - just use helper type
-      paste0(helper_type, "(...)")
-    }
+    label <- paste0(helper_type, "(...)")
 
     return(list(
       type = "helper",
       helper_type = helper_type,
-      components = actual_expr,  # The helper object itself
+      args = actual_expr,
       label = label
     ))
   }
@@ -793,7 +790,16 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
       return(list(
         type = "helper",
         helper_type = fn_name,
-        components = rlang::call_args(actual_expr),
+        args = rlang::call_args(actual_expr),
+        label = expr_text
+      ))
+    }
+
+    # Check if it's a numeric expression (arithmetic operators)
+    if (fn_name %in% c("+", "-", "*", "/", "^", "%%", "%/%")) {
+      return(list(
+        type = "numeric_expression",
+        components = list(expr = actual_expr),
         label = expr_text
       ))
     }
@@ -905,6 +911,42 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
   if (var_name %in% names(data)) {
     var_data <- data[[var_name]]
 
+    # Priority 1: Use dpdict questiontype if available
+    if (!is.null(dpdict) && "questiontype" %in% names(dpdict) && var_name %in% dpdict$variable_names) {
+      questiontype <- dpdict$questiontype[dpdict$variable_names == var_name]
+
+      if (questiontype %in% c("categorical", "categorical array")) {
+        # Expand to categories using labels or factor levels
+        labels <- attr(var_data, "labels")
+        if (!is.null(labels) && length(labels) > 0) {
+          return(lapply(seq_along(labels), function(i) {
+            list(
+              type = "expression",
+              components = list(expr = call("==", as.name(var_name), labels[i])),
+              label = paste0(get_var_label(var_name, dpdict), ": ", names(labels)[i])
+            )
+          }))
+        } else if (is.factor(var_data)) {
+          levs <- levels(var_data)
+          return(lapply(levs, function(lev) {
+            list(
+              type = "expression",
+              components = list(expr = call("==", as.name(var_name), lev)),
+              label = paste0(get_var_label(var_name, dpdict), ": ", lev)
+            )
+          }))
+        } else {
+          stop("Variable '", var_name, "' has questiontype '", questiontype, "' but no labels or factor levels found")
+        }
+      } else if (questiontype %in% c("multiresponse", "numeric", "multinumeric")) {
+        # Don't expand - return as single variable
+        return(list(var_spec))
+      } else if (questiontype == "text") {
+        stop("Cannot use text variable '", var_name, "' in cross-tabulation")
+      }
+    }
+
+    # Priority 2: Fallback to R class-based logic
     # Check if it's labelled
     labels <- attr(var_data, "labels")
     if (!is.null(labels) && length(labels) > 0) {
@@ -927,6 +969,21 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
           label = paste0(get_var_label(var_name, dpdict), ": ", lev)
         )
       }))
+    }
+
+    # Check if it's logical (treat as binary, don't expand)
+    if (is.logical(var_data)) {
+      return(list(var_spec))
+    }
+
+    # Check if it's numeric (don't expand)
+    if (is.numeric(var_data)) {
+      return(list(var_spec))
+    }
+
+    # Character variables should error
+    if (is.character(var_data)) {
+      stop("Cannot use character variable '", var_name, "' in cross-tabulation without labels")
     }
   }
 
@@ -990,6 +1047,21 @@ formula_to_array <- function(formula_spec, data) {
     # Process helper functions
     result <- result * process_helper(formula_spec, data)
 
+  } else if (formula_spec$type == "numeric_expression") {
+    # Evaluate numeric expressions in data context
+    tryCatch({
+      expr_result <- rlang::eval_tidy(formula_spec$components$expr, data)
+      if (!is.numeric(expr_result)) {
+        stop("Expression must evaluate to numeric values")
+      }
+      if (length(expr_result) != n) {
+        stop("Expression must return vector of length ", n)
+      }
+      result <- result * expr_result
+    }, error = function(e) {
+      stop("Error evaluating expression '", formula_spec$label, "': ", e$message, call. = FALSE)
+    })
+
   } else if (formula_spec$type == "subtraction") {
     # Handle subtraction
     comp1_array <- formula_to_array(formula_spec$components[[1]], data)
@@ -1015,66 +1087,62 @@ process_helper <- function(formula_spec, data) {
          paste(names(.tab_registry$helpers), collapse = ", "))
   }
 
+  # Recursively evaluate arguments
+  evaluated_args <- list()
+  for (i in seq_along(formula_spec$args)) {
+    arg <- formula_spec$args[[i]]
+
+    # If argument is itself a helper or complex expression, evaluate it recursively
+    if (rlang::is_call(arg)) {
+      fn_name <- as.character(arg[[1]])
+      if (fn_name %in% names(.tab_registry$helpers)) {
+        # It's a nested helper - parse and evaluate recursively
+        nested_spec <- list(
+          type = "helper",
+          helper_type = fn_name,
+          args = rlang::call_args(arg),
+          label = rlang::as_label(arg)
+        )
+        evaluated_args[[i]] <- process_helper(nested_spec, data)  # Recursive call
+      } else {
+        # It's a regular expression - evaluate in data context
+        tryCatch({
+          evaluated_args[[i]] <- rlang::eval_tidy(arg, data)
+        }, error = function(e) {
+          stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
+        })
+      }
+    } else if (rlang::is_symbol(arg)) {
+      # Variable name - convert to string instead of evaluating
+      evaluated_args[[i]] <- as.character(arg)
+    } else {
+      # Simple argument - evaluate directly
+      tryCatch({
+        evaluated_args[[i]] <- rlang::eval_tidy(arg, data)
+      }, error = function(e) {
+        stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
+      })
+    }
+  }
+
+  # Create formula_spec with evaluated components for the processor
+  processed_spec <- list(
+    type = "helper",
+    helper_type = helper_type,
+    components = evaluated_args,
+    label = formula_spec$label
+  )
+
   # Dispatch to the helper's processor
-  return(helper_obj$processor(formula_spec, data))
-}
-
-#' Select top n response options
-#'
-#' @param var Variable name or expression
-#' @param n Number of top options to select (default 1)
-#' @return Expression for use in tab()
-#' @export
-#' @examples
-#' tab(data, top_box(satisfaction, 2), gender)
-top_box <- function(var, n = 1) {
-  structure(
-    list(var = substitute(var), n = n),
-    class = "tab_helper",
-    helper_type = "top_box"
-  )
-}
-
-#' Select bottom n response options
-#'
-#' @param var Variable name or expression
-#' @param n Number of bottom options to select (default 1)
-#' @return Expression for use in tab()
-#' @export
-bottom_box <- function(var, n = 1) {
-  structure(
-    list(var = substitute(var), n = n),
-    class = "tab_helper",
-    helper_type = "bottom_box"
-  )
-}
-
-#' Create indexed values relative to a base
-#'
-#' @param var Variable name or expression
-#' @param base Base for indexing (default is total)
-#' @return Expression for use in tab()
-#' @export
-index_to <- function(var, base = NULL) {
-  structure(
-    list(var = substitute(var), base = substitute(base)),
-    class = "tab_helper",
-    helper_type = "index_to"
-  )
-}
-
-#' Calculate change from a baseline
-#'
-#' @param var Variable name or expression
-#' @param condition Condition defining baseline
-#' @return Expression for use in tab()
-#' @export
-change_from <- function(var, condition) {
-  structure(
-    list(var = substitute(var), condition = substitute(condition)),
-    class = "tab_helper",
-    helper_type = "change_from"
-  )
+  tryCatch({
+    result <- helper_obj$processor(processed_spec, data)
+    if (!is.numeric(result) || length(result) != nrow(data)) {
+      stop("Helper '", helper_type, "' returned invalid result. Expected numeric vector of length ", nrow(data))
+    }
+    return(result)
+  }, error = function(e) {
+    stop("Error in helper '", helper_type, "': ", e$message, call. = FALSE)
+  })
 }
 
 #' Create named list of row specifications
