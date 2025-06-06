@@ -19,7 +19,7 @@ This package addresses these challenges through:
 
 At the heart of surveydatar is the `survey_data` S3 object. Think of it as a container that bundles your survey data with its complete metadata, ensuring they stay synchronized through all transformations.
 
-``` r
+```{r survey_data_object}
 library(surveydatar)
 
 # Load some example survey data
@@ -42,20 +42,20 @@ validate_survey_data(survey_obj)
 
 The `survey_data` object supports standard data manipulation while maintaining metadata integrity:
 
-``` r
+```{r preserving_structure}
 # These operations preserve the survey_data structure
 filtered <- dplyr::filter(survey_obj, uid > 50)
-selected <- dplyr::select(survey_obj, uid, csat, nps)
+selected <- dplyr::select(survey_obj, uid, csat, nps_response)
 with_new_var <- dplyr::mutate(survey_obj, 
-                               high_satisfaction = with_label(csat >= 4, 
-                                                            "High Satisfaction Flag"))
+                               high_satisfaction = realiselabelled_vec(csat >= 4, 
+                                                                      variable_label = "High Satisfaction Flag"))
 ```
 
 ### The Metadata Dictionary (dpdict)
 
 The `dpdict` is a data frame where each row describes a variable in your survey. It captures both current and original metadata, enabling full traceability of changes:
 
-``` r
+```{r basic_dpdict}
 # Create a basic dpdict
 dpdict <- create_dict(raw_data)
 head(dpdict, 3)
@@ -75,7 +75,7 @@ Key columns in the dpdict include:
 
 Before processing, understand your data structure using `datamap()`:
 
-``` r
+```{r datamap}
 # Load a more complex example dataset
 survey_data <- get_big_test_dat(100)
 
@@ -89,7 +89,7 @@ head(dm[, c("variable", "variable label", "class", "n unique")])
 
 For `survey_data` objects, `datamap()` includes additional metadata:
 
-``` r
+```{r datamap_with_metadata}
 survey_obj <- create_survey_data(survey_data)
 dm_enhanced <- datamap(survey_obj, view_or_return = "return")
 # Now includes question type, alias with suffix, etc.
@@ -99,7 +99,7 @@ dm_enhanced <- datamap(survey_obj, view_or_return = "return")
 
 See your data organized by question groups rather than individual variables:
 
-``` r
+```{r question_view}
 # Get question-level summary
 q_summary <- datamap_questions(survey_obj)
 head(q_summary[, c("question_group", "var_count", "question_types")])
@@ -111,7 +111,7 @@ head(q_summary[, c("question_group", "var_count", "question_types")])
 
 For basic metadata capture and editing:
 
-``` r
+```{r starting_simple}
 # Create an editable dpdict
 raw_data <- get_minimal_labelled_test_dat()
 basic_dpdict <- create_dict(raw_data, prefill = TRUE)
@@ -128,7 +128,7 @@ updated_data <- update_dat_from_dpdict(raw_data, basic_dpdict)
 
 For a complete metadata setup with automatic inference:
 
-``` r
+```{r inference}
 # This does everything: separators, grouping, type detection
 survey_obj <- create_survey_data(get_big_test_dat(50))
 
@@ -141,7 +141,7 @@ head(full_dpdict[, c("variable_names", "question_group", "questiontype")])
 
 Survey software often produces inconsistent separator patterns. The package can detect and standardize these:
 
-``` r
+```{r separators}
 # Load data with messy separators
 messy_data <- get_big_test_dat_with_prefixes()
 
@@ -185,7 +185,7 @@ The package uses `split_into_question_groups()` internally to:
     -   Non-contiguous variables (`splitbynoncontiguous`)\
     -   Different common labels (`splitbycommonlabel`)
 
-``` r
+```{r grouping}
 # Basic usage with default settings
 survey_obj <- create_survey_data(get_big_test_dat(100))
 survey_obj <- update_dict_with_metadata(survey_obj)
@@ -212,7 +212,7 @@ survey_obj_custom <- update_dict_with_metadata(
 
 The function automatically determines question types based on variable characteristics:
 
-``` r
+```{r question_types}
 # View the inferred question types
 table(survey_obj$dpdict$questiontype)
 #> categorical  multiresponse  numeric  text
@@ -227,7 +227,7 @@ Question types include: - **numeric**: Single numeric variables - **categorical*
 
 Create and edit question-level metadata:
 
-``` r
+```{r question_level_metadata}
 # Get a question-level summary
 questions_dict <- create_questions_dict(survey_obj, editfirst = FALSE)
 head(questions_dict)
@@ -244,16 +244,15 @@ survey_obj <- update_aliases(survey_obj, questions_dict)
 
 For matrix/grid questions where the same items are asked about multiple subjects:
 
-``` r
-# Example: Brand perception grid
-# Variables like: Q5_1_1 (Brand A - Quality), Q5_1_2 (Brand A - Value), 
-#                Q5_2_1 (Brand B - Quality), Q5_2_2 (Brand B - Value)
-
+```{r grid_questions}
+# Example: Split grid labels for the multiresponse grid question
+# Current structure: "statement 1 - attribute 1", "statement 1 - attribute 2", etc.
+# Goal: Move "statement 1" to the question alias, leaving just "attribute 1", "attribute 2"
 survey_obj <- split_grid_labels(
   survey_obj,
-  alias_to_split = "brand_perception_a",
-  example_stem_to_add = "Brand A",
-  count_before_repeat = 3,  # 3 attributes per brand
+  alias_to_split = "labelledmultiresponsegrid_a",
+  example_stem_to_add = "statement 1", 
+  count_before_repeat = 2,  # 2 attributes per statement
   sep = " - "
 )
 
@@ -264,7 +263,7 @@ survey_obj <- split_grid_labels(
 
 The package automatically determines the unique part of each variable label within its group:
 
-``` r
+```{r unique_suffixes}
 # This happens automatically in update_dict_with_metadata
 # but you can also call it directly
 suffixes <- get_unique_suffixes(
@@ -282,7 +281,7 @@ suffixes <- get_unique_suffixes(
 
 Ensure variables have appropriate types and labels:
 
-``` r
+```{r converting_variables}
 # Convert string variables to labelled factors where appropriate
 survey_obj$dat <- realiselabelled(
   survey_obj$dat,
@@ -296,7 +295,7 @@ survey_obj$dat <- realiselabelled(
 
 Process "select all that apply" questions correctly:
 
-``` r
+```{r multiresponse}
 # Convert NAs to 0s only where at least one option was selected
 survey_obj <- conditionally_replace_NAs_in_multiresponse(
   survey_obj,
@@ -309,23 +308,23 @@ survey_obj <- conditionally_replace_NAs_in_multiresponse(
 
 Create new variables while preserving metadata:
 
-``` r
+```{r derived_variables}
 # Add calculated variables with labels
 survey_obj <- survey_obj %>%
   dplyr::mutate(
-    # Create satisfaction groups
-    sat_group = with_label(
+    # Create satisfaction groups using actual variable from test data
+    satgroup = realiselabelled_vec(
       dplyr::case_when(
-        csat <= 2 ~ "Dissatisfied",
-        csat == 3 ~ "Neutral", 
-        csat >= 4 ~ "Satisfied"
+        labelledordinal <= 2 ~ "Dissatisfied",
+        labelledordinal == 3 ~ "Neutral", 
+        labelledordinal >= 4 ~ "Satisfied"
       ),
-      "Satisfaction Group"
+      variable_label = "Satisfaction Group"
     ),
-    # Calculate average score
-    avg_score = with_label(
-      (Q1_1 + Q1_2 + Q1_3) / 3,
-      "Average Score Q1"
+    # Calculate average score using actual variables from test data
+    avgscore = realiselabelled_vec(
+      (labelledmultiordinal_1 + labelledmultiordinal_2) / 2,
+      variable_label = "Average Multi-Ordinal Score"
     )
   )
 ```
@@ -334,7 +333,7 @@ survey_obj <- survey_obj %>%
 
 Ensure data integrity throughout processing:
 
-``` r
+```{r validation}
 # Check that data and metadata align
 validate_dat_dpdict_alignment(survey_obj$dat, survey_obj$dpdict)
 
@@ -352,23 +351,30 @@ validate_survey_data(survey_obj)
 
 The `tab()` function provides flexible cross-tabulation capabilities:
 
-``` r
+```{r tab}
+# First add a weight variable to our survey object
+survey_obj <- survey_obj %>%
+  dplyr::mutate(
+    weight_var = runif(nrow(survey_obj$dat), 0.5, 2.0),
+    age_numeric = sample(18:65, nrow(survey_obj$dat), replace = TRUE)
+  )
+
 # Simple frequency table
-tab(survey_obj, satisfaction)
+tab(survey_obj, labelledordinal)
 
 # Cross-tabulation 
-tab(survey_obj, satisfaction, gender)
+tab(survey_obj, labelledordinal, categoricalasfactor)
 
-# With filters and weights
+# With filters and weights  
 tab(survey_obj, 
-    satisfaction * (age > 30), 
-    region,
+    labelledordinal * (age_numeric > 30), 
+    labelledcategorical,
     weight = "weight_var")
 
 # Mean calculation
-tab(survey_obj, gender, region, 
+tab(survey_obj, categoricalasfactor, labelledcategorical, 
     statistic = "mean", 
-    values = "age")
+    values = "age_numeric")
 ```
 
 For comprehensive tab() documentation, see the dedicated tab vignette.
@@ -377,7 +383,7 @@ For comprehensive tab() documentation, see the dedicated tab vignette.
 
 Let's walk through processing a customer satisfaction survey:
 
-``` r
+```{r complete}
 # 1. Import raw data
 raw_data <- haven::read_sav("customer_survey.sav")
 

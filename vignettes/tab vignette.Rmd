@@ -10,7 +10,7 @@ The `tab()` function in surveydatar provides a flexible and powerful way to crea
 
 Let's start with the most basic use case - creating a frequency table for a single variable:
 
-``` r
+```{r data prep}
 library(surveydatar)
 
 # Create some example data
@@ -36,7 +36,7 @@ This produces a frequency table showing the percentage of respondents in each ge
 
 To create a cross-tabulation, simply add a column specification:
 
-``` r
+```{r column_spec}
 # Cross-tab gender by region
 tab(survey_data, gender, region)
 ```
@@ -47,7 +47,7 @@ This shows the distribution of gender within each region (column percentages by 
 
 The `tab()` function supports several built-in statistics:
 
-``` r
+```{r different_stats}
 # Count instead of percentages
 tab(survey_data, gender, region, statistic = "count")
 
@@ -65,7 +65,7 @@ tab(survey_data, gender, region, statistic = "mean", values = "income")
 
 Some statistics, like `mean`, require a `values` parameter to specify which numeric variable to aggregate:
 
-``` r
+```{r value_based_stats}
 # Average income by gender and region
 tab(survey_data, gender, region, statistic = "mean", values = "income")
 ```
@@ -76,7 +76,7 @@ Note that for mean calculations: - The `values` parameter must reference a numer
 
 Survey data often requires weighting. Add weights easily:
 
-``` r
+```{r weights}
 # Add a weight variable to our data
 survey_data$weight <- runif(200, 0.5, 2.0)
 
@@ -94,7 +94,7 @@ tab(survey_data, gender, region, weight = "weight",
 
 While `tab()` supports traditional string syntax for backward compatibility, the modern formula syntax is more flexible:
 
-``` r
+```{r formula_syntax}
 # Instead of: tab(survey_data, "gender", "region")
 # Use:
 tab(survey_data, gender, region)
@@ -104,7 +104,7 @@ tab(survey_data, gender, region)
 
 One of the most powerful features is the ability to filter data inline using the `*` operator:
 
-``` r
+```{r filtering}
 # Only show females
 tab(survey_data, gender * (gender == "Female"), region)
 
@@ -123,7 +123,7 @@ tab(survey_data, gender * (age > 40), region,
 
 You can also apply filters to the entire table:
 
-``` r
+```{r table_filters}
 # Only include satisfied respondents (4 or 5) in the entire analysis
 tab(survey_data, gender, region, filter = satisfaction >= 4)
 
@@ -139,7 +139,7 @@ tab(survey_data, gender, region,
 
 If your data contains question batteries (e.g., q1_1, q1_2, q1_3), `tab()` can automatically expand them:
 
-``` r
+```{r add_question_battery}
 # Add a question battery
 survey_data$q1_1 <- sample(0:1, 200, replace = TRUE)
 survey_data$q1_2 <- sample(0:1, 200, replace = TRUE)
@@ -153,7 +153,7 @@ tab(survey_data, q1, region)
 
 Labelled variables and factors are automatically expanded into their categories:
 
-``` r
+```{r variable_expansion}
 # Create a labelled satisfaction variable
 survey_data$satisfaction <- haven::labelled(
   survey_data$satisfaction,
@@ -171,7 +171,7 @@ tab(survey_data, satisfaction, gender)
 
 Survey analysis often requires looking at the top or bottom response options:
 
-``` r
+```{r helpers}
 # Top 2 box (satisfied + very satisfied)
 tab(survey_data, top_box(satisfaction, 2), gender)
 
@@ -187,7 +187,7 @@ tab(survey_data, top_box(satisfaction, 2), gender,
 
 Create multiple analyses in a single table using `rows_list()`:
 
-``` r
+```{r named_groups}
 tab(survey_data,
     rows = rows_list(
       "Overall Satisfaction" = satisfaction,
@@ -228,7 +228,7 @@ The processor must return a numeric vector of 0s and 1s (same length as `nrow(da
 
 ### Add some rating questions
 
-``` r
+```{r add_ratings_questions}
 survey_data$service_rating <- sample(1:5, 200, replace = TRUE)
 survey_data$quality_rating <- sample(1:5, 200, replace = TRUE) 
 survey_data$value_rating <- sample(1:5, 200, replace = TRUE)
@@ -236,18 +236,27 @@ survey_data$value_rating <- sample(1:5, 200, replace = TRUE)
 
 ### Step 1: Register the processor
 
-``` r
+```{r register_processor}
 # Helper for ratings in a specific range
 create_helper(
   id = "row_avg_between",
   processor = function(formula_spec, data, ...) {
     components <- formula_spec$components
-    var_pattern <- as.character(components$var_pattern)
-    min_val <- as.numeric(components$min_val)
-    max_val <- as.numeric(components$max_val)
+    var_pattern <- as.character(components[[1]])
+    min_val <- as.numeric(components[[2]])
+    max_val <- as.numeric(components[[3]])
+    
+    # Validate pattern
+    if (!is.character(var_pattern) || length(var_pattern) != 1) {
+      stop("Variable pattern must be a single character string")
+    }
     
     # Find matching columns
-    matching_cols <- grep(var_pattern, names(data), value = TRUE)
+    matching_cols <- tryCatch({
+      grep(var_pattern, names(data), value = TRUE)
+    }, error = function(e) {
+      stop("Invalid regex pattern '", var_pattern, "': ", e$message)
+    })
     
     if (length(matching_cols) == 0) {
       stop("No variables found matching pattern: '", var_pattern, "'")
@@ -268,7 +277,7 @@ create_helper(
 
 ### Step 2: Define the helper function
 
-``` r
+```{r define_helper}
 row_avg_between <- function(var_pattern, min_val, max_val) {
   structure(
     list(
@@ -284,12 +293,12 @@ row_avg_between <- function(var_pattern, min_val, max_val) {
 
 ### Use it to find high-rating customers
 
-``` r
+```{r use_helper}
 tab(survey_data,
     rows = rows_list(
-        "High Raters (>4)" = row_avg_above("_rating$", 4),
+        "High Raters (>4)" = row_avg_between("_rating$", 4, Inf),
         "Medium Raters (3-4)" = row_avg_between("_rating$", 3, 4),
-        "Low Raters (≤3)" = row_avg_above("_rating$", 0)  # Everyone above 0, then invert
+        "Low Raters (≤3)" = row_avg_between("_rating$", 0, 3)  # Everyone above 0, then invert
     ),
     cols = gender)
 ```
@@ -314,7 +323,7 @@ To calculate a cell value, you typically: 1. Multiply arrays element-wise to get
 
 When creating a statistic, you can specify:
 
-``` r
+```{r create_statistic}
 create_statistic(
   id = "my_stat",                    # Unique identifier
   processor = function(...) {},       # Calculation function
@@ -330,7 +339,7 @@ create_statistic(
 
 Let's create a statistic that calculates the median instead of mean:
 
-``` r
+```{r median_statistic}
 # Create the median statistic
 median_stat <- function() {
   if (!"median" %in% names(.tab_registry$stats)) {
@@ -372,7 +381,7 @@ tab(survey_data, gender, region,
 
 A statistic that shows the width of the 95% confidence interval:
 
-``` r
+```{r confidence_interval}
 # Create the custom statistic
 ci_width_stat <- function() {
   # Register the statistic processor (only once)
@@ -422,7 +431,7 @@ tab(survey_data, satisfied, gender, statistic = ci_width_stat())
 
 For weighted data, the effective sample size accounts for the loss of precision due to unequal weights:
 
-``` r
+```{r effective_sample_size}
 eff_sample_size_stat <- function() {
   if (!"eff_sample_size" %in% names(.tab_registry$stats)) {
     create_statistic(
@@ -473,43 +482,70 @@ The calculation flow for each cell:
 
 Here's a comprehensive example combining multiple features:
 
-``` r
-# !!!! THIS ALSO NEEDS FIXING
-# Complex analysis with multiple features
-result <- tab(survey_data,
+```{r complex_analysis}
+# Complex analysis combining multiple features
+comprehensive_result <- tab(survey_data,
     rows = rows_list(
-      "Satisfaction Levels" = satisfaction,
+      "All Respondents" = satisfaction,
       "High Satisfaction" = top_box(satisfaction, 2),
-      "High Raters" = row_avg_above("_rating$", 4),
-      "Young High Raters" = row_avg_above("_rating$", 4) * age_range(age, 18, 35)
+      "Low Satisfaction" = bottom_box(satisfaction, 2),
+      "Older Adults" = satisfaction * (age >= 45),
+      "High Earners" = satisfaction * (income > 75000)
     ),
     cols = region,
-    filter = gender != "Other",  # Exclude small group for this analysis
+    filter = gender != "Other",  # Focus on main gender groups
     weight = "weight",
     statistic = "column_pct"
 )
 
-print(result)
+print(comprehensive_result)
 
-# Mean income analysis for the same groups
-income_result <- tab(survey_data,
+# Income analysis for different demographic segments
+income_analysis <- tab(survey_data,
     rows = rows_list(
-      "Satisfaction Levels" = satisfaction,
-      "High Satisfaction" = top_box(satisfaction, 2),
-      "High Raters" = row_avg_above("_rating$", 4),
-      "Young High Raters" = row_avg_above("_rating$", 4) * age_range(age, 18, 35)
+      "All Respondents" = gender,
+      "Satisfied Customers" = gender * (satisfaction >= 4),
+      "Young Adults" = gender * (age < 35),
+      "High Service Ratings" = gender * (service_rating >= 4)
     ),
-    cols = region,
-    filter = gender != "Other",
+    cols = age_group,
     weight = "weight",
     statistic = "mean",
     values = "income"
 )
 
-print(income_result)
+print(income_analysis)
 
-# Copy to clipboard for pasting into spreadsheets
-copy_tab(result)
+# Rating analysis using our custom helper
+rating_analysis <- tab(survey_data,
+    rows = rows_list(
+      "Excellent Raters" = row_avg_between("_rating$", 4, 5),
+      "Good Raters" = row_avg_between("_rating$", 3, 4),
+      "Poor Raters" = row_avg_between("_rating$", 1, 3)
+    ),
+    cols = region,
+    statistic = "column_pct"
+)
+
+print(rating_analysis)
+
+# Cross-demographic satisfaction analysis
+satisfaction_deep_dive <- tab(survey_data,
+    rows = rows_list(
+      "Young & High Income" = top_box(satisfaction, 2) * (age < 35) * (income > 60000),
+      "Older & High Income" = top_box(satisfaction, 2) * (age >= 45) * (income > 60000),
+      "Young & Low Income" = top_box(satisfaction, 2) * (age < 35) * (income <= 60000),
+      "Older & Low Income" = top_box(satisfaction, 2) * (age >= 45) * (income <= 60000)
+    ),
+    cols = gender,
+    weight = "weight",
+    statistic = "count"
+)
+
+print(satisfaction_deep_dive)
+
+# Copy results to clipboard for further analysis
+copy_tab(comprehensive_result)
 ```
 
 ## Best Practices
@@ -525,3 +561,4 @@ copy_tab(result)
 ## Conclusion
 
 The `tab()` function provides a flexible foundation for survey analysis, from simple frequency tables to complex custom analyses. By mastering its formula syntax, built-in helpers, value-based statistics, and extension mechanisms, you can create sophisticated analyses while keeping your code clean and readable.
+
