@@ -368,9 +368,6 @@ test_that("rows_list creates multiple row groups", {
   expect_true("Young - gender: Male * (age < 30)" %in% result$row_label)
   expect_true("Old - gender: Female * (age >= 30)" %in% result$row_label)
   expect_true("Old - gender: Male * (age >= 30)" %in% result$row_label)
-
-  # Error on unnamed arguments
-  expect_error(rows_list(gender, age), "All arguments to rows_list must be named")
 })
 
 

@@ -889,3 +889,25 @@ append_oe_to_oe_duplicates <- function(temp_dat, temp_dpdict){
   temp_dpdict$variable_labels[duplicates_to_oes] <- gsub("^([A-Za-z0-9]+)( - )", "\\1oe\\2", temp_dpdict$variable_labels[duplicates_to_oes])
   return(temp_dpdict)
 }
+
+#' Null-coalescing operator `%||%`
+#'
+#' Returns the first argument that is **not** `NULL`.
+#' It is handy for providing concise “default-value” fall-backs:
+#' `x %||% y` reads as *“give me `x`, otherwise `y`”*.
+#'
+#' @usage a \%||\% b
+#'
+#' @param a,b Objects to test. If `a` is not `NULL`, it is returned;
+#'   otherwise `b` is returned unchanged.
+#'
+#' @return `a` when `!is.null(a)`; otherwise `b`.
+#'
+#' @examples
+#' NULL %||% 10        #> 10
+#' ""   %||% "default" #> ""
+#' 1:3  %||% 0         #> 1 2 3
+#'
+#' @export
+#' @name %||%
+`%||%` <- function(a, b) if (!is.null(a)) a else b

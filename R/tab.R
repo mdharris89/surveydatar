@@ -1,8 +1,5 @@
 # ! TO DOs:
 # - Allow for no row parameter if a value is given (calculate value on total sample)
-# - Implement sig testing and correlations (will require significant work as doesn't fit neatly into current framework)
-# - Visualisation via Flourish
-
 
 #' Create cross-tabulation tables with flexible formula syntax
 #'
@@ -275,7 +272,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
           item_eval <- rows_eval[[i]]
         }
         parsed <- parse_table_formula(item_eval, data, dpdict, all_helpers)
-        parsed$label <- names(rows_eval)[i]
+        nm <- names(rows_eval)[i]
+        if (!is.null(nm) && nzchar(nm)) {
+          parsed$label <- nm
+        }
         parsed
       })
     } else {
@@ -324,7 +324,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
             item_eval <- cols_eval[[i]]
           }
           parsed <- parse_table_formula(item_eval, data, dpdict, all_helpers)
-          parsed$label <- names(cols_eval)[i]
+          nm <- names(cols_eval)[i]
+          if (!is.null(nm) && nzchar(nm)) {
+            parsed$label <- nm
+          }
           parsed
         })
       } else {
@@ -509,13 +512,14 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   result_df <- as.data.frame(result_matrix)
 
   # Add row labels
-  row_labels <- sapply(rows_expanded, function(x) {
-    if (!is.null(x$group_label)) {
-      paste(x$group_label, x$label, sep = " - ")  # BOTH group AND individual
-    } else {
-      x$label  # Just individual when no group
-    }
-  })
+  row_labels <- vapply(rows_expanded, function(x) {
+    if (!is.null(x$group_label) && x$group_label != x$label) {
+      paste(x$group_label, x$label, sep = " - ")
+      } else {
+        x$label
+        }
+    }, character(1)
+    )
 
   # Add summary row label if applicable
   if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_column_net == TRUE) {
@@ -528,11 +532,14 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   )
 
   # Add column names
-  col_labels <- if (!is.null(cols_parsed)) {
-    sapply(cols_expanded, function(x) x$label)
-  } else {
-    "Total"
-  }
+  col_labels <- vapply(cols_expanded, function(x) {
+    if (!is.null(x$group_label) && x$group_label != x$label) {
+      paste(x$group_label, x$label, sep = " - ")
+    } else {
+      x$label
+    }
+  }, character(1)
+  )
   if (!is.null(summary_col_label))
     col_labels <- c(col_labels, summary_col_label)
 
@@ -589,11 +596,36 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Store statistic
   attr(result_df, "statistic") <- statistic
 
-
   # Store values variable name if used
   if (!is.null(values)) {
     attr(result_df, "values_variable") <- values
   }
+
+  # Store summary labels if used
+  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_column_net == TRUE) {
+    attr(result_df, "summary_row_label") <- stat_obj$summary_row
+  }
+  if (!is.null(summary_col_label)) {
+    attr(result_df, "summary_col_label") <- summary_col_label
+  }
+
+  # Include summary column array if it was added
+  final_col_arrays <- col_arrays
+  if (!is.null(summary_col_label)) {
+    final_col_arrays <- c(final_col_arrays, list(summary_col_array))
+  }
+
+  # Add base row array to match the base row that was added to result_df
+  # Base row represents all eligible respondents (after weights/filters)
+  final_row_arrays <- c(row_arrays, list(base_array))
+
+  # Store arrays for later significance testing
+  attr(result_df, "arrays") <- list(
+    base_array = base_array,
+    row_arrays = final_row_arrays,
+    col_arrays = final_col_arrays,
+    values_array = values_array
+  )
 
   # Store the original call for sourcing when using copy_tab
   attr(result_df, "call") <- original_call
@@ -690,6 +722,9 @@ print.tab_result <- function(x, ...) {
   # Get values variable name if available
   values_var <- attr(x, "values_variable")
 
+  # Get all significance results
+  all_sig <- attr(x, "significance")
+
   # Construct header
   if (statistic_id == "mean" && !is.null(values_var)) {
     cat("\nCross-tabulation (mean of ", values_var, ")\n", sep = "")
@@ -698,22 +733,99 @@ print.tab_result <- function(x, ...) {
   }
   cat(rep("-", 50), "\n", sep = "")
 
+  # Create column letter mapping
+  col_names <- names(x)[-1]
+  col_letters <- LETTERS[seq_along(col_names)]
+  names(col_letters) <- col_names
+
   # Create a copy for formatting to avoid modifying the original
   x_formatted        <- x
   base_row_idx <- which(x_formatted$row_label == stat_obj$base_label)
 
   for (col in names(x_formatted)[-1]) {
     orig <- x[[col]]
+    col_idx <- which(names(x_formatted) == col) - 1  # Adjust for row_label column
+
     x_formatted[[col]] <- vapply(seq_along(orig), function(i) {
-      if (i %in% base_row_idx) as.character(orig[i])
-      else if (is.numeric(orig[i]) && !is.na(orig[i])) stat_obj$format_fn(orig[i])
-      else as.character(orig[i])
+      if (i %in% base_row_idx) {
+        as.character(orig[i])
+      } else if (is.numeric(orig[i]) && !is.na(orig[i])) {
+        formatted_val <- stat_obj$format_fn(orig[i])
+
+        # Add significance indicators from all tests
+        if (!is.null(all_sig)) {
+          sig_indicators <- character()
+
+          for (test_name in names(all_sig)) {
+            sig_result <- all_sig[[test_name]]
+
+            if (i <= nrow(sig_result$levels) && col_idx <= ncol(sig_result$levels)) {
+              sig_level <- sig_result$levels[i, col_idx]
+
+              if (sig_level == "higher") {
+                # Find which column this test is comparing to
+                versus_col <- sig_result$versus
+                # Extract column letter
+                if (grepl("column", versus_col)) {
+                  # Extract column name from versus string
+                  versus_col_name <- sub(".*: ", "", versus_col)
+                  if (versus_col_name %in% names(col_letters)) {
+                    sig_indicators <- c(sig_indicators,
+                                        paste0(col_letters[versus_col_name], "+"))
+                  }
+                }
+              } else if (sig_level == "lower") {
+                versus_col <- sig_result$versus
+                if (grepl("column", versus_col)) {
+                  versus_col_name <- sub(".*: ", "", versus_col)
+                  if (versus_col_name %in% names(col_letters)) {
+                    sig_indicators <- c(sig_indicators,
+                                        paste0(col_letters[versus_col_name], "-"))
+                  }
+                }
+              }
+            }
+          }
+
+          if (length(sig_indicators) > 0) {
+            formatted_val <- paste0(formatted_val, " (",
+                                    paste(sig_indicators, collapse = ","), ")")
+          }
+        }
+        formatted_val
+      } else {
+        as.character(orig[i])
+      }
     }, character(1))
   }
 
-  print.data.frame(x_formatted, row.names = FALSE, ...)
-}
+  # Update column names to include letters in brackets (after formatting is complete)
+  for (i in seq_along(col_names)) {
+    col_name <- col_names[i]
+    new_col_name <- paste0(col_name, " (", col_letters[i], ")")
+    names(x_formatted)[i + 1] <- new_col_name  # +1 to skip row_label column
+  }
 
+  print.data.frame(x_formatted, row.names = FALSE, ...)
+
+  # Print significance testing legend if available
+  if (!is.null(all_sig)) {
+    cat("\nSignificance testing:\n")
+    cat("Column letters: ", paste(col_letters, "=", names(col_letters), collapse = ", "), "\n")
+
+    for (test_name in names(all_sig)) {
+      sig_result <- all_sig[[test_name]]
+      cat("\n", test_name, ":\n", sep = "")
+      cat("  Test: ", sig_result$test_name, "\n")
+      cat("  Level: ", sig_result$config$level, "\n")
+      if (!is.null(sig_result$config$adjust) && sig_result$config$adjust != "none") {
+        cat("  Adjustment: ", sig_result$config$adjust, "\n")
+      }
+    }
+
+    cat("\nNotation: X+ = significantly higher than column X, X- = significantly lower than column X\n")
+  }
+}
 
 #' Parse table formula expressions using NSE
 #'
@@ -889,7 +1001,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
   }
 
   # Check if it's a question group in dpdict (existing logic)
-  if (!is.null(dpdict) && "question_group" %in% names(dpdict)) {
+  if (!is.null(dpdict) && "question_group" %in% names(dpdict) && !var_name %in% names(data)) {
     matching_groups <- unique(dpdict$question_group[grepl(paste0("^", var_name, "_"), dpdict$question_group)])
     if (length(matching_groups) > 0) {
       group_vars <- dpdict$variable_names[dpdict$question_group %in% matching_groups]
@@ -1154,9 +1266,10 @@ process_helper <- function(formula_spec, data) {
 #' tab(data, rows = rows_list("Total" = q1, "Young" = q1 * (age < 30)))
 rows_list <- function(...) {
   dots <- rlang::enquos(...)
-  if (length(names(dots)) == 0 || any(names(dots) == "")) {
-    stop("All arguments to rows_list must be named")
-  }
+  if (length(dots) == 0) {
+    stop("rows_list() needs at least one expression")
+    }
+  if (is.null(names(dots))) names(dots) <- rep("", length(dots))
   dots
 }
 
@@ -1169,9 +1282,10 @@ rows_list <- function(...) {
 #' tab(data, gender, cols = cols_list("Total" = q1, "Young" = q1 * (age < 30)))
 cols_list <- function(...) {
   dots <- rlang::enquos(...)
-  if (length(names(dots)) == 0 || any(names(dots) == "")) {
-    stop("All arguments to rows_list must be named")
+  if (length(dots) == 0) {
+    stop("cols_list() needs at least one expression")
   }
+  if (is.null(names(dots))) names(dots) <- rep("", length(dots))
   dots
 }
 
@@ -1371,4 +1485,399 @@ calculate_summary <- function(type, arrays, base_array, col_array, statistic, va
   }
 
   return(summary_array)
+}
+
+#' Add significance testing to a tab result
+#'
+#' @param tab_result A tab_result object from tab()
+#' @param versus Column to compare against: "first_col", "last_col", "total",
+#'   column name, or column index
+#' @param test Test to use: "auto", "z_test_proportions", "t_test", etc.
+#' @param level Significance level (default 0.05)
+#' @param adjust Multiple comparison adjustment: "none", "bonferroni", "BH", etc.
+#' @param name Optional name for this comparison (defaults to versus value)
+#' @return The tab_result with significance testing added
+#' @export
+add_sig <- function(tab_result,
+                    versus = "first_col",
+                    test = "auto",
+                    level = 0.05,
+                    adjust = "none",
+                    name = NULL) {
+
+  if (!inherits(tab_result, "tab_result")) {
+    stop("Input must be a tab_result object")
+  }
+
+  # Extract stored arrays
+  arrays <- attr(tab_result, "arrays")
+  if (is.null(arrays)) {
+    stop("No arrays found in tab_result. This tab_result may have been created ",
+         "with an older version of tab() that doesn't store arrays.")
+  }
+
+  # Extract other needed info
+  statistic <- attr(tab_result, "statistic")
+
+  # Get stat object for base row identification
+  stat_obj <- if (is.character(statistic)) {
+    .tab_registry$stats[[statistic$id]]
+  } else {
+    statistic
+  }
+
+  # Create result matrix (excluding row_label column)
+  result_matrix <- as.matrix(tab_result[, -1])
+
+  # Create sig_config
+  sig_config <- list(
+    test = test,
+    versus = versus,
+    level = level,
+    adjust = adjust
+  )
+
+  # Call compute_significance
+  sig_result <- compute_significance(
+    base_array = arrays$base_array,
+    row_arrays = arrays$row_arrays,
+    col_arrays = arrays$col_arrays,
+    result_matrix = result_matrix,
+    statistic = statistic,
+    values_array = arrays$values_array,
+    sig_config = sig_config,
+    row_labels = tab_result$row_label
+  )
+
+  # Determine name for this comparison
+  # Resolve versus to actual column name
+  target_col_name <- resolve_versus_to_column_name(versus, tab_result)
+
+  # Use provided name or default to target column name
+  if (is.null(name)) {
+    name <- target_col_name
+  }
+
+  # Get existing significance results
+  all_sig <- attr(tab_result, "significance")
+  if (is.null(all_sig)) {
+    all_sig <- list()
+  }
+
+  # Add new significance result
+  all_sig[[name]] <- sig_result
+  attr(tab_result, "significance") <- all_sig
+
+  return(tab_result)
+}
+
+#' Add significance testing versus all columns
+#'
+#' @param tab_result A tab_result object from tab()
+#' @param test Test to use for all comparisons
+#' @param level Significance level
+#' @param adjust Multiple comparison adjustment
+#' @param exclude Columns to exclude from testing (e.g., "Total")
+#' @return The tab_result with significance testing added for all columns
+#' @export
+add_sig_all <- function(tab_result,
+                        test = "auto",
+                        level = 0.05,
+                        adjust = "none",
+                        exclude = "Total") {
+
+  if (!inherits(tab_result, "tab_result")) {
+    stop("Input must be a tab_result object")
+  }
+
+  # Get all column names except row_label
+  col_names <- names(tab_result)[-1]
+
+  # Exclude specified columns
+  if (!is.null(exclude)) {
+    col_names <- setdiff(col_names, exclude)
+  }
+
+  # Add significance vs each column
+  for (col in col_names) {
+    tab_result <- add_sig(tab_result,
+                          versus = col,
+                          test = test,
+                          level = level,
+                          adjust = adjust)
+  }
+
+  return(tab_result)
+}
+
+#' Compute significance matrix for tab results
+#' @keywords internal
+compute_significance <- function(base_array, row_arrays, col_arrays,
+                                 result_matrix, statistic, values_array = NULL,
+                                 sig_config = list(), row_labels = NULL) {
+
+  # Default configuration
+  default_config <- list(
+    test = "auto",
+    versus = "first_col",
+    level = 0.05,
+    adjust = "none"
+  )
+  config <- utils::modifyList(default_config, sig_config)
+
+  # Get stat object
+  stat_obj <- if (is.character(statistic)) {
+    .tab_registry$stats[[statistic$id]]
+  } else {
+    statistic
+  }
+
+  # Determine test to use
+  if (config$test == "auto") {
+    # Auto-determine based on statistic type
+    test_id <- switch(
+      stat_obj$id,
+      "column_pct" = "z_test_proportions",
+      "count" = "z_test_proportions",
+      "row_pct" = "z_test_proportions",
+      "mean" = "t_test",
+      "median" = "mann_whitney",
+      "sd" = "t_test",
+      "cv" = "t_test",
+      stop("No default test for statistic '", stat_obj$id, "'")
+    )
+  } else {
+    test_id <- config$test
+  }
+
+  # Get test object
+  test_obj <- .tab_registry$sig_tests[[test_id]]
+  if (is.null(test_obj)) {
+    stop("Unknown significance test: '", test_id, "'. Available: ",
+         paste(names(.tab_registry$sig_tests), collapse = ", "))
+  }
+
+  # Determine comparison base column index
+  n_cols <- ncol(result_matrix)
+  col_names <- colnames(result_matrix)
+
+  if (is.character(config$versus)) {
+    base_col <- switch(config$versus,
+                       "first_col" = 1,
+                       "last_col" = n_cols,
+                       "total" = {
+                         idx <- which(tolower(col_names) == "total")
+                         if (length(idx) == 0) stop("No 'Total' column found")
+                         idx[1]
+                       },
+                       # Otherwise treat as column name
+                       {
+                         idx <- which(col_names == config$versus)
+                         if (length(idx) == 0) stop("Column '", config$versus, "' not found")
+                         idx[1]
+                       }
+    )
+  } else if (is.numeric(config$versus)) {
+    base_col <- as.integer(config$versus)
+    if (base_col < 1 || base_col > n_cols) {
+      stop("Column index ", base_col, " out of range [1, ", n_cols, "]")
+    }
+  } else {
+    stop("versus must be a character string or numeric index")
+  }
+
+  # Identify data rows (exclude base row and any summary rows)
+  base_row_idx <- which(row_labels %in% c(stat_obj$base_label, "Base (n)"))
+  summary_row_idx <- which(rownames(result_matrix) %in% c("NET", "Total", "Avg"))
+  exclude_rows <- union(base_row_idx, summary_row_idx)
+
+  # Determine actual data rows
+  all_rows <- seq_len(nrow(result_matrix))
+  data_rows <- setdiff(all_rows, exclude_rows)
+
+  # Initialize matrices for data rows only
+  n_data_rows <- length(data_rows)
+  sig_matrix <- matrix("", nrow = n_data_rows, ncol = n_cols)
+  p_matrix <- matrix(NA_real_, nrow = n_data_rows, ncol = n_cols)
+
+  # Set row and column names
+  if (length(data_rows) > 0) {
+    if (!is.null(row_labels)) {
+      rownames(sig_matrix) <- row_labels[data_rows]
+      rownames(p_matrix) <- row_labels[data_rows]
+    } else {
+      rownames(sig_matrix) <- rownames(result_matrix)[data_rows]
+      rownames(p_matrix) <- rownames(result_matrix)[data_rows]
+    }
+  }
+  colnames(sig_matrix) <- col_names
+  colnames(p_matrix) <- col_names
+
+  # Skip if only one column
+  if (n_cols == 1) {
+    return(list(
+      levels = sig_matrix,
+      p_values = p_matrix,
+      test_used = test_id,
+      test_name = test_obj$name,
+      versus = "none",
+      config = config
+    ))
+  }
+
+  # Check if test is omnibus (tests overall association)
+  if (!is.null(test_obj$is_omnibus) && test_obj$is_omnibus) {
+    # For omnibus tests, we need arrays for data rows only
+    data_row_arrays <- row_arrays[data_rows]
+
+    # Run omnibus test once
+    test_result <- test_obj$processor(
+      base_array = base_array,
+      row_arrays = data_row_arrays,
+      col_arrays = col_arrays,
+      values = values_array
+    )
+
+    # For omnibus tests, store the overall p-value
+    if (!is.null(test_result$p_value)) {
+      # Set all cells to the same p-value (it's an overall test)
+      p_matrix[,] <- test_result$p_value
+
+      # Mark all cells as "omnibus" in sig_matrix
+      sig_matrix[,] <- if (test_result$p_value < config$level) "significant" else ""
+    }
+
+    return(list(
+      levels = sig_matrix,
+      p_values = p_matrix,
+      test_used = test_id,
+      test_name = test_obj$name,
+      versus = "overall association",
+      config = config,
+      is_omnibus = TRUE
+    ))
+  }
+
+  # Perform pairwise tests
+  base_col_array <- col_arrays[[base_col]]
+
+  # Test each data row against the base column
+  for (i in seq_along(data_rows)) {
+    row_idx <- data_rows[i]
+
+    array_idx <- i  # The i-th data row uses the i-th row array
+
+    for (j in 1:n_cols) {
+      if (j == base_col) {
+        sig_matrix[i, j] <- "base"
+        next
+      }
+
+      # Run test
+      tryCatch({
+        test_result <- test_obj$processor(
+          base_array = base_array,
+          row_array = row_arrays[[array_idx]],  # <-- CORRECT INDEX
+          col_array_1 = base_col_array,
+          col_array_2 = col_arrays[[j]],
+          values = values_array
+        )
+
+        p_matrix[i, j] <- test_result$p_value
+      }, error = function(e) {
+        # If test fails, leave as NA
+        warning("Test failed for row ", i, ", col ", j, ": ", e$message)
+      })
+    }
+  }
+
+  # Apply multiple comparison adjustment if requested
+  if (config$adjust != "none" && any(!is.na(p_matrix))) {
+    # Extract non-base p-values
+    p_values_vec <- as.vector(p_matrix[, -base_col])
+    p_values_vec <- p_values_vec[!is.na(p_values_vec)]
+
+    if (length(p_values_vec) > 0) {
+      p_adjusted <- p.adjust(p_values_vec, method = config$adjust)
+
+      # Put adjusted values back
+      idx <- 1
+      for (j in 1:n_cols) {
+        if (j != base_col) {
+          for (i in 1:n_data_rows) {
+            if (!is.na(p_matrix[i, j])) {
+              p_matrix[i, j] <- p_adjusted[idx]
+              idx <- idx + 1
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Convert p-values to significance levels
+  for (i in 1:n_data_rows) {
+    row_idx <- data_rows[i]
+
+    for (j in 1:n_cols) {
+      if (sig_matrix[i, j] == "base") {
+        next
+      } else if (!is.na(p_matrix[i, j]) && p_matrix[i, j] < config$level) {
+        # Determine direction based on values
+        val_current <- result_matrix[row_idx, j]
+        val_base <- result_matrix[row_idx, base_col]
+
+        if (!is.na(val_current) && !is.na(val_base)) {
+          if (val_current > val_base) {
+            sig_matrix[i, j] <- "higher"
+          } else if (val_current < val_base) {
+            sig_matrix[i, j] <- "lower"
+          }
+        }
+      }
+    }
+  }
+
+  return(list(
+    levels = sig_matrix,
+    p_values = p_matrix,
+    test_used = test_id,
+    test_name = test_obj$name,
+    versus = paste0("column ", base_col, ": ", col_names[base_col]),
+    config = config
+  ))
+}
+
+#' Resolve versus parameter to actual column name
+#' @keywords internal
+resolve_versus_to_column_name <- function(versus, tab_result) {
+  col_names <- names(tab_result)[-1]  # Exclude row_label
+  n_cols <- length(col_names)
+
+  if (is.character(versus)) {
+    target_col_idx <- switch(versus,
+                             "first_col" = 1,
+                             "last_col" = n_cols,
+                             "total" = {
+                               idx <- which(tolower(col_names) == "total")
+                               if (length(idx) == 0) stop("No 'Total' column found")
+                               idx[1]
+                             },
+                             # Otherwise treat as column name
+                             {
+                               idx <- which(col_names == versus)
+                               if (length(idx) == 0) stop("Column '", versus, "' not found")
+                               idx[1]
+                             }
+    )
+  } else if (is.numeric(versus)) {
+    target_col_idx <- as.integer(versus)
+    if (target_col_idx < 1 || target_col_idx > n_cols) {
+      stop("Column index ", target_col_idx, " out of range [1, ", n_cols, "]")
+    }
+  } else {
+    stop("versus must be a character string or numeric index")
+  }
+
+  return(col_names[target_col_idx])
 }

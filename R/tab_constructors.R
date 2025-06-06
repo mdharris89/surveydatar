@@ -3,6 +3,7 @@
 .tab_registry <- new.env(parent = emptyenv())
 .tab_registry$helpers <- list()
 .tab_registry$stats <- list()
+.tab_registry$sig_tests <- list()
 
 #' Low-level constructor for tab helpers
 #' @param id Character identifier for the helper
@@ -146,4 +147,92 @@ list_tab_helpers <- function() {
 #' @export
 list_tab_statistics <- function() {
   names(.tab_registry$stats)
+}
+
+
+#' Determine the type of a variable array for statistics validation
+#'
+#' @param array Numeric vector representing a variable array
+#' @return Character string: "categorical", "numeric", or "other"
+#' @export
+#' @examples
+#' get_variable_array_type(c(0, 1, 0, 1, NA))  # "categorical"
+#' get_variable_array_type(c(1.5, 2.3, 4.1))   # "numeric"
+#' get_variable_array_type(c("a", "b"))         # "other"
+get_variable_array_type <- function(array) {
+  if (!is.numeric(array)) {
+    return("other")
+  }
+
+  non_na_values <- array[!is.na(array)]
+  if (length(non_na_values) == 0) {
+    return("other")
+  }
+
+  # Check if all values are exactly 0 or 1
+  if (all(non_na_values %in% c(0, 1))) {
+    return("categorical")
+  }
+
+  return("numeric")
+}
+
+
+#' Low-level constructor for significance tests
+#' @keywords internal
+new_tab_sig_test <- function(id, processor,
+                             name = NULL,
+                             description = NULL,
+                             ...) {
+  stopifnot(is.character(id), length(id) == 1, nzchar(id))
+  stopifnot(is.function(processor))
+
+  structure(
+    list(
+      id = id,
+      processor = processor,
+      name = name %||% id,
+      description = description,
+      ...
+    ),
+    class = "tab_sig_test"
+  )
+}
+
+#' Create and register a significance test
+#' @param id Character identifier for the test
+#' @param processor Function that performs the test
+#' @param name Human-readable name for the test
+#' @param description Description of when to use this test
+#' @param ... Additional attributes
+#' @return The created test object (invisibly)
+#' @export
+create_significance_test <- function(id, processor,
+                                     name = NULL,
+                                     description = NULL,
+                                     ...) {
+  if (id %in% names(.tab_registry$sig_tests)) {
+    warning("Overwriting existing significance test '", id, "'")
+  }
+
+  obj <- new_tab_sig_test(id = id,
+                          processor = processor,
+                          name = name,
+                          description = description,
+                          ...)
+
+  .tab_registry$sig_tests[[id]] <- obj
+  invisible(obj)
+}
+
+#' Get registered significance test by ID
+#' @keywords internal
+get_significance_test <- function(id) {
+  .tab_registry$sig_tests[[id]]
+}
+
+#' List all registered significance tests
+#' @export
+list_tab_significance_tests <- function() {
+  names(.tab_registry$sig_tests)
 }

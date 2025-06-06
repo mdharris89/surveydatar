@@ -792,27 +792,6 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     stop("noisy must be a number between 0 and 4", call)
   }
 
-  if(!is.null(split_into_groups_config)){
-    bool_config_params <- c("splitbyclass", "splitbynumlabelledvalues",
-                            "splitbynoncontiguous", "splitbycommonlabel",
-                            "findlongest")
-    for (param in bool_config_params) {
-      if (!is.logical(split_into_groups_config[[param]]) || length(split_into_groups_config[[param]]) != 1) {
-        stop(sprintf("%s must be a single logical value", param), call. = FALSE)
-      }
-    }
-
-    if (!split_into_groups_config$variable_compare_mode %in% c("complete", "reduced")) {
-      stop("variable_compare_mode must be either 'complete' or 'reduced'", call. = FALSE)
-    }
-
-    # Validate min_common_strings
-    if (!is.numeric(split_into_groups_config$min_common_strings) || length(split_into_groups_config$min_common_strings) != 1 ||
-        split_into_groups_config$min_common_strings < 1) {
-      stop("min_common_strings must be a positive integer", call. = FALSE)
-    }
-  }
-
   if (!is.logical(edit_aliases) || length(edit_aliases) != 1){
     stop("edit_aliases must be a single logical value", call. = FALSE)
   }
@@ -1084,6 +1063,28 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
   )
   if(is.null(config)){config <- list()}
   config <- utils::modifyList(default_config, config)
+
+  # Validate merged config
+  if(!is.null(config)){
+    bool_config_params <- c("splitbyclass", "splitbynumlabelledvalues",
+                            "splitbynoncontiguous", "splitbycommonlabel",
+                            "findlongest")
+    for (param in bool_config_params) {
+      if (!is.logical(config[[param]]) || length(config[[param]]) != 1) {
+        stop(sprintf("%s must be a single logical value", param), call. = FALSE)
+      }
+    }
+
+    if (!config$variable_compare_mode %in% c("complete", "reduced")) {
+      stop("variable_compare_mode must be either 'complete' or 'reduced'", call. = FALSE)
+    }
+
+    # Validate min_common_strings
+    if (!is.numeric(config$min_common_strings) || length(config$min_common_strings) != 1 ||
+        config$min_common_strings < 1) {
+      stop("min_common_strings must be a positive integer", call. = FALSE)
+    }
+  }
 
   # Extract parameters for easier access
   variable_name_sep <- seps_to_use$variable_name_sep

@@ -4,7 +4,7 @@
 \alias{.onLoad}
 \title{Register built-in helpers and statistics}
 \usage{
-.onLoad(libname, pkgname)
+.onLoad(libname = NULL, pkgname = NULL)
 }
 \arguments{
 \item{libname}{Library name (unused)}

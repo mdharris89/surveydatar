@@ -4,7 +4,13 @@
 \alias{validate_statistic_variables}
 \title{Validate Variable Types for Statistics}
 \usage{
-validate_statistic_variables(stat_obj, rows_expanded, cols_expanded, data)
+validate_statistic_variables(
+  stat_obj,
+  rows_expanded,
+  cols_expanded,
+  data,
+  dpdict = NULL
+)
 }
 \arguments{
 \item{stat_obj}{A tab_stat object containing statistic metadata}

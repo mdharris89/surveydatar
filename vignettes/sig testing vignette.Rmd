@@ -1,0 +1,333 @@
+## Overview
+
+The `surveydatar` package provides integrated significance testing within the `tab()` function, allowing you to perform statistical tests alongside your cross-tabulations. This design philosophy reflects real-world survey analysis workflows where significance testing is an integral part of understanding relationships between variables.
+
+### Implementation Design
+
+Significance testing in surveydatar is built on three key principles:
+
+1.  **Integration with tabulation**: Tests are performed as part of the tabulation process, not as a separate step
+2.  **Array-based computation**: All tests operate on the same base, row, and column arrays used for calculating statistics
+3.  **Extensibility**: New tests can be registered and used seamlessly within the existing framework
+
+The significance testing system distinguishes between: - **Pairwise tests**: Compare each column against a reference column (e.g., z-test, t-test) - **Omnibus tests**: Test overall association across all categories (e.g., chi-square)
+
+## Basic Usage
+
+To enable significance testing, set `significance = TRUE` in your `tab()` call:
+
+```{r basic-example}
+# Load example data
+data <- get_big_test_dat(200)
+
+# Basic significance testing with column percentages
+result <- tab(data, labelledordinal, labelledcategorical,
+              statistic = "column_pct") %>% 
+  add_sig()
+
+# Access significance results
+sig_results <- attr(result, "significance")
+```
+
+## Built-in Significance Tests
+
+### Z-test for Proportions
+
+The z-test compares proportions between two groups, commonly used for categorical data with percentage statistics.
+
+**When to use**: - Comparing percentages between demographic groups - Testing if response rates differ between segments - Analyzing binary outcomes across categories
+
+**Theory**: The test assumes that proportions follow a normal distribution (valid for reasonable sample sizes). It uses a pooled proportion to estimate the standard error.
+
+```{r z-test}
+# Z-test is the default for column_pct statistic
+result_z <- tab(data, labelledordinal, labelledcategorical,
+                statistic = "column_pct") %>% 
+  add_sig(test = "z_test_proportions",
+          versus = "first_col",  # Compare all columns to first
+          level = 0.05)          # Significance level
+```
+
+The test statistic is calculated as: $$Z = \frac{p_2 - p_1}{\sqrt{p_{pool}(1-p_{pool})(\frac{1}{n_1} + \frac{1}{n_2})}}$$
+
+where $p_{pool} = \frac{x_1 + x_2}{n_1 + n_2}$
+
+### T-test for Means
+
+The t-test compares means between two groups, used when analyzing numeric variables.
+
+**When to use**: - Comparing average satisfaction scores between groups - Testing if mean purchase amounts differ by segment - Analyzing continuous metrics across categories
+
+**Theory**: Assumes approximately normal distributions or large sample sizes. Uses Welch's t-test by default (doesn't assume equal variances).
+
+```{r t-test}
+# T-test for comparing means
+result_t <- tab(data, labelledcategorical, booleans,
+                statistic = "mean",
+                values = "randomnumeric") %>% # Variable to calculate means for
+  add_sig(test = "t_test")
+
+```
+
+### Chi-square Test
+
+The chi-square test examines overall association between categorical variables.
+
+**When to use**: - Testing independence between two categorical variables - Examining if distribution patterns differ across groups - Analyzing contingency tables
+
+**Theory**: Compares observed frequencies to expected frequencies under independence. Unlike pairwise tests, this is an omnibus test that provides a single p-value for the entire table.
+
+```{r chi-square}
+# Chi-square test for overall association
+result_chi <- tab(data, labelledordinal, labelledcategorical,
+                  statistic = "count") %>% 
+  add_sig(test = "chi_square")
+```
+
+**Important**: Chi-square tests overall association, not specific pairwise differences. A significant result indicates that the variables are related, but doesn't tell you which specific cells differ.
+
+### Mann-Whitney U Test
+
+A non-parametric alternative to the t-test that doesn't assume normal distributions.
+
+**When to use**: - Data is ordinal or severely skewed - Small sample sizes where normality is questionable - Comparing medians rather than means
+
+**Theory**: Tests whether one group tends to have higher values than another by comparing ranks.
+
+```{r mann-whitney}
+# Mann-Whitney test for non-parametric comparisons
+result_mw <- tab(data, labelledcategorical, booleans,
+                 statistic = "median",
+                 values = "randomnumeric") %>% 
+  add_sig(test = "mann_whitney")
+```
+
+## Multiple Comparison Adjustments
+
+When making multiple comparisons, the chance of finding at least one false positive increases. surveydatar supports several adjustment methods:
+
+### No Adjustment (Default)
+
+Each test is performed at the nominal significance level. Appropriate when: - Making few comparisons - Tests are exploratory - False positives are not costly
+
+### Bonferroni Correction
+
+The most conservative adjustment, controls the family-wise error rate.
+
+```{r bonferroni}
+result_bonf <- tab(data, labelledordinal, labelledcategorical,
+                   statistic = "column_pct") %>% 
+    add_sig(test = "z_test_proportions",
+          adjust = "bonferroni")
+```
+
+**When to use**: When false positives must be strictly controlled (e.g., regulatory submissions)
+
+### Benjamini-Hochberg (BH) Procedure
+
+Controls the false discovery rate (FDR) - less conservative than Bonferroni.
+
+```{r bh-adjustment}
+result_bh <- tab(data, labelledordinal, labelledcategorical,
+                 statistic = "column_pct") %>% 
+    add_sig(test = "z_test_proportions",
+          adjust = "BH")
+```
+
+**When to use**: When some false positives are acceptable but you want to control their proportion
+
+## Comparison Strategies
+
+The `versus` parameter in `sig_config` determines what each column is compared against:
+
+```{r comparison-strategies}
+# Compare to first column (default)
+tab(data, gender, region) %>%
+  add_sig(versus = "first_col")
+
+# Compare to last column
+tab(data, gender, region) %>%
+  add_sig(versus = "last_col")
+
+# Compare to specific column by index
+tab(data, gender, region) %>%
+  add_sig(versus = 2)
+
+# Compare to total column (if present)
+tab(data, gender, region) %>%
+  add_sig(versus = "total")
+```
+
+## Understanding Significance Results
+
+The significance results include:
+
+-   **levels**: Matrix showing significance status for each cell
+
+    -   `"base"`: Reference column
+    -   `"same"`: No significant difference
+    -   `"higher"`: Significantly higher than reference
+    -   `"lower"`: Significantly lower than reference
+    -   `"omnibus"`: For chi-square tests (overall association)
+
+-   **p_values**: Matrix of p-values for each comparison
+
+-   **test_used**: ID of the test performed
+
+-   **versus**: Description of what was compared
+
+```{r interpreting-results}
+result <- tab(data, labelledordinal, labelledcategorical,
+              statistic = "column_pct") %>%
+  add_sig()
+
+sig <- attr(result, "significance")
+
+# Check which cells are significantly different
+sig$levels
+
+# Get exact p-values
+sig$p_values
+
+# See test details
+cat("Test used:", sig$test_name, "\n")
+cat("Compared against:", sig$versus, "\n")
+```
+
+## Weighted Data
+
+When working with weighted data, surveydatar provides specialized weighted significance tests that properly account for the survey design:
+
+```{r weighted-sig}
+# Create example weights
+data$weight <- runif(nrow(data), 0.5, 2.0)
+
+# Weighted significance testing with specific weighted tests
+result_weighted <- tab(data, labelledordinal, labelledcategorical,
+                       weight = "weight",
+                       statistic = "column_pct") %>%
+  add_sig(test = "z_test_weighted")
+
+# For means with weighted data
+result_weighted_means <- tab(data, labelledcategorical, booleans,
+                            weight = "weight",
+                            statistic = "mean",
+                            values = "randomnumeric") %>%
+  add_sig(test = "t_test_weighted")
+```
+
+### Weighted vs. Unweighted Tests
+
+surveydatar provides both standard and weighted versions of significance tests:
+
+*Standard tests* (z_test_proportions, t_test): Use raw sample sizes but apply weights to calculate statistics Weighted tests (z_test_weighted, t_test_weighted): Use effective sample sizes that account for weight variation
+
+*Weighted tests* calculate effective sample sizes using the formula:
+
+$$n\_{eff} = \frac{(\sum w_i)^2}{\sum w_i^2}$$
+
+This accounts for the loss of precision due to weighting - heavily weighted observations contribute less to the effective sample size.
+
+```{r weighted_unweihgted}
+# Compare standard vs weighted tests
+result_standard <- tab(data, labelledordinal, labelledcategorical,
+                      weight = "weight",
+                      statistic = "column_pct") %>%
+  add_sig(test = "z_test_proportions", name = "standard")
+
+result_weighted <- result_standard %>%
+  add_sig(test = "z_test_weighted", name = "weighted")
+
+# Weighted tests typically have larger p-values (more conservative)
+attr(result_weighted, "significance")$standard$p_values
+attr(result_weighted, "significance")$weighted$p_values
+```
+
+*When to use weighted tests:*
+
+Survey data with design weights Data with high weight variation (CV of weights \> 0.3) When precise significance testing is critical
+
+*When standard tests may suffice:*
+
+Weights are fairly uniform Exploratory analysis where exact p-values are less critical Large sample sizes where effective sample size remains adequate
+
+## Creating Custom Significance Tests
+
+You can create custom tests for specialized needs:
+
+```{r custom-test}
+# Example: Test for practical significance (effect size)
+create_significance_test(
+  id = "practical_sig",
+  name = "Practical significance test",
+  description = "Tests if difference exceeds meaningful threshold",
+  processor = function(base_array, row_array, col_array_1, col_array_2,
+                       threshold = 0.1, ...) {
+    # Calculate proportions
+    n1 <- sum(base_array * row_array * col_array_1)
+    N1 <- sum(base_array * col_array_1)
+    n2 <- sum(base_array * row_array * col_array_2)
+    N2 <- sum(base_array * col_array_2)
+
+    if (N1 == 0 || N2 == 0) {
+      return(list(p_value = NA_real_, statistic = NA_real_))
+    }
+
+    p1 <- n1 / N1
+    p2 <- n2 / N2
+
+    # Check if absolute difference exceeds threshold
+    abs_diff <- abs(p2 - p1)
+    p_value <- if (abs_diff > threshold) 0 else 1
+
+    return(list(
+      p_value = p_value,
+      statistic = p2 - p1,
+      method = paste0("Practical significance (threshold = ", threshold, ")")
+    ))
+  }
+)
+
+# Use custom test
+result_custom <- tab(data, labelledordinal, labelledcategorical,
+                     statistic = "column_pct") %>%
+  add_sig(test = "practical_sig")
+```
+
+## Multiple Significance Tests
+
+You can add multiple significance tests to the same table by calling `add_sig()` multiple times with different names:
+
+```{r multiple-tests}
+result <- tab(data, labelledordinal, labelledcategorical,
+              statistic = "column_pct") %>%
+  add_sig(versus = "first_col", name = "vs_first") %>%
+  add_sig(versus = "last_col", name = "vs_last")
+
+# Access different test results
+attr(result, "significance")$vs_first
+attr(result, "significance")$vs_last
+```
+
+## Best Practices
+
+1.  **Choose the right test**: Match the test to your data type and distribution
+
+    -   Proportions → z-test
+    -   Means (normal) → t-test
+    -   Means (non-normal) → Mann-Whitney
+    -   Overall association → chi-square
+
+2.  **Consider sample sizes**: Small samples may require non-parametric tests or exact tests
+
+3.  **Adjust for multiple comparisons**: Use adjustment methods when making many comparisons
+
+4.  **Interpret holistically**: Statistical significance doesn't imply practical importance
+
+5.  **Report transparently**: Include test details, p-values, and adjustment methods
+
+## Performance Considerations
+
+Significance testing adds computational overhead: - Each cell requires a separate test calculation - Multiple comparison adjustments are applied after all tests - Large tables (many rows × columns) will take longer
+
+For very large analyses, consider: - Testing only key comparisons - Using less computationally intensive tests - Pre-filtering to relevant segments

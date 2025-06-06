@@ -5,7 +5,7 @@
 \alias{.tab_registry}
 \title{Internal registry for tab helpers and statistics}
 \format{
-An object of class \code{environment} of length 2.
+An object of class \code{environment} of length 3.
 }
 \usage{
 .tab_registry
