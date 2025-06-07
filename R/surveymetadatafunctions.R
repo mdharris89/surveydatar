@@ -825,7 +825,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   for(i in character_cols_to_initialize[!character_cols_to_initialize %in% names(temp_dpdict)]){
     temp_dpdict[[i]] <- NA_character_
   }
-  logical_cols_to_initialize <- c("singlevariablequestion", "dichotomousvariable", "has_value_labels", "multiresponse")
+  logical_cols_to_initialize <- c("singlevariablequestion", "dichotomouslabels", "has_value_labels", "has_multivariable_positive_values")
   for(i in logical_cols_to_initialize[!logical_cols_to_initialize %in% names(temp_dpdict)]){
     temp_dpdict[[i]] <- NA
   }
@@ -845,18 +845,18 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   # define variable metadata
   temp_dpdict$variable_class[variables_to_update] <- vapply(temp_dpdict$variable_names[variables_to_update], function(x) paste(class(temp_dat[[x]]), collapse = ", "), character(1))
   temp_dpdict$singlevariablequestion[variables_to_update] <- vapply(temp_dpdict$question_group[variables_to_update], function(x) sum(temp_dpdict$question_group == x) == 1, logical(1))
-  # counts value *labels*, rather than values, to determine whether a dichotomous variable, so e.g. if there are two value labels, for 'Selected' and for 'Not selected', even if no values correspond to 'Not selected' in reality, it will still be considered dichotomous
-  temp_dpdict$dichotomousvariable[variables_to_update] <- vapply(temp_dpdict$variable_names[variables_to_update], function(x) length(sjlabelled::get_labels(temp_dat[[x]])) == 2, logical(1))
+  # counts value *labels*, rather than values, so e.g. if there are two value labels, for 'Selected' and for 'Not selected', even if no values correspond to 'Not selected' in reality, it will still be considered dichotomous
+  temp_dpdict$dichotomouslabels[variables_to_update] <- vapply(temp_dpdict$variable_names[variables_to_update], function(x) length(sjlabelled::get_labels(temp_dat[[x]])) == 2, logical(1))
   temp_dpdict$has_value_labels[variables_to_update] <- vapply(temp_dpdict$value_labels[variables_to_update], function(x) !all(is.na(x)), logical(1))
 
-  # identifying multiresponse: for each variable in temp_dpdict, pass the question group, then check within all variables with the same question group in the dat. if more than 1 variable in the question group that has at least one value that is not 0 or NA, then it's a multiresponse.
+  # identifying has_multivariable_positive_values: for each variable in temp_dpdict, pass the question group, then check within all variables with the same question group in the dat. if more than 1 variable in the question group that has at least one value that is not 0 or NA, then it's has_multivariable_positive_values
   if(noisy >= 1){
-    print("Checking for multiresponse variables")
+    print("Checking for has_multivariable_positive_values variables")
     if(noisy >=2){start_time <- proc.time()}
   }
 
   for(i in seq_len(nrow(temp_dpdict[variables_to_update,]))){
-    if(noisy >= 2){print(paste0("Checking ", temp_dpdict$variable_names[variables_to_update][i], " for multiresponse"))}
+    if(noisy >= 2){print(paste0("Checking ", temp_dpdict$variable_names[variables_to_update][i], " for has_multivariable_positive_values"))}
 
     set_of_variable_names_in_question_group <- temp_dpdict$variable_names[temp_dpdict$question_group == temp_dpdict$question_group[i] & variables_to_update]
 
@@ -865,10 +865,10 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     count_within_question_group <- vapply(question_group_within_dat, function(x) any(!is.na(x) & x != 0), logical(1)) # within each variable in question group, check that there is at least one value that is not NA or 0
 
     if(sum(count_within_question_group) > 1){
-      temp_dpdict$multiresponse[temp_dpdict$variable_names %in% set_of_variable_names_in_question_group & variables_to_update] <- TRUE
+      temp_dpdict$has_multivariable_positive_values[temp_dpdict$variable_names %in% set_of_variable_names_in_question_group & variables_to_update] <- TRUE
       i <- i + length(set_of_variable_names_in_question_group)
     } else {
-      temp_dpdict$multiresponse[variables_to_update][i] <- FALSE
+      temp_dpdict$has_multivariable_positive_values[variables_to_update][i] <- FALSE
       i <- i + 1
     }
   }
@@ -878,11 +878,11 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   # define question_type based on metadata
   temp_dpdict$questiontype[variables_to_update] <- with(temp_dpdict[variables_to_update,], dplyr::case_when(
     variable_class == "character" ~ "text",
-    ((grepl("factor", variable_class) | grepl("logical", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == TRUE) & (multiresponse == FALSE)) ~ "categorical",
-    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == FALSE) & (dichotomousvariable == TRUE) & (multiresponse == TRUE)) ~ "multiresponse",
-    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == FALSE) & (dichotomousvariable == FALSE) & (multiresponse == TRUE)) ~ "categorical array",
+    ((grepl("factor", variable_class) | grepl("logical", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == TRUE) & (has_multivariable_positive_values == FALSE)) ~ "categorical",
+    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == FALSE) & (dichotomouslabels == TRUE)) ~ "multiresponse",
+    ((grepl("factor", variable_class) | has_value_labels == TRUE) & (singlevariablequestion == FALSE) & (dichotomouslabels == FALSE)) ~ "categorical array",
     ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (singlevariablequestion == TRUE)) ~ "numeric",
-    ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (multiresponse == TRUE) & (dichotomousvariable == FALSE | has_value_labels == FALSE)) ~ "multinumeric",
+    ((grepl("numeric", variable_class) | grepl("integer", variable_class) | grepl("double", variable_class)) & (singlevariablequestion == FALSE) & (dichotomouslabels == FALSE | has_value_labels == FALSE)) ~ "multinumeric",
     (grepl("POSIXct|POSIXt|Date", variable_class)) ~ "date",
     variable_class == "difftime" ~ "difftime",
     .default = NA
