@@ -1,6 +1,3 @@
-# ! TO DOs:
-# - Allow for no row parameter if a value is given (calculate value on total sample)
-
 #' Create cross-tabulation tables with flexible formula syntax
 #'
 #' @param data Data frame or survey_data object
@@ -34,6 +31,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
                 show_column_net = TRUE, show_column_total = TRUE,
+                prefix_variable_label = TRUE,
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
                 ...) {
 
@@ -342,7 +340,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Expand variables for rows
   rows_expanded <- list()
   for (row_spec in rows_parsed) {
-    expanded <- expand_variables(row_spec, data, dpdict, statistic_id)
+    expanded <- expand_variables(row_spec, data, dpdict, statistic_id, values_var = NULL, prefix_variable_label)
     for (exp in expanded) {
       # Only set group_label if we're dealing with rows_list (multiple named specs)
       if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
@@ -357,7 +355,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   if (!is.null(cols_parsed)) {
     cols_expanded <- list()
     for (col_spec in cols_parsed) {
-      expanded <- expand_variables(col_spec, data, dpdict, statistic_id)
+      expanded <- expand_variables(col_spec, data, dpdict, statistic_id, values_var = NULL, prefix_variable_label)
       cols_expanded <- append(cols_expanded, expanded)
     }
   } else {
@@ -951,6 +949,43 @@ get_var_label <- function(var_name, dpdict = NULL) {
   return(var_name)
 }
 
+#' Get display label based on prefix_variable_label setting
+#' @param var_name Variable name
+#' @param dpdict Data dictionary
+#' @param prefix_variable_label Whether to include variable prefix
+#' @param category_name Category name for expanded variables (NULL for non-expanded)
+#' @keywords internal
+get_display_label <- function(var_name, dpdict = NULL, prefix_variable_label = TRUE, category_name = NULL) {
+  if (prefix_variable_label) {
+    base_label <- get_var_label(var_name, dpdict)
+    if (!is.null(category_name)) {
+      return(paste0(base_label, ": ", category_name))
+    } else {
+      return(base_label)
+    }
+  } else {
+    if (!is.null(category_name)) {
+      # For expanded variables, just return the category name
+      return(category_name)
+    } else {
+      # For non-expanded variables, try to extract suffix
+      full_label <- get_var_label(var_name, dpdict)
+      separators <- c(" - ", ": ", " | ", " / ")
+
+      for (sep in separators) {
+        if (grepl(sep, full_label, fixed = TRUE)) {
+          parts <- strsplit(full_label, sep, fixed = TRUE)[[1]]
+          if (length(parts) > 1) {
+            return(trimws(parts[length(parts)]))
+          }
+        }
+      }
+
+      # If no separator found, return full label
+      return(full_label)
+    }
+  }
+}
 
 #' Expand variables and question groups into individual components
 #'
@@ -960,7 +995,7 @@ get_var_label <- function(var_name, dpdict = NULL) {
 #' @param statistic_id The ID of the statistic being calculated
 #' @return List of expanded variable specifications
 #' @keywords internal
-expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL, values_var = NULL) {
+expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL, values_var = NULL, prefix_variable_label = TRUE) {
   # Handle complex expressions by recursively expanding components
   if (is.list(var_spec) && !is.null(var_spec$type)) {
 
@@ -1008,7 +1043,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
       # Recursively expand each variable found in the question group
       all_expanded <- list()
       for (v in exact_match_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic_id)
+        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, prefix_variable_label)
         all_expanded <- append(all_expanded, expanded)
       }
       return(all_expanded)
@@ -1021,7 +1056,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
       # Recursively expand each variable found in the matching groups
       all_expanded <- list()
       for (v in group_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic_id)
+        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, prefix_variable_label)
         all_expanded <- append(all_expanded, expanded)
       }
       return(all_expanded)
@@ -1052,16 +1087,16 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
             list(
               type = "expression",
               components = list(expr = call("==", as.name(var_name), labels[i])),
-              label = paste0(get_var_label(var_name, dpdict), ": ", names(labels)[i])
+              label = get_display_label(var_name, dpdict, prefix_variable_label, names(labels)[i])
             )
           }))
         } else if (is.factor(var_data)) {
           levs <- levels(var_data)
-          return(lapply(levs, function(lev) {
+          return(lapply(seq_along(labels), function(i) {
             list(
               type = "expression",
-              components = list(expr = call("==", as.name(var_name), lev)),
-              label = paste0(get_var_label(var_name, dpdict), ": ", lev)
+              components = list(expr = call("==", as.name(var_name), labels[i])),
+              label = get_display_label(var_name, dpdict, prefix_variable_label, names(labels)[i])
             )
           }))
         } else {
@@ -1069,7 +1104,15 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         }
       } else if (questiontype %in% c("multiresponse", "numeric", "multinumeric")) {
         # Don't expand - return as single variable
-        return(list(var_spec))
+        if (is.character(var_spec)) {
+          return(list(list(
+            type = "simple",
+            components = list(var = var_spec),
+            label = get_display_label(var_spec, dpdict, prefix_variable_label)
+          )))
+        } else {
+          return(list(var_spec))
+        }
       } else if (questiontype == "text") {
         stop("Cannot use text variable '", var_name, "' in cross-tabulation")
       }
@@ -1083,7 +1126,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         list(
           type = "expression",
           components = list(expr = call("==", as.name(var_name), labels[i])),
-          label = paste0(get_var_label(var_name, dpdict), ": ", names(labels)[i])
+          label = get_display_label(var_name, dpdict, prefix_variable_label, names(labels)[i])
         )
       }))
     }
@@ -1095,19 +1138,35 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         list(
           type = "expression",
           components = list(expr = call("==", as.name(var_name), lev)),
-          label = paste0(get_var_label(var_name, dpdict), ": ", lev)
+          label = get_display_label(var_name, dpdict, prefix_variable_label, names(labels)[i])
         )
       }))
     }
 
     # Check if it's logical (treat as binary, don't expand)
     if (is.logical(var_data)) {
-      return(list(var_spec))
+      if (is.character(var_spec)) {
+        return(list(list(
+          type = "simple",
+          components = list(var = var_spec),
+          label = get_display_label(var_spec, dpdict, prefix_variable_label)
+        )))
+      } else {
+        return(list(var_spec))
+      }
     }
 
     # Check if it's numeric (don't expand)
     if (is.numeric(var_data)) {
-      return(list(var_spec))
+      if (is.character(var_spec)) {
+        return(list(list(
+          type = "simple",
+          components = list(var = var_spec),
+          label = get_display_label(var_spec, dpdict, prefix_variable_label)
+        )))
+      } else {
+        return(list(var_spec))
+      }
     }
 
     # Character variables should error
@@ -1117,7 +1176,15 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
   }
 
   # Default: return as single variable
-  return(list(var_spec))
+  if (is.character(var_spec)) {
+    return(list(list(
+      type = "simple",
+      components = list(var = var_spec),
+      label = get_display_label(var_spec, dpdict, prefix_variable_label)
+    )))
+  } else {
+    return(list(var_spec))
+  }
 }
 
 #' Convert formula specification to numeric array

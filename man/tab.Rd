@@ -6,7 +6,7 @@
 \usage{
 tab(
   data,
-  rows,
+  rows = NULL,
   cols = NULL,
   filter = NULL,
   weight = NULL,
@@ -14,6 +14,7 @@ tab(
   values = NULL,
   show_column_net = TRUE,
   show_column_total = TRUE,
+  prefix_variable_label = TRUE,
   helpers = NULL,
   stats = NULL,
   resolve_report = FALSE,

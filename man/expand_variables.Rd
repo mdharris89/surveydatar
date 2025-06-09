@@ -9,7 +9,8 @@ expand_variables(
   data,
   dpdict = NULL,
   statistic_id = NULL,
-  values_var = NULL
+  values_var = NULL,
+  prefix_variable_label = TRUE
 )
 }
 \arguments{
