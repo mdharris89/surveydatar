@@ -1000,14 +1000,31 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
     var_name <- as.character(var_spec)
   }
 
-  # Check if it's a question group in dpdict (existing logic)
+  # Check if it's a question group in dpdict
   if (!is.null(dpdict) && "question_group" %in% names(dpdict) && !var_name %in% names(data)) {
+    # First try exact match to question group name
+    exact_match_vars <- dpdict$variable_names[dpdict$question_group == var_name]
+    if (length(exact_match_vars) > 0) {
+      # Recursively expand each variable found in the question group
+      all_expanded <- list()
+      for (v in exact_match_vars) {
+        expanded <- expand_variables(v, data, dpdict, statistic_id)
+        all_expanded <- append(all_expanded, expanded)
+      }
+      return(all_expanded)
+    }
+
+    # Then try pattern match (existing logic for backward compatibility)
     matching_groups <- unique(dpdict$question_group[grepl(paste0("^", var_name, "_"), dpdict$question_group)])
     if (length(matching_groups) > 0) {
       group_vars <- dpdict$variable_names[dpdict$question_group %in% matching_groups]
-      return(lapply(group_vars, function(v) {
-        list(type = "simple", components = list(var = v), label = get_var_label(v, dpdict))
-      }))
+      # Recursively expand each variable found in the matching groups
+      all_expanded <- list()
+      for (v in group_vars) {
+        expanded <- expand_variables(v, data, dpdict, statistic_id)
+        all_expanded <- append(all_expanded, expanded)
+      }
+      return(all_expanded)
     }
   }
 
