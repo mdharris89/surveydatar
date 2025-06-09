@@ -413,7 +413,18 @@ tab_to_flourish <- function(tab_result,
   widget
 }
 
-
+#' Create data bindings for Flourish charts
+#'
+#' Creates appropriate column bindings based on chart type and data format.
+#' This is a simple helper function that provides generic heuristics for
+#' binding data columns to chart aesthetics.
+#'
+#' @param chart_type Character string specifying the Flourish chart type
+#' @param data Data frame to create bindings for
+#' @param long Logical indicating whether data is in long format (default TRUE)
+#'
+#' @return Named list of column bindings suitable for Flourish charts
+#' @keywords internal
 .make_bindings <- function(chart_type, data, long = TRUE) {
   # For Sprint 1 we implement just a generic heuristic; user can override later.
   if (long) {
@@ -468,6 +479,32 @@ print.flourish_tab <- function(x, n = 10, ...) {
   invisible(x)
 }
 
+#' Preview a flourish_tab object in the browser
+#'
+#' Creates an interactive Flourish chart from a flourish_tab object and displays
+#' it in the browser. Requires a Flourish API key and the flourishcharts package.
+#'
+#' @param x A flourish_tab object created by \code{\link{tab_to_flourish}}
+#' @param chart_type Optional chart type to override the one in the flourish_tab object
+#' @param api_key Flourish API key. Defaults to FLOURISH_API_KEY environment variable
+#' @param viewer Function to use for displaying the chart. Defaults to getOption("viewer")
+#'   or utils::browseURL if not available
+#' @param ... Additional arguments passed to htmlwidgets::saveWidget()
+#'
+#' @return Invisibly returns the Flourish widget object
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Set your Flourish API key
+#' Sys.setenv(FLOURISH_API_KEY = "your_api_key_here")
+#'
+#' # Create and preview a chart
+#' data %>%
+#'   tab(satisfaction, region) %>%
+#'   tab_to_flourish() %>%
+#'   preview_flourish()
+#' }
 preview_flourish <- function(x,
                              chart_type = NULL,
                              api_key    = Sys.getenv("FLOURISH_API_KEY"),
