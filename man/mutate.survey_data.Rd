@@ -4,7 +4,8 @@
 \alias{mutate.survey_data}
 \title{Adds or modifies columns in the survey data, automatically updating metadata for new variables
 using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
-Supports custom variable labels using the realiselabelled_vec() function.}
+Supports custom variable labels using the realiselabelled_vec() function.
+Automatically preserves value labels for appropriate transformations.}
 \usage{
 \method{mutate}{survey_data}(.data, ...)
 }
@@ -13,6 +14,16 @@ Supports custom variable labels using the realiselabelled_vec() function.}
 
 \item{...}{Mutation expressions passed to dplyr::mutate. Variable labels can be specified
 using realiselabelled_vec(expr, variable_label="label").}
+
+\item{new_dat}{The mutated data}
+
+\item{original_dat}{The original data before mutation}
+
+\item{original_value_labels}{List of original value labels}
+
+\item{dots}{The mutation expressions}
+
+\item{modified_vars}{Names of variables being modified}
 }
 \value{
 A new survey_data object with mutated data and updated metadata.
@@ -21,14 +32,38 @@ A new survey_data object with mutated data and updated metadata.
 Adds or modifies columns in the survey data, automatically updating metadata for new variables
 using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
 Supports custom variable labels using the realiselabelled_vec() function.
+Automatically preserves value labels for appropriate transformations.
 }
 \examples{
 # Add a new variable with a custom label
 survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
 survey_obj \%>\%
-  dplyr::mutate(new_var = realiselabelled_vec(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
+  dplyr::mutate(new_var = realiselabelled_vec(uid + uid, variable_label = "uid squared"))
 
-# Modify an existing variable with a new label
+# Simple assignment preserves value labels automatically
 survey_obj \%>\%
-  dplyr::mutate(uid = realiselabelled_vec(uid * 2, "uid doubled"))
+  dplyr::mutate(csat_copy = csat)  # Value labels preserved
+
+# Mathematical operations don't preserve value labels (usually inappropriate)
+survey_obj \%>\%
+  dplyr::mutate(uid_doubled = uid * 2)  # No value labels preserved
+Preserve value labels after mutation operations
 }
+\keyword{Determine}
+\keyword{Extract}
+\keyword{a}
+\keyword{be}
+\keyword{expressions}
+\keyword{for}
+\keyword{from}
+\keyword{if}
+\keyword{internal}
+\keyword{labels}
+\keyword{mutation}
+\keyword{name}
+\keyword{preserved}
+\keyword{should}
+\keyword{simple}
+\keyword{source}
+\keyword{value}
+\keyword{variable}

@@ -2986,6 +2986,7 @@ select.survey_data <- function(.data, ...) {
 #' Adds or modifies columns in the survey data, automatically updating metadata for new variables
 #' using update_dict_with_metadata. Also preserves appropriate metadata for modified variables.
 #' Supports custom variable labels using the realiselabelled_vec() function.
+#' Automatically preserves value labels for appropriate transformations.
 #'
 #' @param .data A survey_data object.
 #' @param ... Mutation expressions passed to dplyr::mutate. Variable labels can be specified
@@ -2998,11 +2999,15 @@ select.survey_data <- function(.data, ...) {
 #' # Add a new variable with a custom label
 #' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
 #' survey_obj %>%
-#'   dplyr::mutate(new_var = realiselabelled_vec(survey_obj$dat$uid + survey_obj$dat$uid, "uid squared"))
+#'   dplyr::mutate(new_var = realiselabelled_vec(uid + uid, variable_label = "uid squared"))
 #'
-#' # Modify an existing variable with a new label
+#' # Simple assignment preserves value labels automatically
 #' survey_obj %>%
-#'   dplyr::mutate(uid = realiselabelled_vec(uid * 2, "uid doubled"))
+#'   dplyr::mutate(csat_copy = csat)  # Value labels preserved
+#'
+#' # Mathematical operations don't preserve value labels (usually inappropriate)
+#' survey_obj %>%
+#'   dplyr::mutate(uid_doubled = uid * 2)  # No value labels preserved
 mutate.survey_data <- function(.data, ...) {
   if (!is.survey_data(.data)) {
     stop("'.data' must be a survey_data object")
@@ -3016,8 +3021,123 @@ mutate.survey_data <- function(.data, ...) {
   original_names <- names(.data$dat)
   original_dat <- .data$dat
 
+  # Store value labels from original variables before mutation
+  original_value_labels <- lapply(original_dat, function(x) attr(x, "labels"))
+
+  #' Preserve value labels after mutation operations
+  #' @param new_dat The mutated data
+  #' @param original_dat The original data before mutation
+  #' @param original_value_labels List of original value labels
+  #' @param dots The mutation expressions
+  #' @param modified_vars Names of variables being modified
+  #' @keywords internal
+  preserve_value_labels_after_mutation <- function(new_dat, original_dat, original_value_labels, dots, modified_vars) {
+
+    for (var_name in modified_vars) {
+      # Skip if variable doesn't exist in new_dat
+      if (!var_name %in% names(new_dat)) next
+
+      # Get the mutation expression for this variable
+      expr <- dots[[var_name]]
+      expr_text <- rlang::as_label(expr)
+
+      # Check if this is a realiselabelled_vec call - if so, let it handle its own labeling
+      if (grepl("realiselabelled_vec", expr_text)) {
+        next
+      }
+
+      # Determine if we should preserve value labels based on the expression
+      should_preserve <- should_preserve_value_labels(expr, expr_text, var_name, original_dat)
+
+      if (should_preserve) {
+        # For existing variables, try to preserve their original value labels
+        if (var_name %in% names(original_dat)) {
+          original_labels <- original_value_labels[[var_name]]
+          if (!is.null(original_labels) && length(original_labels) > 0) {
+            attr(new_dat[[var_name]], "labels") <- original_labels
+          }
+        } else {
+          # For new variables, try to inherit from source variable if it's a simple copy
+          source_var <- extract_source_variable(expr)
+          if (!is.null(source_var) && source_var %in% names(original_dat)) {
+            source_labels <- original_value_labels[[source_var]]
+            if (!is.null(source_labels) && length(source_labels) > 0) {
+              attr(new_dat[[var_name]], "labels") <- source_labels
+            }
+          }
+        }
+      }
+    }
+
+    return(new_dat)
+  }
+
+  #' Determine if value labels should be preserved for a mutation
+  #' @keywords internal
+  should_preserve_value_labels <- function(expr, expr_text, var_name, original_dat) {
+
+    # Simple variable assignment (e.g., new_var = old_var)
+    if (rlang::is_symbol(rlang::quo_get_expr(expr))) {
+      return(TRUE)
+    }
+
+    # Simple transformations that don't change the meaning of categories
+    # e.g., factor level reordering, but not mathematical operations
+    if (rlang::is_call(rlang::quo_get_expr(expr))) {
+      call_name <- as.character(rlang::quo_get_expr(expr)[[1]])
+
+      # Functions that typically preserve categorical meaning
+      preserving_functions <- c("factor", "as.factor", "relevel", "reorder",
+                                "forcats::fct_relevel", "forcats::fct_reorder",
+                                "sjlabelled::as_factor", "sjlabelled::set_label")
+
+      if (call_name %in% preserving_functions) {
+        return(TRUE)
+      }
+
+      # Mathematical operations typically invalidate categorical labels
+      math_functions <- c("+", "-", "*", "/", "^", "%%", "%/%", "log", "sqrt", "abs")
+      if (call_name %in% math_functions) {
+        return(FALSE)
+      }
+    }
+
+    # For conditional operations (ifelse, case_when), be conservative
+    if (grepl("ifelse|case_when", expr_text)) {
+      return(FALSE)
+    }
+
+    # Default to not preserving for safety
+    return(FALSE)
+  }
+
+  #' Extract source variable name from simple expressions
+  #' @keywords internal
+  extract_source_variable <- function(expr) {
+    expr_obj <- rlang::quo_get_expr(expr)
+
+    # Simple symbol (variable name)
+    if (rlang::is_symbol(expr_obj)) {
+      return(as.character(expr_obj))
+    }
+
+    # Simple function call with one argument that's a variable
+    if (rlang::is_call(expr_obj) && length(expr_obj) == 2) {
+      arg <- expr_obj[[2]]
+      if (rlang::is_symbol(arg)) {
+        return(as.character(arg))
+      }
+    }
+
+    return(NULL)
+  }
+
   # Perform the mutation
   new_dat <- dplyr::mutate(original_dat, ...)
+
+  # Attempt to preserve value labels for appropriate variables
+  new_dat <- preserve_value_labels_after_mutation(new_dat, original_dat, original_value_labels, dots, modified_vars)
+
   new_names <- names(new_dat)
 
   # Identify new variables (not in original dataset)

@@ -911,3 +911,49 @@ append_oe_to_oe_duplicates <- function(temp_dat, temp_dpdict){
 #' @export
 #' @name %||%
 `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+
+#' Find and replace in variable labels.
+#' @param df A dataframe with variables that may have `label` attributes.
+#' @param string_to_find Character vector of strings to find in labels.
+#' @param string_to_replace_with Single string to replace matches with.
+#' @param trimws_at_end Logical. Whether to trim whitespace after replacement.
+#' @param ignore.case Logical. Whether to ignore case when matching.
+#' @param perl Logical. Whether to use Perl-compatible regular expressions.
+#' @param fixed Logical. Whether to treat patterns as fixed strings.
+#' @param useBytes Logical. Whether to use byte-wise matching.
+#' @return A dataframe with updated `label` attributes
+#' @examples
+#' df <- data.frame(a = 1:3)
+#' attr(df$a, "label") <- "Example   label   with   spaces"
+#' df <- find_and_replace_in_var_labels(df, " {2,}", " ")
+#' attr(df$a, "label")  # "Example label with spaces"
+#' @export
+find_and_replace_in_var_labels <- function(df, string_to_find, string_to_replace_with,
+                                           trimws_at_end = FALSE, ignore.case = FALSE,
+                                           perl = FALSE, fixed = FALSE, useBytes = FALSE) {
+
+  # Extract all labels at once
+  all_labels <- vapply(df, function(x) {
+    lbl <- attr(x, "label")
+    if (is.null(lbl)) NA_character_ else lbl
+  }, character(1))
+
+  # Find which variables have labels
+  has_labels <- !is.na(all_labels)
+
+  if (any(has_labels)) {
+    # Apply any_gsub to all labels at once
+    new_labels <- any_gsub(string_to_find, string_to_replace_with, all_labels[has_labels],
+                           trimws_at_end = trimws_at_end, ignore.case = ignore.case,
+                           perl = perl, fixed = fixed, useBytes = useBytes)
+
+    # Reassign updated labels
+    var_names_with_labels <- names(df)[has_labels]
+    for (i in seq_along(var_names_with_labels)) {
+      attr(df[[var_names_with_labels[i]]], "label") <- new_labels[i]
+    }
+  }
+
+  return(df)
+}

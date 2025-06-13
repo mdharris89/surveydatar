@@ -6,7 +6,7 @@
 \usage{
 tab(
   data,
-  rows = NULL,
+  rows,
   cols = NULL,
   filter = NULL,
   weight = NULL,
