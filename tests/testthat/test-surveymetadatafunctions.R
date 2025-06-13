@@ -994,3 +994,38 @@ test_that("mutate preserves value labels from spliced variables", {
   expect_equal(result$dpdict$variable_labels[result$dpdict$variable_names == "new_var1"], "New Variable 1")
   expect_equal(result$dpdict$variable_labels[result$dpdict$variable_names == "new_var2"], "New Variable 2")
 })
+
+
+test_that("mutate updates dpdict when transforming existing labeled variables", {
+  # Create initial survey data with labeled variables
+  dat <- get_minimal_labelled_test_dat(50)
+  survey_obj <- create_survey_data(dat)
+
+  # Verify original csat has value labels in both data and dpdict
+  original_csat_labels <- sjlabelled::get_labels(survey_obj$dat$csat, attr.only = TRUE, values = "as.name")
+  csat_idx <- which(survey_obj$dpdict$variable_names == "csat")
+  original_dpdict_labels <- survey_obj$dpdict$value_labels[[csat_idx]]
+
+  expect_false(all(is.na(original_csat_labels)))
+  expect_false(all(is.na(original_dpdict_labels)))
+
+  # Use mutate to create a copy of csat (simple assignment that should preserve labels)
+  survey_obj <- survey_obj %>%
+    dplyr::mutate(csat_copy = csat)  # Simple assignment should preserve labels
+
+  # Check that value labels are preserved in the data
+  copy_labels_in_data <- sjlabelled::get_labels(survey_obj$dat$csat_copy, attr.only = TRUE, values = "as.name")
+  expect_false(all(is.na(copy_labels_in_data)))
+  expect_equal(copy_labels_in_data, original_csat_labels)
+
+  # Check that value labels are captured in dpdict
+  copy_idx <- which(survey_obj$dpdict$variable_names == "csat_copy")
+  copy_labels_in_dpdict <- survey_obj$dpdict$value_labels[[copy_idx]]
+
+  expect_false(all(is.na(copy_labels_in_dpdict)))
+  expect_equal(copy_labels_in_dpdict, copy_labels_in_data)
+
+  # Check that has_value_labels is TRUE
+  expect_true(survey_obj$dpdict$has_value_labels[copy_idx])
+})
+

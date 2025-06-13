@@ -54,7 +54,7 @@ my_view <- function(x, title = deparse(substitute(x))) {
       exists("View", envir = as.environment("tools:rstudio"))) {
     get("View", envir = as.environment("tools:rstudio"))(x, title)
   } else {
-    my_view(x, title)
+    utils::View(x, title)
   }
 }
 
@@ -96,7 +96,7 @@ datamap.survey_data <- function(x, view_or_return = "view") {
                        "value labels", "first values", "first unique values")]
 
   if (view_or_return == "view") {
-    View(result, paste0("datamap ", deparse(substitute(x))))
+    my_view(result, paste0("datamap ", deparse(substitute(x))))
   } else {
     return(result)
   }
@@ -3284,6 +3284,9 @@ mutate.survey_data <- function(.data, ...) {
     vars_to_update[temp_dpdict$variable_names == var] <- TRUE
   }
 
+  # update dpdict with any label changes
+  temp_dpdict <- update_dict(new_dat, temp_dpdict)
+
   # Update metadata for new and changed variables
   if (any(vars_to_update)) {
     updated_dpdict <- update_dict_with_metadata(
@@ -3480,4 +3483,63 @@ labelled_case_when <- function(..., .variable_label = NULL) {
   attr(result_labelled, "label") <- .variable_label
 
   return(result_labelled)
+}
+
+
+#' Update dpdict to sync with data changes
+#'
+#' Handles structural changes between data and dpdict including new variables,
+#' changed variable labels, and changed value labels. Focuses on synchronization
+#' rather than label preservation logic.
+#'
+#' @param temp_dat Data frame
+#' @param temp_dpdict Data dictionary
+#' @return Updated dpdict with structural changes synced
+#' @export
+update_dict <- function(temp_dat, temp_dpdict) {
+
+  if (!is.data.frame(temp_dat) || !is.data.frame(temp_dpdict)) {
+    stop("Both temp_dat and temp_dpdict must be data frames")
+  }
+
+  original_names <- temp_dpdict$variable_names
+  new_names <- names(temp_dat)
+  existing_vars <- intersect(original_names, new_names)
+
+  # Check for changed variable labels in existing variables
+  if (length(existing_vars) > 0) {
+    for (var in existing_vars) {
+      current_label_in_data <- sjlabelled::get_label(temp_dat[[var]], def.value = var)
+      current_label_in_dpdict <- temp_dpdict$variable_labels[temp_dpdict$variable_names == var]
+
+      if (!is.null(current_label_in_data) && !is.na(current_label_in_data) &&
+          current_label_in_data != current_label_in_dpdict) {
+        warning("Variable label changed for '", var, "': '", current_label_in_dpdict,
+                "' -> '", current_label_in_data, "'")
+        temp_dpdict$variable_labels[temp_dpdict$variable_names == var] <- current_label_in_data
+      }
+    }
+
+    # Check for changed value labels
+    for (var in existing_vars) {
+      current_labels_in_data <- sjlabelled::get_labels(temp_dat[[var]], attr.only = TRUE, values = "as.name")
+      if (is.null(current_labels_in_data)) current_labels_in_data <- NA
+
+      current_labels_in_dpdict <- temp_dpdict$value_labels[temp_dpdict$variable_names == var][[1]]
+
+      # Compare labels (accounting for NA)
+      if (!identical(current_labels_in_data, current_labels_in_dpdict)) {
+        if (all(is.na(current_labels_in_dpdict)) && !all(is.na(current_labels_in_data))) {
+          warning("Value labels added for '", var, "'")
+        } else if (!all(is.na(current_labels_in_dpdict)) && all(is.na(current_labels_in_data))) {
+          warning("Value labels removed for '", var, "'")
+        } else if (!all(is.na(current_labels_in_dpdict)) && !all(is.na(current_labels_in_data))) {
+          warning("Value labels changed for '", var, "'")
+        }
+        temp_dpdict$value_labels[temp_dpdict$variable_names == var] <- list(current_labels_in_data)
+      }
+    }
+  }
+
+  return(temp_dpdict)
 }
