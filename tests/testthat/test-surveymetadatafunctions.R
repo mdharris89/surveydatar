@@ -941,3 +941,56 @@ test_that("mutate.survey_data works", {
   expect_equal(sjlabelled::get_label(multi_obj$dat$new_var1), "Double CSAT")
   expect_equal(sjlabelled::get_label(multi_obj$dat$new_var2), "NPS response (1)")  # Default label
 })
+
+# Test: Value labels preserved with !!!-spliced variables
+test_that("mutate preserves value labels from spliced variables", {
+
+  # Create original survey data
+  original_dat <- data.frame(
+    id = 1:3,
+    existing_var = c(1, 2, 1)
+  )
+  attr(original_dat$existing_var, "label") <- "Existing Variable"
+  attr(original_dat$existing_var, "labels") <- c("No" = 1, "Yes" = 2)
+
+  survey_obj <- create_survey_data(original_dat)
+
+  # Create a named list with value labels (like a1a_wide)
+  new_vars_list <- list(
+    new_var1 = c(2, 1, 2),
+    new_var2 = c(1, 1, 2)
+  )
+
+  # Add value labels to the new variables
+  attr(new_vars_list$new_var1, "label") <- "New Variable 1"
+  attr(new_vars_list$new_var1, "labels") <- c("Low" = 1, "High" = 2)
+
+  attr(new_vars_list$new_var2, "label") <- "New Variable 2"
+  attr(new_vars_list$new_var2, "labels") <- c("Bad" = 1, "Good" = 2)
+
+  # Test the mutation with splicing
+  result <- survey_obj %>%
+    mutate(!!!new_vars_list)
+
+  # Check that new variables exist
+  expect_true("new_var1" %in% names(result$dat))
+  expect_true("new_var2" %in% names(result$dat))
+
+  # Check that value labels are preserved
+  expect_equal(attr(result$dat$new_var1, "labels"), c("Low" = 1, "High" = 2))
+  expect_equal(attr(result$dat$new_var2, "labels"), c("Bad" = 1, "Good" = 2))
+
+  # Check that variable labels are preserved
+  expect_equal(attr(result$dat$new_var1, "label"), "New Variable 1")
+  expect_equal(attr(result$dat$new_var2, "label"), "New Variable 2")
+
+  # Check that original variable labels are still intact
+  expect_equal(attr(result$dat$existing_var, "labels"), c("No" = 1, "Yes" = 2))
+  expect_equal(attr(result$dat$existing_var, "label"), "Existing Variable")
+
+  # Check that dpdict is updated correctly
+  expect_true("new_var1" %in% result$dpdict$variable_names)
+  expect_true("new_var2" %in% result$dpdict$variable_names)
+  expect_equal(result$dpdict$variable_labels[result$dpdict$variable_names == "new_var1"], "New Variable 1")
+  expect_equal(result$dpdict$variable_labels[result$dpdict$variable_names == "new_var2"], "New Variable 2")
+})

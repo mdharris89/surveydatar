@@ -3024,6 +3024,27 @@ mutate.survey_data <- function(.data, ...) {
   # Store value labels from original variables before mutation
   original_value_labels <- lapply(original_dat, function(x) attr(x, "labels"))
 
+  spliced_value_labels <- list()
+  for (i in seq_along(dots)) {
+    if (names(dots)[i] == "" || is.null(names(dots)[i])) {
+      # This might be a spliced expression
+      tryCatch({
+        evaluated <- rlang::eval_tidy(dots[[i]], original_dat)
+        if (is.list(evaluated) && !is.null(names(evaluated))) {
+          # It's a named list (like a1a_wide) - capture value labels
+          for (var_name in names(evaluated)) {
+            var_value <- evaluated[[var_name]]
+            if (!is.null(attr(var_value, "labels"))) {
+              spliced_value_labels[[var_name]] <- attr(var_value, "labels")
+            }
+          }
+        }
+      }, error = function(e) {
+        # Ignore evaluation errors
+      })
+    }
+  }
+
   #' Preserve value labels after mutation operations
   #' @param new_dat The mutated data
   #' @param original_dat The original data before mutation
@@ -3137,6 +3158,13 @@ mutate.survey_data <- function(.data, ...) {
 
   # Attempt to preserve value labels for appropriate variables
   new_dat <- preserve_value_labels_after_mutation(new_dat, original_dat, original_value_labels, dots, modified_vars)
+
+  # Restore value labels from spliced variables
+  for (var_name in names(spliced_value_labels)) {
+    if (var_name %in% names(new_dat)) {
+      attr(new_dat[[var_name]], "labels") <- spliced_value_labels[[var_name]]
+    }
+  }
 
   new_names <- names(new_dat)
 
