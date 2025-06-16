@@ -69,145 +69,275 @@ test_that("update_aliases works", {
   expect_error(update_aliases(temp_dpdict, invalid_questions_dict), "Invalid questions_dict")
 })
 
-test_that("validate_variable_names works", {
-  # Valid cases
-  expect_true(validate_variable_names(c("q1", "Q1", "SC1_1", "satisfaction_1", "SC1a_1", "SC1_1oe"), warn_only = TRUE))
-  expect_true(validate_variable_names("validName", warn_only = TRUE))
 
-  # Invalid cases
-  expect_warning(validate_variable_names("1invalid", warn_only = TRUE), "invalid variable names: 1invalid")
-  expect_warning(validate_variable_names("invalid_a", warn_only = TRUE), "invalid variable names: invalid_a") # Underscore not followed by number
-  expect_warning(validate_variable_names("invalid-char", warn_only = TRUE), "invalid variable names: invalid-char")
-  expect_warning(validate_variable_names("invalid.char", warn_only = TRUE), "invalid variable names: invalid.char")
-  expect_warning(validate_variable_names(c("valid", "1invalid", "ok_1", "bad_a"), warn_only = TRUE), "Found 2 invalid variable names: 1invalid, bad_a")
+test_that("validate_dat_dpdict_alignment provides detailed error messages", {
 
-  # Test error instead of warning
-  expect_error(validate_variable_names("1invalid", warn_only = FALSE))
+  # Test 1: Dimension mismatch
+  test_dat <- data.frame(a = 1:3, b = 4:6, c = 7:9)
+  test_dpdict <- data.frame(
+    variable_names = c("a", "b"),
+    variable_labels = c("Variable A", "Variable B")
+  )
+
+  expect_error(
+    validate_dat_dpdict_alignment(test_dat, test_dpdict),
+    "DIMENSION_MISMATCH.*Expected: dpdict should have one row per dat column \\(3 rows\\).*Actual: dpdict has 2 rows",
+    class = "simpleError"
+  )
+
+  # Test 2: Missing required columns
+  test_dpdict_missing_cols <- data.frame(
+    var_names = c("a", "b", "c"),  # Wrong column name
+    some_other_col = c("x", "y", "z")
+  )
+
+  expect_error(
+    validate_dat_dpdict_alignment(test_dat, test_dpdict_missing_cols),
+    "MISSING_REQUIRED_COLUMNS.*Expected: dpdict must contain columns: variable_names, variable_labels.*Missing columns: variable_names, variable_labels",
+    class = "simpleError"
+  )
+
+  # Test 3: Variable names mismatch with detailed positioning
+  test_dpdict_name_mismatch <- data.frame(
+    variable_names = c("x", "b", "z"),  # 'a' and 'c' don't match
+    variable_labels = c("Variable X", "Variable B", "Variable Z")
+  )
+
+  expect_error(
+    validate_dat_dpdict_alignment(test_dat, test_dpdict_name_mismatch),
+    "VARIABLE_NAMES_MISMATCH.*Variables in dat but not in dpdict\\$variable_names.*\\[1\\] 'a'.*\\[3\\] 'c'.*Variables in dpdict\\$variable_names but not in dat.*\\[1\\] 'x'.*\\[3\\] 'z'",
+    class = "simpleError"
+  )
+
+  # Test 4: Variable names found in old_variable_names with helpful suggestions
+  test_dpdict_with_old <- data.frame(
+    variable_names = c("new_a", "new_b", "new_c"),
+    variable_labels = c("Variable A", "Variable B", "Variable C"),
+    old_variable_names = c("a", "b", "c")  # Original names match dat
+  )
+
+  error_msg <- expect_error(
+    validate_dat_dpdict_alignment(test_dat, test_dpdict_with_old),
+    "VARIABLE_NAMES_MISMATCH.*Variables found in dpdict\\$old_variable_names.*'a' -> should be 'new_a' \\(dpdict row 1\\).*Consider running update_dat_from_dpdict\\(\\) first",
+    class = "simpleError"
+  )
+
+  # Test 5: Variable labels mismatch (using labeled data)
+  test_dat_labeled <- test_dat
+  attr(test_dat_labeled$a, "label") <- "Label A"
+  attr(test_dat_labeled$b, "label") <- "Label B"
+  attr(test_dat_labeled$c, "label") <- "Label C"
+
+  test_dpdict_label_mismatch <- data.frame(
+    variable_names = c("a", "b", "c"),
+    variable_labels = c("Different Label A", "Label B", "Different Label C")
+  )
+
+  expect_error(
+    validate_dat_dpdict_alignment(test_dat_labeled, test_dpdict_label_mismatch),
+    "VARIABLE_LABELS_MISMATCH.*Labels in dat but not in dpdict\\$variable_labels.*'Label A'.*'Label C'",
+    class = "simpleError"
+  )
 })
 
-# Test dat <> dpdict validation functions
-test_that("validate_dat_dpdict_alignment works", {
+# Test enhanced validate_no_dpdict_duplicates() function
+test_that("validate_no_dpdict_duplicates provides detailed error messages", {
 
-  # setup test data
-  temp_dat <- data.frame(
-    var1 = 1:3,
-    var2 = letters[1:3],
-    var3 = LETTERS[1:3]
-  )
-  attr(temp_dat$var1, "label") <- "Variable 1"
-  attr(temp_dat$var2, "label") <- "Variable 2"
-  attr(temp_dat$var3, "label") <- "Variable 3"
-
-  # create correctly aligned dpdict
-  good_dpdict <- data.frame(
-    variable_names = c("var1", "var2", "var3"),
-    variable_labels = c("Variable 1", "Variable 2", "Variable 3")
+  # Test 1: Duplicate variable names with positioning details
+  test_dpdict_dup_names <- data.frame(
+    variable_names = c("q1", "q2", "q1", "q3", "q2"),  # q1 and q2 are duplicated
+    variable_labels = c("Question 1", "Question 2", "Question 1 Again", "Question 3", "Question 2 Again")
   )
 
-  # test correctly aligned data:
-  expect_true(validate_dat_dpdict_alignment(temp_dat, good_dpdict, warn_only = TRUE))
-
-  # test column count mismatch:
-  bad_dpdict <- good_dpdict[-1,]
-  expect_warning(
-    validate_dat_dpdict_alignment(temp_dat, bad_dpdict, warn_only = TRUE),
-    "Number of columns in dat \\(3\\) does not match number of rows in dpdict \\(2\\)"
+  expect_error(
+    validate_no_dpdict_duplicates(test_dpdict_dup_names, check_variable_labels = FALSE, check_alias_with_suffix = FALSE),
+    "DUPLICATE_VARIABLE_NAMES.*Variable name: 'q1'.*Appears at dpdict rows: 1, 3.*Associated labels:.*\\[1\\]: 'Question 1'.*\\[3\\]: 'Question 1 Again'.*Variable name: 'q2'.*Appears at dpdict rows: 2, 5",
+    class = "simpleError"
   )
 
-  # test missing required columns:
-  incomplete_dpdict <- data.frame(variable_names = c("var1", "var2", "var3"))
-  expect_warning(
-    validate_dat_dpdict_alignment(temp_dat, incomplete_dpdict, warn_only = TRUE),
-    "Required columns missing from dpdict: variable_labels"
+  # Test 2: Duplicate variable labels with positioning details
+  test_dpdict_dup_labels <- data.frame(
+    variable_names = c("q1", "q2", "q3", "q4"),
+    variable_labels = c("Same Label", "Different Label", "Same Label", "Another Label")
   )
 
-  # test variable names mismatch:
-  mismatched_names_dpdict <- good_dpdict
-  mismatched_names_dpdict$variable_names[1] <- "wrong_name"
-  expect_warning(
-    validate_dat_dpdict_alignment(temp_dat, mismatched_names_dpdict, warn_only = TRUE),
-    "Variables in dat not found in dpdict variable_names: var1"
+  expect_error(
+    validate_no_dpdict_duplicates(test_dpdict_dup_labels, check_variable_names = FALSE, check_alias_with_suffix = FALSE),
+    "DUPLICATE_VARIABLE_LABELS.*Variable label: 'Same Label'.*Appears at dpdict rows: 1, 3.*Associated variable names:.*\\[1\\]: 'q1'.*\\[3\\]: 'q3'",
+    class = "simpleError"
   )
 
-  # test variable labels mismatch:
-  mismatched_labels_dpdict <- good_dpdict
-  mismatched_labels_dpdict$variable_labels[1] <- "Wrong Label"
-  expect_warning(
-    validate_dat_dpdict_alignment(temp_dat, mismatched_labels_dpdict, warn_only = TRUE),
-    "Variable labels in dat not found in dpdict variable_labels: Variable 1"
+  # Test 3: Duplicate alias_with_suffix with context
+  test_dpdict_dup_alias <- data.frame(
+    variable_names = c("sc1_1", "sc1_2", "sc2_1", "sc2_2"),
+    variable_labels = c("Scale 1 Item 1", "Scale 1 Item 2", "Scale 2 Item 1", "Scale 2 Item 2"),
+    alias_with_suffix = c("scale_1", "scale_2", "scale_1", "scale_4")  # scale_1 duplicated
   )
+
+  expect_error(
+    validate_no_dpdict_duplicates(test_dpdict_dup_alias, check_variable_names = FALSE, check_variable_labels = FALSE),
+    "DUPLICATE_ALIAS_WITH_SUFFIX.*Alias with suffix: 'scale_1'.*Appears at dpdict rows: 1, 3.*Associated variables:.*\\[1\\]: 'sc1_1' \\('Scale 1 Item 1'\\).*\\[3\\]: 'sc2_1' \\('Scale 2 Item 1'\\)",
+    class = "simpleError"
+  )
+
+  # Test 4: Multiple types of duplicates in one validation
+  test_dpdict_multiple_dups <- data.frame(
+    variable_names = c("q1", "q1", "q3"),  # duplicate names
+    variable_labels = c("Label A", "Label B", "Label A"),  # duplicate labels
+    alias_with_suffix = c("alias1", "alias2", "alias1")  # duplicate aliases
+  )
+
+  error_msg <- expect_error(
+    validate_no_dpdict_duplicates(test_dpdict_multiple_dups),
+    "DUPLICATE_VARIABLE_NAMES.*DUPLICATE_VARIABLE_LABELS.*DUPLICATE_ALIAS_WITH_SUFFIX",
+    class = "simpleError"
+  )
+
+  # Test 5: Proper handling of NA values (should not be flagged as duplicates)
+  test_dpdict_with_nas <- data.frame(
+    variable_names = c("q1", "q2", "q3"),
+    variable_labels = c("Label 1", NA, NA),  # NAs should not be considered duplicates
+    alias_with_suffix = c("alias1", NA, NA)
+  )
+
+  expect_true(validate_no_dpdict_duplicates(test_dpdict_with_nas))
 })
 
-test_that("validate_no_dpdict_duplicates works", {
+# Test enhanced validate_variable_names() function
+test_that("validate_variable_names provides detailed error explanations", {
 
-  # setup base dpdict
-  base_dpdict <- data.frame(
-    variable_names = c("var1", "var2", "var3"),
-    variable_labels = c("Label 1", "Label 2", "Label 3"),
+  # Test 1: Names starting with numbers
+  expect_error(
+    validate_variable_names(c("1q", "2var", "validname")),
+    "Variable name validation failed.*\\[1\\] '1q'.*starts with number \\(must start with letter\\).*\\[2\\] '2var'.*starts with number \\(must start with letter\\)",
+    class = "simpleError"
+  )
+
+  # Test 2: Names with invalid characters
+  expect_error(
+    validate_variable_names(c("q.1", "var-name", "q@2")),
+    "contains invalid character\\(s\\): '\\.'.*contains invalid character\\(s\\): '-'.*contains invalid character\\(s\\): '@'",
+    class = "simpleError"
+  )
+
+  # Test 3: Names starting with special characters
+  expect_error(
+    validate_variable_names(c("_var", ".name", "#question")),
+    "\\[1\\] '_var'.*starts with underscore \\(must start with letter\\).*\\[2\\] '\\.name'.*starts with special character \\(must start with letter\\).*\\[3\\] '#question'.*starts with special character \\(must start with letter\\)",
+    class = "simpleError"
+  )
+
+  # Test 4: Incorrect underscore patterns
+  expect_error(
+    validate_variable_names(c("q_a", "var_", "q__1", "sc_x2")),
+    "\\[1\\] 'q_a'.*underscore not followed by number.*\\[2\\] 'var_'.*ends with underscore.*\\[3\\] 'q__1'.*contains consecutive underscores.*\\[4\\] 'sc_x2'.*underscore not followed by number",
+    class = "simpleError"
+  )
+
+  # Test 5: Multiple violations in single name
+  expect_error(
+    validate_variable_names(c("1q.a_b")),
+    "\\[1\\] '1q\\.a_b'.*starts with number.*contains invalid character\\(s\\): '\\.'.*underscore not followed by number",
+    class = "simpleError"
+  )
+
+  # Test 6: Valid names should pass without error
+  expect_true(validate_variable_names(c("q1", "Q1", "SC1_1", "satisfaction_1", "SC1a_1", "SC1_1oe")))
+
+  # Test 7: Check that the examples in error message are actually valid
+  valid_examples <- c("q1", "Q1", "SC1_1", "satisfaction_1", "SC1a_1", "SC1_1oe")
+  expect_true(validate_variable_names(valid_examples))
+})
+
+# Test warning behavior (warn_only = TRUE)
+test_that("validation functions provide same detailed messages for warnings", {
+
+  # Test that warning messages contain the same detail as error messages
+  test_dat <- data.frame(a = 1:2, b = 3:4)
+  test_dpdict <- data.frame(
+    variable_names = c("x", "y"),  # Names don't match
+    variable_labels = c("Variable X", "Variable Y")
+  )
+
+  expect_warning(
+    result <- validate_dat_dpdict_alignment(test_dat, test_dpdict, warn_only = TRUE),
+    "VARIABLE_NAMES_MISMATCH.*Variables in dat but not in dpdict\\$variable_names.*\\[1\\] 'a'.*\\[2\\] 'b'"
+  )
+  expect_false(result)
+
+  # Test warning for duplicates
+  test_dpdict_dups <- data.frame(
+    variable_names = c("q1", "q1"),
+    variable_labels = c("Label 1", "Label 2")
+  )
+
+  expect_warning(
+    result <- validate_no_dpdict_duplicates(test_dpdict_dups, warn_only = TRUE),
+    "DUPLICATE_VARIABLE_NAMES.*Variable name: 'q1'.*Appears at dpdict rows: 1, 2"
+  )
+  expect_false(result)
+
+  # Test warning for invalid variable names
+  expect_warning(
+    result <- validate_variable_names(c("1invalid"), warn_only = TRUE),
+    "\\[1\\] '1invalid'.*starts with number \\(must start with letter\\)"
+  )
+  expect_false(result)
+})
+
+# Test successful validation (should return TRUE invisibly)
+test_that("validation functions return TRUE for valid inputs", {
+
+  # Valid alignment
+  test_dat <- data.frame(a = 1:3, b = 4:6)
+  attr(test_dat$a, "label") <- "Variable A"
+  attr(test_dat$b, "label") <- "Variable B"
+  test_dpdict <- data.frame(
+    variable_names = c("a", "b"),
+    variable_labels = c("Variable A", "Variable B")
+  )
+
+  expect_true(validate_dat_dpdict_alignment(test_dat, test_dpdict))
+
+  # No duplicates
+  test_dpdict_unique <- data.frame(
+    variable_names = c("q1", "q2", "q3"),
+    variable_labels = c("Question 1", "Question 2", "Question 3"),
     alias_with_suffix = c("alias1", "alias2", "alias3")
   )
 
-  # test no duplicates:
-  expect_true(validate_no_dpdict_duplicates(base_dpdict, warn_only = TRUE))
+  expect_true(validate_no_dpdict_duplicates(test_dpdict_unique))
 
-  # test duplicate variable names:
-  dup_names_dpdict <- base_dpdict
-  dup_names_dpdict$variable_names[3] <- "var1"
-  expect_warning(
-    validate_no_dpdict_duplicates(dup_names_dpdict,
-                                  check_variable_names = TRUE,
-                                  check_variable_labels = FALSE,
-                                  check_alias_with_suffix = FALSE,
-                                  warn_only = TRUE),
-    "Duplicate variable names found: var1"
-  )
-
-  # test duplicate variable labels:
-  dup_labels_dpdict <- base_dpdict
-  dup_labels_dpdict$variable_labels[3] <- "Label 1"
-  expect_warning(
-    validate_no_dpdict_duplicates(dup_labels_dpdict,
-                                  check_variable_names = FALSE,
-                                  check_variable_labels = TRUE,
-                                  check_alias_with_suffix = FALSE,
-                                  warn_only = TRUE),
-    "Duplicate variable labels found: Label 1"
-  )
-
-  # test duplicate aliases:
-  dup_aliases_dpdict <- base_dpdict
-  dup_aliases_dpdict$alias_with_suffix[3] <- "alias1"
-  expect_warning(
-    validate_no_dpdict_duplicates(dup_aliases_dpdict,
-                                  check_variable_names = FALSE,
-                                  check_variable_labels = FALSE,
-                                  check_alias_with_suffix = TRUE,
-                                  warn_only = TRUE),
-    "Duplicate aliases with suffix found: alias1"
-  )
-
-  # test ignore_variable_name_from_label:
-  label_with_name_dpdict <- base_dpdict
-  label_with_name_dpdict$variable_labels <- c("var1: Label 1", "var2: Label 2", "var1: Label 1")
-  expect_warning(
-    validate_no_dpdict_duplicates(label_with_name_dpdict,
-                                  check_variable_names = FALSE,
-                                  check_variable_labels = TRUE,
-                                  check_alias_with_suffix = FALSE,
-                                  warn_only = TRUE),
-    "Duplicate variable labels found: var1: Label 1"
-  )
-
-  # should pass when ignoring variable names in labels:
-  expect_true(
-    validate_no_dpdict_duplicates(label_with_name_dpdict,
-                                  check_variable_names = FALSE,
-                                  check_variable_labels = TRUE,
-                                  check_alias_with_suffix = FALSE,
-                                  ignore_variable_name_from_label = TRUE,
-                                  warn_only = TRUE)
-  )
+  # Valid variable names
+  expect_true(validate_variable_names(c("q1", "SC1_1", "satisfaction_2a")))
 })
+
+# Test edge cases
+test_that("validation functions handle edge cases appropriately", {
+
+  # Empty data
+  expect_error(
+    validate_dat_dpdict_alignment(data.frame(), data.frame(variable_names = character(), variable_labels = character())),
+    NA  # Should not error for empty but aligned data
+  )
+
+  # Single column/row
+  single_dat <- data.frame(single_var = 1:5)
+  attr(single_dat$single_var, "label") <- "Single Variable"
+  single_dpdict <- data.frame(
+    variable_names = "single_var",
+    variable_labels = "Single Variable"
+  )
+  expect_true(validate_dat_dpdict_alignment(single_dat, single_dpdict))
+
+  # Check validation with missing alias_with_suffix column (should not error)
+  dpdict_no_alias <- data.frame(
+    variable_names = c("a", "b"),
+    variable_labels = c("Label A", "Label B")
+  )
+  expect_true(validate_no_dpdict_duplicates(dpdict_no_alias, check_alias_with_suffix = TRUE))
+})
+
 
 # Test dpdict functions
 test_that("create_dict works", {

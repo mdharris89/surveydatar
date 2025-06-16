@@ -238,7 +238,7 @@ create_dict <- function(temp_dat, prefill = TRUE){
 #'
 #' Analyses variable names and labels to identify separator patterns and check for consistency.
 #' Reports on three types of separators:
-#' - Variable name separators (e.g., "_" in "Q1_1" in a varible name). Only a single unique sep is allowed across all variable names.
+#' - Variable name separators (e.g., "_" in "Q1_1" in a variable name). Only a single unique sep is allowed across all variable names.
 #' - Prefix separators (e.g., ":" in "Q1: Question text" in a variable label). A prefix is defined as any letter and, optionally, numbers, followed by punctuation, followed by whitespace. (It must be followed by whitespace.)
 #' - Statement separators (e.g., " - " in "Question text - Statement" in a variable label). Any prefixes are removed before checking for statement separators. A statement separate is any punctuation surrounded by whitespace.
 #'
@@ -2445,69 +2445,164 @@ split_grid_labels <- function(x, alias_to_split, example_stem_to_add, count_befo
 validate_dat_dpdict_alignment <- function(temp_dat, temp_dpdict, warn_only = FALSE){
 
   issues <- character()
+  issue_details <- list()
 
   # Check column count alignment
   if (ncol(temp_dat) != nrow(temp_dpdict)) {
-    issues <- c(issues,
-                sprintf("Number of columns in dat (%d) does not match number of rows in dpdict (%d)",
-                        ncol(temp_dat), nrow(temp_dpdict)))
+    issues <- c(issues, "DIMENSION_MISMATCH")
+    issue_details[["DIMENSION_MISMATCH"]] <- sprintf(
+      "Expected: dpdict should have one row per dat column (%d rows)\nActual: dpdict has %d rows\nImpact: Cannot align metadata with data columns",
+      ncol(temp_dat), nrow(temp_dpdict)
+    )
   }
 
   # Check for required columns in dpdict
   required_cols <- c("variable_names", "variable_labels")
   missing_cols <- required_cols[!required_cols %in% names(temp_dpdict)]
   if (length(missing_cols) > 0) {
-    issues <- c(issues,
-                sprintf("Required columns missing from dpdict: %s",
-                        paste(missing_cols, collapse = ", ")))
+    issues <- c(issues, "MISSING_REQUIRED_COLUMNS")
+    issue_details[["MISSING_REQUIRED_COLUMNS"]] <- sprintf(
+      "Expected: dpdict must contain columns: %s\nActual: Missing columns: %s\nFound columns: %s",
+      paste(required_cols, collapse = ", "),
+      paste(missing_cols, collapse = ", "),
+      paste(names(temp_dpdict), collapse = ", ")
+    )
   }
 
   # Only proceed with further checks if required columns exist
   if (length(missing_cols) == 0) {
-    # Check variable names alignment
-    mismatched_names <- setdiff(names(temp_dat), temp_dpdict$variable_names)
-    if (length(mismatched_names) > 0) {
-      issues <- c(issues,
-                  sprintf("Variables in dat not found in dpdict variable_names: %s",
-                          paste(mismatched_names, collapse = ", ")))
 
-      # Check if these variables match old_variable_names
-      if ("old_variable_names" %in% names(temp_dpdict)) {
-        found_in_old <- mismatched_names %in% temp_dpdict$old_variable_names
-        if (any(found_in_old)) {
-          issues <- c(issues,
-                      "Note: Some variables match old_variable_names in dpdict. Consider updating dat with dpdict.")
+    # Check variable names alignment - detailed analysis
+    dat_names <- names(temp_dat)
+    dpdict_names <- temp_dpdict$variable_names
+
+    mismatched_names <- setdiff(dat_names, dpdict_names)
+    extra_dpdict_names <- setdiff(dpdict_names, dat_names)
+
+    if (length(mismatched_names) > 0 || length(extra_dpdict_names) > 0) {
+      issues <- c(issues, "VARIABLE_NAMES_MISMATCH")
+
+      detail_msg <- "Expected: All dat column names must match dpdict$variable_names exactly\n"
+
+      if (length(mismatched_names) > 0) {
+        # Find positions in dat
+        dat_positions <- which(dat_names %in% mismatched_names)
+        detail_msg <- paste0(detail_msg,
+                             sprintf("Variables in dat but not in dpdict$variable_names (%d):\n", length(mismatched_names)))
+
+        for (i in seq_along(mismatched_names)) {
+          pos <- which(dat_names == mismatched_names[i])
+          detail_msg <- paste0(detail_msg, sprintf("  [%d] '%s'\n", pos, mismatched_names[i]))
+        }
+
+        # Check if these variables match old_variable_names
+        if ("old_variable_names" %in% names(temp_dpdict)) {
+          found_in_old <- mismatched_names %in% temp_dpdict$old_variable_names
+          if (any(found_in_old)) {
+            old_matches <- mismatched_names[found_in_old]
+            old_positions <- sapply(old_matches, function(x) which(temp_dpdict$old_variable_names == x))
+            detail_msg <- paste0(detail_msg,
+                                 "\nNote: Variables found in dpdict$old_variable_names:\n")
+            for (i in seq_along(old_matches)) {
+              detail_msg <- paste0(detail_msg,
+                                   sprintf("  '%s' -> should be '%s' (dpdict row %d)\n",
+                                           old_matches[i], temp_dpdict$variable_names[old_positions[i]], old_positions[i]))
+            }
+            detail_msg <- paste0(detail_msg, "Consider running update_dat_from_dpdict() first\n")
+          }
         }
       }
+
+      if (length(extra_dpdict_names) > 0) {
+        detail_msg <- paste0(detail_msg,
+                             sprintf("\nVariables in dpdict$variable_names but not in dat (%d):\n", length(extra_dpdict_names)))
+
+        for (name in extra_dpdict_names) {
+          pos <- which(dpdict_names == name)
+          detail_msg <- paste0(detail_msg, sprintf("  [%d] '%s'\n", pos, name))
+        }
+      }
+
+      issue_details[["VARIABLE_NAMES_MISMATCH"]] <- detail_msg
     }
 
-    # Check variable labels alignment
-    dat_labels <- sapply(temp_dat, function(x) attr(x, "label", exact = TRUE))
-    mismatched_labels <- setdiff(dat_labels, temp_dpdict$variable_labels)
-    if (length(mismatched_labels) > 0) {
-      issues <- c(issues,
-                  sprintf("Variable labels in dat not found in dpdict variable_labels: %s",
-                          paste(mismatched_labels, collapse = ", ")))
+    # Check variable labels alignment - detailed analysis
+    dat_labels <- sapply(temp_dat, function(x) {
+      label <- attr(x, "label", exact = TRUE)
+      if (is.null(label)) NA_character_ else label
+    })
+    dat_labels <- dat_labels[!is.na(dat_labels)]
 
-      # Check if these labels match old_variable_labels
-      if ("old_variable_labels" %in% names(temp_dpdict)) {
-        found_in_old <- mismatched_labels %in% temp_dpdict$old_variable_labels
-        if (any(found_in_old)) {
-          issues <- c(issues, "Note: Some labels match old_variable_labels in dpdict. Consider updating dat with dpdict.")
+    dpdict_labels <- temp_dpdict$variable_labels
+    dpdict_labels <- dpdict_labels[!is.na(dpdict_labels)]
+
+    mismatched_labels <- setdiff(dat_labels, dpdict_labels)
+    extra_dpdict_labels <- setdiff(dpdict_labels, dat_labels)
+
+    if (length(mismatched_labels) > 0 || length(extra_dpdict_labels) > 0) {
+      issues <- c(issues, "VARIABLE_LABELS_MISMATCH")
+
+      detail_msg <- "Expected: All variable labels in dat must match dpdict$variable_labels\n"
+
+      if (length(mismatched_labels) > 0) {
+        detail_msg <- paste0(detail_msg,
+                             sprintf("Labels in dat but not in dpdict$variable_labels (%d):\n", length(mismatched_labels)))
+
+        for (label in mismatched_labels) {
+          # Find which variables have this label
+          vars_with_label <- names(dat_labels)[dat_labels == label]
+          var_positions <- sapply(vars_with_label, function(x) which(names(temp_dat) == x))
+          detail_msg <- paste0(detail_msg,
+                               sprintf("  '%s' (variables: %s at positions %s)\n",
+                                       label, paste(vars_with_label, collapse = ", "),
+                                       paste(var_positions, collapse = ", ")))
+        }
+
+        # Check if these labels match old_variable_labels
+        if ("old_variable_labels" %in% names(temp_dpdict)) {
+          found_in_old <- mismatched_labels %in% temp_dpdict$old_variable_labels
+          if (any(found_in_old)) {
+            old_matches <- mismatched_labels[found_in_old]
+            detail_msg <- paste0(detail_msg,
+                                 "\nNote: Labels found in dpdict$old_variable_labels:\n")
+            for (label in old_matches) {
+              old_pos <- which(temp_dpdict$old_variable_labels == label)
+              detail_msg <- paste0(detail_msg,
+                                   sprintf("  '%s' -> should be '%s' (dpdict row %d)\n",
+                                           label, temp_dpdict$variable_labels[old_pos], old_pos))
+            }
+            detail_msg <- paste0(detail_msg, "Consider running update_dat_from_dpdict() first\n")
+          }
         }
       }
+
+      if (length(extra_dpdict_labels) > 0) {
+        detail_msg <- paste0(detail_msg,
+                             sprintf("\nLabels in dpdict$variable_labels but not in dat (%d):\n", length(extra_dpdict_labels)))
+
+        for (label in extra_dpdict_labels) {
+          pos <- which(dpdict_labels == label)
+          detail_msg <- paste0(detail_msg, sprintf("  [%d] '%s'\n", pos, label))
+        }
+      }
+
+      issue_details[["VARIABLE_LABELS_MISMATCH"]] <- detail_msg
     }
   }
 
   if (length(issues) > 0) {
-    msg <- paste("Alignment issues found between dat and dpdict:",
-                 paste(issues, collapse = "\n"),
-                 sep = "\n")
+    msg <- "Alignment validation failed between dat and dpdict:\n\n"
+    for (issue in issues) {
+      msg <- paste0(msg, "Issue: ", issue, "\n")
+      msg <- paste0(msg, issue_details[[issue]], "\n")
+      if (issue != issues[length(issues)]) msg <- paste0(msg, "\n") # separator between issues
+    }
+
     if (warn_only) {
-      warning(msg)
+      warning(msg, call. = FALSE)
       return(invisible(FALSE))
     } else {
-      stop(msg)
+      stop(msg, call. = FALSE)
     }
   }
 
@@ -2536,8 +2631,8 @@ validate_dat_dpdict_alignment <- function(temp_dat, temp_dpdict, warn_only = FAL
 #' @examples
 #' validate_no_dpdict_duplicates(create_dict_with_metadata(get_big_test_dat(n=10)))
 validate_no_dpdict_duplicates <- function(temp_dpdict,
-                         check_variable_names = TRUE, check_variable_labels = TRUE, check_alias_with_suffix = TRUE,
-                         ignore_variable_name_from_label = FALSE, variable_name_sep = ": ", warn_only = FALSE){
+                                          check_variable_names = TRUE, check_variable_labels = TRUE, check_alias_with_suffix = TRUE,
+                                          ignore_variable_name_from_label = FALSE, variable_name_sep = ": ", warn_only = FALSE){
 
   if(ignore_variable_name_from_label == TRUE){
     temp_dpdict$variable_labels <- mapply(function(label, name) gsub(paste0(name, variable_name_sep), "", label),
@@ -2545,43 +2640,129 @@ validate_no_dpdict_duplicates <- function(temp_dpdict,
   }
 
   issues <- character()
+  issue_details <- list()
 
   if(check_variable_names) {
-    dupe_names <- temp_dpdict$variable_names[duplicated(temp_dpdict$variable_names)]
-    if(length(dupe_names) > 0) {
-      issues <- c(issues,
-                  sprintf("Duplicate variable names found: %s",
-                          paste(unique(dupe_names), collapse = ", ")))
+    dupe_indices <- which(duplicated(temp_dpdict$variable_names))
+    if(length(dupe_indices) > 0) {
+      issues <- c(issues, "DUPLICATE_VARIABLE_NAMES")
+
+      # Get all instances of duplicated values (not just the duplicates)
+      dupe_values <- unique(temp_dpdict$variable_names[dupe_indices])
+
+      detail_msg <- "Expected: All variable names in dpdict must be unique\n"
+      detail_msg <- paste0(detail_msg, sprintf("Found %d duplicate variable name(s):\n\n", length(dupe_values)))
+
+      for (dupe_val in dupe_values) {
+        all_positions <- which(temp_dpdict$variable_names == dupe_val)
+        detail_msg <- paste0(detail_msg, sprintf("Variable name: '%s'\n", dupe_val))
+        detail_msg <- paste0(detail_msg, sprintf("Appears at dpdict rows: %s\n",
+                                                 paste(all_positions, collapse = ", ")))
+
+        # Show associated labels to help distinguish
+        associated_labels <- temp_dpdict$variable_labels[all_positions]
+        if (!all(is.na(associated_labels))) {
+          detail_msg <- paste0(detail_msg, "Associated labels:\n")
+          for (i in seq_along(all_positions)) {
+            label <- ifelse(is.na(associated_labels[i]), "<NA>", associated_labels[i])
+            detail_msg <- paste0(detail_msg, sprintf("  [%d]: '%s'\n", all_positions[i], label))
+          }
+        }
+        detail_msg <- paste0(detail_msg, "\n")
+      }
+
+      issue_details[["DUPLICATE_VARIABLE_NAMES"]] <- detail_msg
     }
   }
 
   if(check_variable_labels) {
-    dupe_labels <- temp_dpdict$variable_labels[duplicated(temp_dpdict$variable_labels)]
-    if(length(dupe_labels) > 0) {
-      issues <- c(issues,
-                  sprintf("Duplicate variable labels found: %s",
-                          paste(unique(dupe_labels), collapse = ", ")))
+    # Filter out NA labels for duplication check
+    non_na_indices <- which(!is.na(temp_dpdict$variable_labels))
+    non_na_labels <- temp_dpdict$variable_labels[non_na_indices]
+
+    dupe_indices_within_non_na <- which(duplicated(non_na_labels))
+
+    if(length(dupe_indices_within_non_na) > 0) {
+      issues <- c(issues, "DUPLICATE_VARIABLE_LABELS")
+
+      # Get original indices in full dpdict
+      dupe_indices <- non_na_indices[dupe_indices_within_non_na]
+      dupe_values <- unique(temp_dpdict$variable_labels[dupe_indices])
+
+      detail_msg <- "Expected: All non-NA variable labels in dpdict must be unique\n"
+      detail_msg <- paste0(detail_msg, sprintf("Found %d duplicate variable label(s):\n\n", length(dupe_values)))
+
+      for (dupe_val in dupe_values) {
+        all_positions <- which(temp_dpdict$variable_labels == dupe_val & !is.na(temp_dpdict$variable_labels))
+        detail_msg <- paste0(detail_msg, sprintf("Variable label: '%s'\n", dupe_val))
+        detail_msg <- paste0(detail_msg, sprintf("Appears at dpdict rows: %s\n",
+                                                 paste(all_positions, collapse = ", ")))
+
+        # Show associated variable names to help distinguish
+        associated_names <- temp_dpdict$variable_names[all_positions]
+        detail_msg <- paste0(detail_msg, "Associated variable names:\n")
+        for (i in seq_along(all_positions)) {
+          detail_msg <- paste0(detail_msg, sprintf("  [%d]: '%s'\n", all_positions[i], associated_names[i]))
+        }
+        detail_msg <- paste0(detail_msg, "\n")
+      }
+
+      issue_details[["DUPLICATE_VARIABLE_LABELS"]] <- detail_msg
     }
   }
 
   if(check_alias_with_suffix && "alias_with_suffix" %in% names(temp_dpdict)) {
-    dupe_aliases <- temp_dpdict$alias_with_suffix[duplicated(temp_dpdict$alias_with_suffix)]
-    if(length(dupe_aliases) > 0) {
-      issues <- c(issues,
-                  sprintf("Duplicate aliases with suffix found: %s",
-                          paste(unique(dupe_aliases), collapse = ", ")))
+    # Filter out NA aliases for duplication check
+    non_na_indices <- which(!is.na(temp_dpdict$alias_with_suffix))
+    non_na_aliases <- temp_dpdict$alias_with_suffix[non_na_indices]
+
+    dupe_indices_within_non_na <- which(duplicated(non_na_aliases))
+
+    if(length(dupe_indices_within_non_na) > 0) {
+      issues <- c(issues, "DUPLICATE_ALIAS_WITH_SUFFIX")
+
+      # Get original indices in full dpdict
+      dupe_indices <- non_na_indices[dupe_indices_within_non_na]
+      dupe_values <- unique(temp_dpdict$alias_with_suffix[dupe_indices])
+
+      detail_msg <- "Expected: All non-NA alias_with_suffix values in dpdict must be unique\n"
+      detail_msg <- paste0(detail_msg, sprintf("Found %d duplicate alias_with_suffix value(s):\n\n", length(dupe_values)))
+
+      for (dupe_val in dupe_values) {
+        all_positions <- which(temp_dpdict$alias_with_suffix == dupe_val & !is.na(temp_dpdict$alias_with_suffix))
+        detail_msg <- paste0(detail_msg, sprintf("Alias with suffix: '%s'\n", dupe_val))
+        detail_msg <- paste0(detail_msg, sprintf("Appears at dpdict rows: %s\n",
+                                                 paste(all_positions, collapse = ", ")))
+
+        # Show associated variable names and labels
+        associated_names <- temp_dpdict$variable_names[all_positions]
+        associated_labels <- temp_dpdict$variable_labels[all_positions]
+        detail_msg <- paste0(detail_msg, "Associated variables:\n")
+        for (i in seq_along(all_positions)) {
+          label <- ifelse(is.na(associated_labels[i]), "<NA>", associated_labels[i])
+          detail_msg <- paste0(detail_msg, sprintf("  [%d]: '%s' ('%s')\n",
+                                                   all_positions[i], associated_names[i], label))
+        }
+        detail_msg <- paste0(detail_msg, "\n")
+      }
+
+      issue_details[["DUPLICATE_ALIAS_WITH_SUFFIX"]] <- detail_msg
     }
   }
 
   if(length(issues) > 0) {
-    msg <- paste("Duplicate values found in dpdict:",
-                 paste(issues, collapse = "\n"),
-                 sep = "\n")
+    msg <- "Duplicate validation failed in dpdict:\n\n"
+    for (issue in issues) {
+      msg <- paste0(msg, "Issue: ", issue, "\n")
+      msg <- paste0(msg, issue_details[[issue]])
+      if (issue != issues[length(issues)]) msg <- paste0(msg, "\n") # separator between issues
+    }
+
     if(warn_only) {
-      warning(msg)
+      warning(msg, call. = FALSE)
       return(invisible(FALSE))
     } else {
-      stop(msg)
+      stop(msg, call. = FALSE)
     }
   }
 
@@ -2614,23 +2795,86 @@ validate_no_dpdict_duplicates <- function(temp_dpdict,
 validate_variable_names <- function(names, warn_only = FALSE) {
   valid_pattern <- "^[a-zA-Z][a-zA-Z0-9]*(_[0-9][a-zA-Z0-9]*)*$"
 
-  invalid_names <- names[!grepl(valid_pattern, names)]
+  invalid_indices <- which(!grepl(valid_pattern, names))
 
-  if (length(invalid_names) > 0) {
-    msg <- sprintf(
-      "Found %d invalid variable names: %s",
-      length(invalid_names),
-      paste(utils::head(invalid_names, 5), collapse = ", ")
-    )
-    if (length(invalid_names) > 5) {
-      msg <- paste0(msg, "...")
+  if (length(invalid_indices) > 0) {
+    invalid_names <- names[invalid_indices]
+
+    msg <- "Variable name validation failed:\n\n"
+    msg <- paste0(msg, "Expected: Variable names must follow these rules:\n")
+    msg <- paste0(msg, "  1. Start with a letter (a-z, A-Z)\n")
+    msg <- paste0(msg, "  2. Contain only letters and numbers\n")
+    msg <- paste0(msg, "  3. If underscores are used, each must be followed by a number\n")
+    msg <- paste0(msg, "  4. After the number, more letters/numbers are allowed\n\n")
+    msg <- paste0(msg, "Valid examples: q1, Q1, SC1_1, satisfaction_1, SC1a_1, SC1_1oe\n\n")
+    msg <- paste0(msg, sprintf("Found %d invalid variable name(s):\n\n", length(invalid_names)))
+
+    # Analyze each invalid name to explain what's wrong
+    for (i in seq_along(invalid_names)) {
+      name <- invalid_names[i]
+      position <- invalid_indices[i]
+
+      msg <- paste0(msg, sprintf("[%d] '%s'\n", position, name))
+
+      # Detailed analysis of what's wrong
+      issues <- character()
+
+      # Check if starts with letter
+      if (!grepl("^[a-zA-Z]", name)) {
+        if (grepl("^[0-9]", name)) {
+          issues <- c(issues, "starts with number (must start with letter)")
+        } else if (grepl("^_", name)) {
+          issues <- c(issues, "starts with underscore (must start with letter)")
+        } else {
+          issues <- c(issues, "starts with special character (must start with letter)")
+        }
+      }
+
+      # Check for invalid characters
+      invalid_chars <- gsub("[a-zA-Z0-9_]", "", name)
+      if (nchar(invalid_chars) > 0) {
+        unique_invalid <- unique(strsplit(invalid_chars, "")[[1]])
+        issues <- c(issues, sprintf("contains invalid character(s): %s",
+                                    paste(paste0("'", unique_invalid, "'"), collapse = ", ")))
+      }
+
+      # Check underscore pattern
+      if (grepl("_", name)) {
+        # Find all underscore positions and check what follows
+        underscore_violations <- character()
+
+        # Check for underscore not followed by number
+        if (grepl("_[^0-9]", name)) {
+          underscore_violations <- c(underscore_violations, "underscore not followed by number")
+        }
+
+        # Check for underscore at end
+        if (grepl("_$", name)) {
+          underscore_violations <- c(underscore_violations, "ends with underscore")
+        }
+
+        # Check for consecutive underscores
+        if (grepl("__", name)) {
+          underscore_violations <- c(underscore_violations, "contains consecutive underscores")
+        }
+
+        if (length(underscore_violations) > 0) {
+          issues <- c(issues, paste(underscore_violations, collapse = ", "))
+        }
+      }
+
+      if (length(issues) > 0) {
+        msg <- paste0(msg, "    Issues: ", paste(issues, collapse = "; "), "\n")
+      }
+
+      msg <- paste0(msg, "\n")
     }
 
     if (warn_only) {
-      warning(msg)
+      warning(msg, call. = FALSE)
       return(invisible(FALSE))
     } else {
-      stop(msg)
+      stop(msg, call. = FALSE)
     }
   }
 
