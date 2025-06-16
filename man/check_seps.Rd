@@ -37,7 +37,7 @@ Checks separator patterns in a survey data file
 Analyses variable names and labels to identify separator patterns and check for consistency.
 Reports on three types of separators:
 \itemize{
-\item Variable name separators (e.g., "_" in "Q1_1" in a varible name). Only a single unique sep is allowed across all variable names.
+\item Variable name separators (e.g., "_" in "Q1_1" in a variable name). Only a single unique sep is allowed across all variable names.
 \item Prefix separators (e.g., ":" in "Q1: Question text" in a variable label). A prefix is defined as any letter and, optionally, numbers, followed by punctuation, followed by whitespace. (It must be followed by whitespace.)
 \item Statement separators (e.g., " - " in "Question text - Statement" in a variable label). Any prefixes are removed before checking for statement separators. A statement separate is any punctuation surrounded by whitespace.
 }

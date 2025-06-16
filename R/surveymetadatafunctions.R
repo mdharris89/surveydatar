@@ -122,8 +122,20 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
     `n missing` = vapply(temp_dat, function(x) sum(is.na(x)), FUN.VALUE = integer(1), USE.NAMES = FALSE),
     `n unique` = vapply(temp_dat, function(x) length(unique(x)), FUN.VALUE = integer(1), USE.NAMES = FALSE),
     `value labels` = vapply(temp_dat, function(x) paste(names(attr(x, "labels", exact = TRUE)), collapse = ", "), FUN.VALUE = character(1), USE.NAMES = FALSE),
-    `first values` = vapply(temp_dat, function(x) paste(utils::head(x, n_head), collapse = ", "), FUN.VALUE = character(1), USE.NAMES = FALSE),
-    `first unique values` = vapply(temp_dat, function(x) paste(utils::head(unique(x), n_head), collapse = ", "), FUN.VALUE = character(1), USE.NAMES = FALSE)
+    `first values` = vapply(temp_dat, function(x) {
+      head_vals <- utils::head(x, n_head)
+      if (inherits(head_vals, "haven_labelled")) {
+        head_vals <- as.numeric(head_vals)
+      }
+      paste(head_vals, collapse = ", ")
+    }, FUN.VALUE = character(1), USE.NAMES = FALSE),
+    `first unique values` = vapply(temp_dat, function(x) {
+      unique_vals <- utils::head(unique(x), n_head)
+      if (inherits(unique_vals, "haven_labelled")) {
+        unique_vals <- as.numeric(unique_vals)
+      }
+      paste(unique_vals, collapse = ", ")
+    }, FUN.VALUE = character(1), USE.NAMES = FALSE)
   )
 
   if (view_or_return == "view") {
@@ -2192,16 +2204,26 @@ update_dat_from_dpdict <- function(x, temp_dpdict = NULL){
     stop("temp_dpdict must contain 'old_variable_names', 'variable_names', 'variable_labels', and 'value_labels' columns")
   }
 
-  # validate all current names exist dpdict
-  name_mapping <- stats::setNames(
-    temp_dpdict$variable_names,
-    temp_dpdict$old_variable_names
-  )
+  # Check if data needs renaming or is already using target names
+  data_names <- names(temp_dat)
+  target_names <- temp_dpdict$variable_names
 
-  missing_names <- setdiff(names(temp_dat), names(name_mapping))
-  if (length(missing_names) > 0) {
-    stop("Some variables in dat not found in dpdict old_variable_names: ",
-         paste(missing_names, collapse = ", "))
+  if (all(data_names %in% target_names)) {
+    # Data already has target names - no renaming needed
+    needs_renaming <- FALSE
+  } else if (all(data_names %in% temp_dpdict$old_variable_names)) {
+    # Data has old names - create mapping for renaming
+    needs_renaming <- TRUE
+    name_mapping <- stats::setNames(
+      temp_dpdict$variable_names,
+      temp_dpdict$old_variable_names
+    )
+  } else {
+    # Data names don't match either old or new names
+    missing_from_old <- setdiff(data_names, temp_dpdict$old_variable_names)
+    missing_from_new <- setdiff(data_names, temp_dpdict$variable_names)
+    stop("Some variables in dat not found in dpdict: ",
+         paste(intersect(missing_from_old, missing_from_new), collapse = ", "))
   }
 
   dpdict_check <- validate_no_dpdict_duplicates(temp_dpdict, check_variable_names = TRUE,
@@ -2211,8 +2233,10 @@ update_dat_from_dpdict <- function(x, temp_dpdict = NULL){
     stop("Duplicate variable names, label or alias_with_suffix found in dpdict.")
   }
 
-  # update with new variable names
-  names(temp_dat) <- name_mapping[names(temp_dat)]
+  # update with new variable names if needed
+  if (needs_renaming) {
+    names(temp_dat) <- name_mapping[names(temp_dat)]
+  }[names(temp_dat)]
 
   # update variable labels using old names for matching
   new_labels <- vapply(
