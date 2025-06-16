@@ -25,11 +25,6 @@ setup({
   reset_to_builtins()
 })
 
-# Clean up after all tests
-teardown({
-  reset_to_builtins()
-})
-
 test_that("ensure_builtins_registered works correctly", {
   # Clear registry
   clear_tab_registry()

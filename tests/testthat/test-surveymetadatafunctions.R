@@ -36,7 +36,7 @@ test_that("update_dat_from_dpdict works", {
 
   # Test error handling
   mismatched_dpdict <- temp_dpdict[-1,]
-  expect_error(update_dat_from_dpdict(temp_dat, mismatched_dpdict), "Some variables in dat not found in dpdict old_variable_names")
+  expect_error(update_dat_from_dpdict(temp_dat, mismatched_dpdict), "Some data columns don't match either variable_names or old_variable_names in dpdict")
 })
 
 test_that("update_aliases works", {

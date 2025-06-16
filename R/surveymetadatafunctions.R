@@ -2200,52 +2200,52 @@ update_dat_from_dpdict <- function(x, temp_dpdict = NULL){
 
   stopifnot("temp_dpdict must be a data frame" = is.data.frame(temp_dpdict))
 
-  if (!all(c("old_variable_names", "variable_names", "variable_labels", "value_labels") %in% names(temp_dpdict))) {
-    stop("temp_dpdict must contain 'old_variable_names', 'variable_names', 'variable_labels', and 'value_labels' columns")
-  }
-
-  # Check if data needs renaming or is already using target names
-  data_names <- names(temp_dat)
-  target_names <- temp_dpdict$variable_names
-
-  if (all(data_names %in% target_names)) {
-    # Data already has target names - no renaming needed
-    needs_renaming <- FALSE
-  } else if (all(data_names %in% temp_dpdict$old_variable_names)) {
-    # Data has old names - create mapping for renaming
-    needs_renaming <- TRUE
-    name_mapping <- stats::setNames(
-      temp_dpdict$variable_names,
-      temp_dpdict$old_variable_names
-    )
-  } else {
-    # Data names don't match either old or new names
-    missing_from_old <- setdiff(data_names, temp_dpdict$old_variable_names)
-    missing_from_new <- setdiff(data_names, temp_dpdict$variable_names)
-    stop("Some variables in dat not found in dpdict: ",
-         paste(intersect(missing_from_old, missing_from_new), collapse = ", "))
+  if (!all(c("variable_names", "variable_labels", "value_labels") %in% names(temp_dpdict))) {
+    stop("temp_dpdict must contain 'variable_names', 'variable_labels', and 'value_labels' columns")
   }
 
   dpdict_check <- validate_no_dpdict_duplicates(temp_dpdict, check_variable_names = TRUE,
-                               check_variable_labels = TRUE,
-                               check_alias_with_suffix = FALSE)
+                                                check_variable_labels = TRUE,
+                                                check_alias_with_suffix = FALSE)
   if (!(dpdict_check)) {
     stop("Duplicate variable names, label or alias_with_suffix found in dpdict.")
   }
 
-  # update with new variable names if needed
-  if (needs_renaming) {
-    names(temp_dat) <- name_mapping[names(temp_dat)]
-  }[names(temp_dat)]
+  # Determine which scenario we're in
+  data_names <- names(temp_dat)
+  matches_variable_names <- data_names %in% temp_dpdict$variable_names
+  matches_old_variable_names <- if("old_variable_names" %in% names(temp_dpdict)) {
+    data_names %in% temp_dpdict$old_variable_names
+  } else {
+    rep(FALSE, length(data_names))
+  }
 
-  # update variable labels using old names for matching
-  new_labels <- vapply(
-    temp_dpdict$old_variable_names,
-    function(old_name) {
-      temp_dpdict$variable_labels[temp_dpdict$old_variable_names == old_name]
-    },
-    character(1)
-  )
+  # Check for unmatched columns
+  unmatched <- !matches_variable_names & !matches_old_variable_names
+  if (any(unmatched)) {
+    stop("Some data columns don't match either variable_names or old_variable_names in dpdict: ",
+         paste(data_names[unmatched], collapse = ", "))
+  }
+
+  # Handle renaming for columns matching old_variable_names
+  if (any(matches_old_variable_names)) {
+    if (!"old_variable_names" %in% names(temp_dpdict)) {
+      stop("Data contains names matching old_variable_names but dpdict lacks old_variable_names column")
+    }
+
+    rename_indices <- which(matches_old_variable_names)
+    for (i in rename_indices) {
+      old_name <- data_names[i]
+      dpdict_row <- which(temp_dpdict$old_variable_names == old_name)[1]
+      new_name <- temp_dpdict$variable_names[dpdict_row]
+      names(temp_dat)[i] <- new_name
+    }
+  }
+
+  # Update variable labels (using current names after any renaming)
+  current_names <- names(temp_dat)
+  dpdict_indices <- match(current_names, temp_dpdict$variable_names)
+  new_labels <- temp_dpdict$variable_labels[dpdict_indices]
 
   temp_dat <- mapply(sjlabelled::set_label,
                      temp_dat,
@@ -2253,7 +2253,7 @@ update_dat_from_dpdict <- function(x, temp_dpdict = NULL){
                      SIMPLIFY = FALSE)
 
   # update value labels using old names for matching
-  value_labels_list <- temp_dpdict$value_labels[match(names(temp_dat), temp_dpdict$variable_names)]
+  value_labels_list <- temp_dpdict$value_labels[dpdict_indices]
 
   temp_dat <- mapply(
     function(x, labels) {
