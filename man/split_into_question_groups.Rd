@@ -37,6 +37,7 @@ Defaults are used if not provided. See \code{\link{check_seps}}. Key elements:
 - splitbynumlabelledvalues: Logical. If TRUE, each variable with a different number of labelled values gets a new suffix.
 - splitbynoncontiguous: Logical. If TRUE, variables with the same variable name prefix not located adjacent are given a new suffix.
 - splitbycommonlabel: Logical. If TRUE, each variable with a different longest common string gets a new suffix.
+- splitbylabelvalues: Logical. If TRUE, each variable with different actual label values gets a new suffix (exact match required, including order). Default FALSE.
 - findlongest: Logical. If TRUE, finds longest common substring (computationally expensive).
 - min_lcs_length: Integer. Any potential lcs shorter than this is disqualified.
 - min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables.
@@ -71,6 +72,7 @@ Default \code{config} settings:
 \item \code{splitbynumlabelledvalues = TRUE}: Split if the number of defined value labels changes.
 \item \code{splitbynoncontiguous = TRUE}: Split if variables with the same original prefix are not adjacent in the \code{dpdict}.
 \item \code{splitbycommonlabel = TRUE}: Split if the common part of the variable label changes. How the "common part" is determined depends on \code{findlongest}.
+\item \code{splitbylabelvalues = FALSE}: Split if the actual label values differ (requires exact match including order). Off by default for performance.
 \item \code{findlongest = FALSE}: If FALSE (default) and \code{splitbycommonlabel=TRUE}, the common label is assumed to be the text before \code{statement_sep}. If TRUE, the function actively searches for the Longest Common Substring (LCS) between labels, which is much slower.
 \item \code{min_lcs_length = 10}: Minimum length for a string to be considered a potential LCS when \code{findlongest=TRUE}.
 \item \code{min_common_strings = 5}: When \code{findlongest=TRUE}, requires an LCS candidate to be common to at least this many variables in the group to be prioritized.

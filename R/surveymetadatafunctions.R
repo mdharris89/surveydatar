@@ -994,6 +994,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'        - splitbynumlabelledvalues: Logical. If TRUE, each variable with a different number of labelled values gets a new suffix.
 #'        - splitbynoncontiguous: Logical. If TRUE, variables with the same variable name prefix not located adjacent are given a new suffix.
 #'        - splitbycommonlabel: Logical. If TRUE, each variable with a different longest common string gets a new suffix.
+#'        - splitbylabelvalues: Logical. If TRUE, each variable with different actual label values gets a new suffix (exact match required, including order). Default FALSE.
 #'        - findlongest: Logical. If TRUE, finds longest common substring (computationally expensive).
 #'        - min_lcs_length: Integer. Any potential lcs shorter than this is disqualified.
 #'        - min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables.
@@ -1013,6 +1014,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'   \item `splitbynumlabelledvalues = TRUE`: Split if the number of defined value labels changes.
 #'   \item `splitbynoncontiguous = TRUE`: Split if variables with the same original prefix are not adjacent in the `dpdict`.
 #'   \item `splitbycommonlabel = TRUE`: Split if the common part of the variable label changes. How the "common part" is determined depends on `findlongest`.
+#'   \item `splitbylabelvalues = FALSE`: Split if the actual label values differ (requires exact match including order). Off by default for performance.
 #'   \item `findlongest = FALSE`: If FALSE (default) and `splitbycommonlabel=TRUE`, the common label is assumed to be the text before `statement_sep`. If TRUE, the function actively searches for the Longest Common Substring (LCS) between labels, which is much slower.
 #'   \item `min_lcs_length = 10`: Minimum length for a string to be considered a potential LCS when `findlongest=TRUE`.
 #'   \item `min_common_strings = 5`: When `findlongest=TRUE`, requires an LCS candidate to be common to at least this many variables in the group to be prioritized.
@@ -1064,6 +1066,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
   default_config <- list(
     splitbyclass = TRUE,
     splitbynumlabelledvalues = TRUE,
+    splitbylabelvalues = FALSE,
     splitbynoncontiguous = TRUE,
     splitbycommonlabel = TRUE,
     findlongest = FALSE,
@@ -1078,7 +1081,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
   # Validate merged config
   if(!is.null(config)){
-    bool_config_params <- c("splitbyclass", "splitbynumlabelledvalues",
+    bool_config_params <- c("splitbyclass", "splitbynumlabelledvalues", "splitbylabelvalues",
                             "splitbynoncontiguous", "splitbycommonlabel",
                             "findlongest")
     for (param in bool_config_params) {
@@ -1105,6 +1108,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
   splitbyclass <- config$splitbyclass
   splitbynumlabelledvalues <- config$splitbynumlabelledvalues
+  splitbylabelvalues <- config$splitbylabelvalues
   splitbynoncontiguous <- config$splitbynoncontiguous
   splitbycommonlabel <- config$splitbycommonlabel
   findlongest <- config$findlongest
@@ -1379,6 +1383,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
       current_question_group <- gsub("_.*", "", current_question_dpdict$question_group[i]) # current_question defined WITHOUT any suffixes
 
       current_numlabelledvalues <- length(sjlabelled::get_labels(temp_dat[[current_question_dpdict$variable_names[i]]])) # we want character variables to always be given their own question group, so for example if two character variables have value labels and these obviously different, they're grouped separately
+      current_labelvalues <- sjlabelled::get_labels(temp_dat[[current_question_dpdict$variable_names[i]]])
       current_index <- match(current_question_dpdict$variable_names[i], temp_dpdict$variable_names)
 
       if(findlongest == TRUE){
@@ -1426,6 +1431,14 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
             cat(paste0("current_numlabelledvalues: ", current_numlabelledvalues), "\n", "\n")
           }
         }
+        if(splitbylabelvalues == TRUE && !identical(current_labelvalues, last_labelvalues)){
+          new_suffix_required <- TRUE
+          if(noisy >= 4){
+            cat(paste0(current_question_dpdict$variable_names[i]," split by label values:"), "\n")
+            cat(paste0("last_labelvalues: ", paste(last_labelvalues, collapse = ", ")), "\n")
+            cat(paste0("current_labelvalues: ", paste(current_labelvalues, collapse = ", ")), "\n", "\n")
+          }
+        }
         if(splitbynoncontiguous == TRUE && current_index != last_index+1){
           new_suffix_required <- TRUE
           if(noisy >= 4){
@@ -1450,6 +1463,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
       last_class <- current_class
       last_question_group <- current_question_group
       last_numlabelledvalues <- current_numlabelledvalues
+      last_labelvalues <- current_labelvalues
       last_index <- current_index
       last_commonlabel <- current_commonlabel
       last_suffix <- gsub(".*_", "", current_question_dpdict$question_group[i])
