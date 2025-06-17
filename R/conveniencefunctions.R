@@ -957,3 +957,76 @@ find_and_replace_in_var_labels <- function(df, string_to_find, string_to_replace
 
   return(df)
 }
+
+
+#' Convert Integer Variables to Double While Preserving Labels
+#'
+#' Converts integer variables to double storage type while preserving all
+#' labelling attributes. Useful for ensuring consistent variable types when
+#' integer vs double differences cause issues with grouping functions.
+#'
+#' @param x A vector, data frame, or survey_data object
+#' @param labelled_only Logical. If TRUE, only converts integers that have labels.
+#'        If FALSE, converts all integers. Default TRUE.
+#'
+#' @return Object of same type as input with integers converted to doubles
+#' @export
+#'
+#' @examples
+#' # For individual vector
+#' int_var <- structure(c(1L, 2L, 3L),
+#'                      class = c("haven_labelled", "vctrs_vctr", "integer"),
+#'                      labels = c("Low" = 1, "High" = 3))
+#' double_var <- convert_integers_to_double(int_var)
+#'
+#' # For data frame
+#' df <- data.frame(x = 1:3, y = c(1.1, 2.2, 3.3))
+#' df_converted <- convert_integers_to_double(df)
+convert_integers_to_double <- function(x, labelled_only = TRUE) {
+  UseMethod("convert_integers_to_double")
+}
+
+#' @export
+convert_integers_to_double.default <- function(x, labelled_only = TRUE) {
+  # Check if it's an integer
+  if (!is.integer(x)) {
+    return(x)
+  }
+
+  # If labelled_only is TRUE, check if variable has labels
+  if (labelled_only && !sjlabelled::is_labelled(x)) {
+    return(x)
+  }
+
+  # Store all attributes
+  attrs <- attributes(x)
+
+  # Convert to double
+  x_double <- as.double(x)
+
+  # Restore attributes, updating class if needed
+  if (!is.null(attrs)) {
+    attributes(x_double) <- attrs
+
+    # Update class attribute to replace "integer" with "double"
+    if ("class" %in% names(attrs)) {
+      new_class <- gsub("integer", "double", attrs$class)
+      class(x_double) <- new_class
+    }
+  }
+
+  return(x_double)
+}
+
+#' @export
+convert_integers_to_double.data.frame <- function(x, labelled_only = TRUE) {
+  # Apply to each column
+  x[] <- lapply(x, convert_integers_to_double, labelled_only = labelled_only)
+  return(x)
+}
+
+#' @export
+convert_integers_to_double.survey_data <- function(x, labelled_only = TRUE) {
+  x$dat <- convert_integers_to_double(x$dat, labelled_only = labelled_only)
+  return(x)
+}

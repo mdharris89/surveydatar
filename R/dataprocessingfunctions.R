@@ -671,3 +671,298 @@ fix_for_spss_export <- function(data) {
   }
   return(result)
 }
+
+#' Collapse Wide-Format Survey Questions
+#'
+#' Transforms wide-format survey questions into a single variable by collapsing multiple
+#' variables based on a reference variable. This is useful when you have the same question
+#' asked across different categories (e.g., satisfaction_male, satisfaction_female) and
+#' want to create a single variable using a category variable to determine which value
+#' each respondent should receive.
+#'
+#' @param temp_dat A survey_data object containing the data and metadata to be collapsed.
+#' @param vars_to_collapse Character vector of variable names to collapse. These should
+#'   follow a consistent naming pattern with the collapse values embedded in the names.
+#' @param collapse_on Character string specifying the variable name that contains the
+#'   values used to determine which collapsed variable to use for each respondent.
+#' @param var_name_sep Character string specifying the separator used in variable names.
+#'   Default is "_".
+#' @param var_label_sep Character string specifying the separator used in variable labels.
+#'   Default is " - ".
+#' @param interactive_mode Logical indicating whether to show a preview and ask for
+#'   confirmation before collapsing. Default is FALSE.
+#'
+#' @return A new survey_data object with collapsed variables. The original wide-format
+#'   variables are removed and replaced with the collapsed versions. Variable labels
+#'   are updated to remove the category-specific portions.
+#'
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Create sample data with wide-format questions
+#' dat <- data.frame(
+#'   id = 1:5,
+#'   gender = c("male", "female", "male", "female", "other"),
+#'   satisfaction_male = c(5, NA, 4, NA, NA),
+#'   satisfaction_female = c(NA, 3, NA, 5, NA),
+#'   satisfaction_other = c(NA, NA, NA, NA, 4)
+#' )
+#' survey_obj <- create_survey_data(dat)
+#'
+#' # Collapse the satisfaction variables based on gender
+#' collapsed <- collapse_wide_question(
+#'   survey_obj,
+#'   vars_to_collapse = c("satisfaction_male", "satisfaction_female", "satisfaction_other"),
+#'   collapse_on = "gender"
+#' )
+#' }
+collapse_wide_question <- function(temp_dat, vars_to_collapse, collapse_on,
+                                   var_name_sep = "_", var_label_sep = " - ", interactive_mode = FALSE) {
+
+  # Validate input variables exist
+  missing_vars <- vars_to_collapse[!vars_to_collapse %in% names(temp_dat$dat)]
+  if (length(missing_vars) > 0) {
+    cat("Warning: The following variables were not found and will be ignored:\n")
+    cat(paste(missing_vars, collapse = ", "), "\n")
+    vars_to_collapse <- vars_to_collapse[vars_to_collapse %in% names(temp_dat$dat)]
+  }
+
+  if (length(vars_to_collapse) == 0) {
+    cat("No valid variables found to collapse.\n")
+    return(invisible(NULL))
+  }
+
+  # Get all variables
+  all_vars <- vars_to_collapse
+
+  if (length(all_vars) == 0) {
+    cat("No variables found with prefix:", question_prefix, "\n")
+    return(invisible(NULL))
+  }
+
+  # Get unique values from collapse_on variable
+  collapse_values <- sort(unique(temp_dat$dat[[collapse_on]]))
+  collapse_values <- collapse_values[!is.na(collapse_values)]
+
+  # Split all variable names by separator
+  var_splits <- strsplit(all_vars, var_name_sep, fixed = TRUE)
+
+  # Find maximum number of parts
+  max_parts <- max(sapply(var_splits, length))
+
+  # For each position, check if it contains exactly the collapse values
+  collapse_position <- NULL
+
+  for (pos in 1:max_parts) {
+    # Extract values at this position across all variables
+    pos_values <- unique(sapply(var_splits, function(x) {
+      if (length(x) >= pos) x[pos] else NA
+    }))
+    pos_values <- pos_values[!is.na(pos_values)]
+
+    # Check if these match our collapse values
+    if (length(pos_values) == length(collapse_values) &&
+        all(pos_values %in% as.character(collapse_values)) &&
+        all(as.character(collapse_values) %in% pos_values)) {
+      collapse_position <- pos
+      break
+    }
+  }
+
+  if (is.null(collapse_position)) {
+    cat("Could not identify position containing collapse values.\n")
+    cat("Expected values:", paste(collapse_values, collapse = ", "), "\n")
+    return(invisible(NULL))
+  }
+
+  # Group variables by their pattern (everything except the collapse position)
+  var_groups <- list()
+
+  for (i in seq_along(all_vars)) {
+    var <- all_vars[i]
+    parts <- var_splits[[i]]
+
+    # Create pattern by replacing collapse position with placeholder
+    if (length(parts) >= collapse_position) {
+      pattern_parts <- parts
+      pattern_parts[collapse_position] <- "COLLAPSE"
+      pattern <- paste(pattern_parts, collapse = var_name_sep)
+
+      # Store variable info
+      if (!pattern %in% names(var_groups)) {
+        var_groups[[pattern]] <- list(
+          vars = character(),
+          collapse_pos = collapse_position,
+          first_var_position = which(names(temp_dat$dat) == var)
+        )
+      }
+      var_groups[[pattern]]$vars <- c(var_groups[[pattern]]$vars, var)
+    }
+  }
+
+  for (pattern in names(var_groups)) {
+    group_info <- var_groups[[pattern]]
+    new_var_name <- gsub("COLLAPSE", "", pattern, fixed = TRUE)
+    new_var_name <- gsub(paste0(var_name_sep, var_name_sep), var_name_sep, new_var_name, fixed = TRUE)
+    new_var_name <- gsub(paste0(var_name_sep, "$"), "", new_var_name)
+
+
+    if(interactive_mode == TRUE){
+      cat(sprintf("Pattern: %s\n", pattern))
+      cat(sprintf("  Variables: %s to %s (%d vars)\n",
+                  group_info$vars[1],
+                  tail(group_info$vars, 1),
+                  length(group_info$vars)))
+      cat(sprintf("  Will collapse to: %s\n", new_var_name))
+    }
+  }
+
+  if(interactive_mode == TRUE){
+    # Ask for confirmation
+    cat("\nProceed with collapsing? (y/n): ")
+    response <- readline()
+    if (tolower(response) != "y") {
+      return(invisible(NULL))
+    }
+  }
+
+  # Perform the collapsing
+  new_dat <- temp_dat$dat
+  new_dpdict <- temp_dat$dpdict
+  vars_to_remove <- character()
+  new_vars_created <- character()
+  new_var_positions <- list()
+
+  # Get collapse values for all respondents at once
+  respondent_collapse_vals <- as.character(new_dat[[collapse_on]])
+
+  for (pattern in names(var_groups)) {
+    group_info <- var_groups[[pattern]]
+    group_vars <- group_info$vars
+
+    # Create new variable name
+    new_var_name <- gsub("COLLAPSE", "", pattern, fixed = TRUE)
+    new_var_name <- gsub(paste0(var_name_sep, var_name_sep), var_name_sep, new_var_name, fixed = TRUE)
+    new_var_name <- gsub(paste0(var_name_sep, "$"), "", new_var_name)
+
+    # Create a matrix of all group variables
+    var_matrix <- as.matrix(new_dat[, group_vars, drop = FALSE])
+
+    # Create index for which column each respondent should use
+    col_indices <- match(respondent_collapse_vals,
+                         sapply(strsplit(group_vars, var_name_sep, fixed = TRUE),
+                                function(x) x[collapse_position]))
+
+    # Extract values using matrix indexing (vectorized)
+    row_indices <- seq_len(nrow(var_matrix))
+    valid_indices <- !is.na(col_indices)
+
+    new_values <- rep(NA, nrow(var_matrix))
+    if (any(valid_indices)) {
+      new_values[valid_indices] <- var_matrix[cbind(row_indices[valid_indices],
+                                                    col_indices[valid_indices])]
+    }
+
+    new_dat[[new_var_name]] <- new_values
+    new_vars_created <- c(new_vars_created, new_var_name)
+    new_var_positions[[new_var_name]] <- group_info$first_var_position
+
+    # Copy attributes from the first variable in the group
+    first_var <- group_vars[1]
+    if (first_var %in% names(new_dat)) {
+      attributes(new_dat[[new_var_name]]) <- attributes(new_dat[[first_var]])
+    }
+
+    # Handle variable labels - find the non-common part
+    var_labels <- new_dpdict$variable_labels[match(group_vars, new_dpdict$variable_names)]
+    var_labels <- var_labels[!is.na(var_labels)]
+
+    if (length(var_labels) > 1) {
+      # Split labels and find the changing part
+      label_splits <- strsplit(var_labels, var_label_sep, fixed = TRUE)
+
+      # Find which part changes across labels
+      max_label_parts <- max(sapply(label_splits, length))
+      common_parts <- character()
+
+      for (pos in 1:max_label_parts) {
+        pos_values <- unique(sapply(label_splits, function(x) {
+          if (length(x) >= pos) x[pos] else NA
+        }))
+        pos_values <- pos_values[!is.na(pos_values)]
+
+        if (length(pos_values) == 1) {
+          # This part is common
+          common_parts[pos] <- pos_values[1]
+        } else {
+          # This part varies - mark it for removal
+          common_parts[pos] <- NA
+        }
+      }
+
+      # Reconstruct label without the varying part
+      new_label <- paste(common_parts[!is.na(common_parts)], collapse = var_label_sep)
+    } else if (length(var_labels) == 1) {
+      # Only one label, use it as is
+      new_label <- var_labels[1]
+    } else {
+      # No labels found
+      new_label <- new_var_name
+    }
+
+    # Update dpdict
+    old_label_row <- which(new_dpdict$variable_names == first_var)[1]
+    if (!is.na(old_label_row) && !new_var_name %in% new_dpdict$variable_names) {
+      new_row <- new_dpdict[old_label_row, ]
+      new_row$variable_names <- new_var_name
+      new_row$variable_labels <- new_label
+      new_dpdict <- rbind(new_dpdict, new_row)
+    }
+    new_dat <- update_dat_from_dpdict(new_dat, new_dpdict)
+
+    # Mark original variables for removal
+    vars_to_remove <- c(vars_to_remove, group_vars)
+  }
+
+  # Reorder columns to place new variables in the correct positions
+  # Create mapping of first old variable to new variable
+  old_to_new <- sapply(var_groups, function(group) {
+    new_name <- gsub("COLLAPSE", "", names(which(sapply(var_groups, function(g) identical(g, group)))), fixed = TRUE)
+    new_name <- gsub(paste0(var_name_sep, var_name_sep), var_name_sep, new_name, fixed = TRUE)
+    new_name <- gsub(paste0(var_name_sep, "$"), "", new_name)
+    c(group$vars[1], new_name)
+  }, simplify = FALSE)
+
+  # Convert to named vector
+  replacement_map <- setNames(sapply(old_to_new, `[`, 2), sapply(old_to_new, `[`, 1))
+
+  # Build new column order
+  all_cols <- names(new_dat)
+  keep_cols <- !(all_cols %in% vars_to_remove) & !(all_cols %in% new_vars_created)
+  new_order <- ifelse(all_cols %in% names(replacement_map), replacement_map[all_cols],
+                      ifelse(keep_cols, all_cols, NA))
+  new_order <- new_order[!is.na(new_order)]
+
+  # Reorder
+  new_dat <- new_dat[, new_order]
+  new_dpdict <- new_dpdict[!new_dpdict$variable_names %in% vars_to_remove, ]
+
+  # Reorder dpdict to match the column order in new_dat
+  dpdict_order <- match(names(new_dat), new_dpdict$variable_names)
+  dpdict_order <- dpdict_order[!is.na(dpdict_order)]
+  new_dpdict <- new_dpdict[dpdict_order, ]
+
+  # Update dpdict metadata for new variable(s)
+  variables_to_update <- new_dpdict$variable_names == new_vars_created
+  new_dpdict <- update_dict_with_metadata(temp_dat = new_dat, temp_dpdict = new_dpdict, variables_to_update = variables_to_update)
+
+  # Create new survey data object
+  new_temp_dat <- create_survey_data(new_dat, new_dpdict)
+
+  cat(sprintf("\nCollapsing complete. Reduced %d variables to %d variables.\n",
+              length(vars_to_remove),
+              length(new_vars_created)))
+
+  return(new_temp_dat)
+}

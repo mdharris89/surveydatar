@@ -125,14 +125,14 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
     `first values` = vapply(temp_dat, function(x) {
       head_vals <- utils::head(x, n_head)
       if (inherits(head_vals, "haven_labelled")) {
-        head_vals <- as.numeric(head_vals)
+        head_vals <- haven::zap_labels(head_vals)
       }
       paste(head_vals, collapse = ", ")
     }, FUN.VALUE = character(1), USE.NAMES = FALSE),
     `first unique values` = vapply(temp_dat, function(x) {
       unique_vals <- utils::head(unique(x), n_head)
       if (inherits(unique_vals, "haven_labelled")) {
-        unique_vals <- as.numeric(unique_vals)
+        unique_vals <- haven::zap_labels(unique_vals)
       }
       paste(unique_vals, collapse = ", ")
     }, FUN.VALUE = character(1), USE.NAMES = FALSE)
