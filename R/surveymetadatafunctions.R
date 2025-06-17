@@ -1451,6 +1451,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
         if(new_suffix_required == TRUE){
           current_suffix <- last_suffix
           current_question_dpdict$question_group[i] <- paste0(gsub("_.*", "", current_question_group), "_", letters702[which(letters702 == current_suffix)+1])
+          last_suffix <- letters702[which(letters702 == current_suffix)+1]
           if(noisy >= 3){
             print(paste0("variable ", current_question_dpdict$variable_names[i], "given new question_group ", current_question_dpdict$question_group[i]))
           }
