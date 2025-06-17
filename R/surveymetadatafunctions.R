@@ -190,7 +190,12 @@ datamap_questions <- function(survey_obj){
     paste(classes, collapse = " ")
   })
   out$var_values <- lapply(unique_question_groups, function(x) {
-    unique(unlist(lapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], unique)))
+    unique(unlist(lapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], function(v) {
+      if (inherits(v, "haven_labelled")) {
+        v <- as.numeric(v)
+      }
+      unique(v)
+    })))
   })
   out$unique_values_count <- sapply(out$var_values, length)
 
@@ -874,7 +879,12 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 
     question_group_within_dat <- temp_dat[set_of_variable_names_in_question_group]
 
-    count_within_question_group <- vapply(question_group_within_dat, function(x) any(!is.na(x) & x != 0), logical(1)) # within each variable in question group, check that there is at least one value that is not NA or 0
+    count_within_question_group <- vapply(question_group_within_dat, function(x) {
+      if (inherits(x, "haven_labelled")) {
+        x <- as.numeric(x)
+      }
+      any(!is.na(x) & x != 0)
+    }, logical(1))
 
     if(sum(count_within_question_group) > 1){
       temp_dpdict$has_multivariable_positive_values[temp_dpdict$variable_names %in% set_of_variable_names_in_question_group & variables_to_update] <- TRUE

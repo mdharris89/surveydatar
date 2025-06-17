@@ -575,7 +575,12 @@ conditionally_replace_NAs_in_multiresponse <- function(survey_obj = NULL,
     if (!all(all_labelled)) next
 
     # Make sure the group is binary, i.e. a multiresponse question
-    group_vals <- unique(unlist(lapply(temp_dat[vars], function(v) v[!is.na(v)])))
+    group_vals <- unique(unlist(lapply(temp_dat[vars], function(v) {
+      if (inherits(v, "haven_labelled")) {
+        v <- as.numeric(v)
+      }
+      v[!is.na(v)]
+    })))
     if (!all(group_vals %in% c(0, 1))) {          # anything else? → skip
       if (noisy)
         message(sprintf("Skipping group '%s': values other than 0/1 detected (%s).",
