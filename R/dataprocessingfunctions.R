@@ -234,7 +234,11 @@ realiselabelled_vec <- function(x,
     y <- sjlabelled::set_labels(y, labels = labels_to_use)
 
   } else if (is.numeric(x)) {
-    unique_vals <- unique(stats::na.omit(x))
+    vals_to_check <- x
+    if (inherits(vals_to_check, "haven_labelled")) {
+      vals_to_check <- haven::zap_labels(vals_to_check)
+    }
+    unique_vals <- unique(stats::na.omit(vals_to_check))
 
     if (length(unique_vals) <= 2 && all(unique_vals %in% c(0, 1))) {
       # Multiple-response pattern
@@ -577,7 +581,7 @@ conditionally_replace_NAs_in_multiresponse <- function(survey_obj = NULL,
     # Make sure the group is binary, i.e. a multiresponse question
     group_vals <- unique(unlist(lapply(temp_dat[vars], function(v) {
       if (inherits(v, "haven_labelled")) {
-        v <- as.numeric(v)
+        v <- haven::zap_labels(v)
       }
       v[!is.na(v)]
     })))
@@ -606,7 +610,11 @@ conditionally_replace_NAs_in_multiresponse <- function(survey_obj = NULL,
       )
 
       # Optionally relabel positive values
-      if (relabelpositives && any(temp_dat[[v]] == 1, na.rm = TRUE)) {
+      val_to_check <- temp_dat[[v]]
+      if (inherits(val_to_check, "haven_labelled")) {
+        val_to_check <- haven::zap_labels(val_to_check)
+      }
+      if (relabelpositives && any(val_to_check == 1, na.rm = TRUE)) {
         temp_dat[[v]] <- update_labelled_values(
           x = temp_dat[[v]],
           old_value = 1,

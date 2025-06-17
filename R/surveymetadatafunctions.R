@@ -192,7 +192,7 @@ datamap_questions <- function(survey_obj){
   out$var_values <- lapply(unique_question_groups, function(x) {
     unique(unlist(lapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], function(v) {
       if (inherits(v, "haven_labelled")) {
-        v <- as.numeric(v)
+        v <- haven::zap_labels(v)
       }
       unique(v)
     })))
@@ -881,7 +881,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 
     count_within_question_group <- vapply(question_group_within_dat, function(x) {
       if (inherits(x, "haven_labelled")) {
-        x <- as.numeric(x)
+        x <- haven::zap_labels(x)
       }
       any(!is.na(x) & x != 0)
     }, logical(1))
