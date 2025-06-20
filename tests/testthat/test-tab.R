@@ -2267,3 +2267,48 @@ test_that("row bases display correctly and low_base_threshold works for row stat
   expect_equal(nrow(result2), 0)  # All rows removed
 })
 
+test_that("copy_tab handles digits, empty_zeros and na_display parameters", {
+  skip_if_not(requireNamespace("clipr", quietly = TRUE))
+  skip_if_not(clipr::clipr_available())
+
+  # Create test data with zeros and values that need rounding
+  data <- data.frame(
+    group = factor(c("A", "A", "A", "B", "B", "B")),
+    values = c(10.555, 0, 20.777, 0, 30.333, NA)
+  )
+
+  result <- tab(data, group, statistic = "mean", values = "values")
+
+  # Test digits parameter
+  copied_rounded <- copy_tab(result, digits = 1)
+  # Should round mean values to 1 decimal place
+  expect_true(any(grepl("10\\.4", copied_rounded)))  # (10.555 + 0 + 20.777) / 3 = 10.44... → 10.4
+  expect_true(any(grepl("15\\.2", copied_rounded)))  # (0 + 30.333) / 2 = 15.17... → 15.2
+
+  copied_int <- copy_tab(result, digits = 0)
+  expect_equal(copied_int[copied_int$row_label == "group: A", "Total"], "10")
+  expect_equal(copied_int[copied_int$row_label == "group: B", "Total"], "15")
+
+  # Test empty_zeros parameter
+  data_with_zeros <- data.frame(
+    group = factor(c("A", "B")),
+    values = c(0, 5)
+  )
+  result_zeros <- tab(data_with_zeros, group, statistic = "mean", values = "values")
+  copied_empty_zeros <- copy_tab(result_zeros, empty_zeros = TRUE)
+
+  # Find the row with group A (should be empty due to 0 mean)
+  group_a_row <- copied_empty_zeros[grepl("group: A", copied_empty_zeros[,1]), ]
+  expect_true(any(group_a_row == ""))
+
+  # Test na_display parameter
+  # Create test data with zeros and values that need rounding
+  data <- data.frame(
+    group = factor(c("A", "A", "A", "B", "B", "B", "C", "C", "C")),
+    values = c(10.555, 0, 20.777, 0, 30.333, NA, NA, NA, NA)
+  )
+
+  result <- tab(data, group, statistic = "mean", values = "values")
+  copied_na_custom <- copy_tab(result, na_display = "Missing")
+  expect_true(any(grepl("Missing", copied_na_custom)))
+})

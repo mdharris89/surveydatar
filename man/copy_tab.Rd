@@ -2,25 +2,39 @@
 % Please edit documentation in R/tab.R
 \name{copy_tab}
 \alias{copy_tab}
-\title{Copy tab results to clipboard for pasting into Google Sheets}
+\title{Copy tab results to clipboard for pasting into Sheets}
 \usage{
-copy_tab(tab_result)
+copy_tab(
+  tab_result,
+  digits = NULL,
+  empty_zeros = FALSE,
+  na_display = "",
+  show_source = TRUE
+)
 }
 \arguments{
 \item{tab_result}{A tab_result object from the tab() function}
+
+\item{digits}{Number of decimal places to round values to. If NULL (default), no rounding is applied}
+
+\item{empty_zeros}{Logical. If TRUE, cells with exactly 0 values will be displayed as empty instead of "0"}
+
+\item{na_display}{Character string to display for NA values. Default is empty string ("")}
+
+\item{show_source}{Logical. If TRUE (default), includes footnote on source.}
 }
 \value{
 Invisibly returns the formatted data that was copied
 }
 \description{
 Copies a tab_result object to the clipboard in a format suitable for pasting
-into Google Sheets. Percentages are converted to decimals, base sizes are
+into Sheets. Percentages are converted to decimals, base sizes are
 included, and source information is added.
 }
 \examples{
 \dontrun{
 result <- tab(data, gender, region)
 copy_tab(result)
-# Now paste into Google Sheets
+# Now paste into Sheets
 }
 }

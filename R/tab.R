@@ -1546,13 +1546,17 @@ compute_cell <- function(base_array, row_array, col_array,
 }
 
 
-#' Copy tab results to clipboard for pasting into Google Sheets
+#' Copy tab results to clipboard for pasting into Sheets
 #'
 #' Copies a tab_result object to the clipboard in a format suitable for pasting
-#' into Google Sheets. Percentages are converted to decimals, base sizes are
+#' into Sheets. Percentages are converted to decimals, base sizes are
 #' included, and source information is added.
 #'
 #' @param tab_result A tab_result object from the tab() function
+#' @param digits Number of decimal places to round values to. If NULL (default), no rounding is applied
+#' @param empty_zeros Logical. If TRUE, cells with exactly 0 values will be displayed as empty instead of "0"
+#' @param na_display Character string to display for NA values. Default is empty string ("")
+#' @param show_source Logical. If TRUE (default), includes footnote on source.
 #' @return Invisibly returns the formatted data that was copied
 #' @export
 #'
@@ -1560,9 +1564,9 @@ compute_cell <- function(base_array, row_array, col_array,
 #' \dontrun{
 #' result <- tab(data, gender, region)
 #' copy_tab(result)
-#' # Now paste into Google Sheets
+#' # Now paste into Sheets
 #' }
-copy_tab <- function(tab_result) {
+copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display = "", show_source = TRUE) {
 
   # Validate input
   if (!inherits(tab_result, "tab_result")) {
@@ -1611,33 +1615,61 @@ copy_tab <- function(tab_result) {
   base_row_idx <- which(x_formatted$row_label == stat_obj$base_label)
 
   # Apply formatting function to all non-base rows
+  # Apply formatting function to all non-base rows
   for (col in names(output_data)[-1]) {
-    original_values <- x[[col]]
-    formatted_col <- character(length(original_values))
-
     # Get base column name if present
     base_column <- attr(tab_result, "base_column")
 
-    # Apply formatting function to all non-base rows and non-base columns
-    for (col in names(output_data)[-1]) {
-      # Skip formatting for base column
-      if (!is.null(base_column) && col == base_column) {
-        next
-      }
-      original_values <- output_data[[col]]           # <-- use output_data
-      output_data[[col]] <- vapply(
-        seq_along(original_values), function(i) {
-        if (i %in% base_row_idx) {
-          as.character(original_values[i])            # keep base as raw
-        } else if (is.numeric(original_values[i]) && !is.na(original_values[i])) {
-          stat_obj$format_fn(original_values[i])      # apply % / mean fmt
-        } else {
-          as.character(original_values[i])
-        }
-      }, character(1))
+    # Skip formatting for base column
+    if (!is.null(base_column) && col == base_column) {
+      next
     }
 
-    x_formatted[[col]] <- formatted_col
+    original_values <- output_data[[col]]
+    output_data[[col]] <- vapply(
+      seq_along(original_values), function(i) {
+        if (i %in% base_row_idx) {
+          # Handle base row values
+          val <- original_values[i]
+          if (is.na(val)) {
+            return(na_display)
+          } else if (empty_zeros && val == 0) {
+            return("")
+          } else if (!is.null(digits)) {
+            # Round base values too, format as integer if digits = 0
+            rounded_val <- round(val, digits)
+            if (digits == 0) {
+              return(as.character(as.integer(rounded_val)))
+            } else {
+              return(as.character(rounded_val))
+            }
+          } else {
+            return(as.character(val))
+          }
+        } else if (is.numeric(original_values[i])) {
+          val <- original_values[i]
+          if (is.na(val)) {
+            return(na_display)
+          } else if (empty_zeros && val == 0) {
+            return("")
+          } else {
+            # Handle custom formatting or use statistic's format function
+            if (!is.null(digits)) {
+              rounded_val <- round(val, digits)
+              if (digits == 0) {
+                return(as.character(as.integer(rounded_val)))
+              } else {
+                # Format without trailing zeros
+                return(as.character(rounded_val))
+              }
+            } else {
+              return(stat_obj$format_fn(val))
+            }
+          }
+        } else {
+          return(as.character(original_values[i]))
+        }
+      }, character(1))
   }
 
   # Create column headers row
@@ -1652,24 +1684,27 @@ copy_tab <- function(tab_result) {
   # Combine headers with data (base row is already included in tab_result)
   output_data <- rbind(headers_row, output_data)
 
-  # Add empty row for spacing
-  empty_row <- output_data[1, ]
-  empty_row[1, ] <- ""
-  output_data <- rbind(output_data, empty_row)
+  if(show_source){
+    # Add empty row for spacing
+    empty_row <- output_data[1, ]
+    empty_row[1, ] <- ""
+    output_data <- rbind(output_data, empty_row)
 
-  # Add source information row with original call
-  if (statistic_id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
-    values_var <- attr(tab_result, "values_variable")
-    call_text <- deparse(original_call, width.cutoff = 500)
-    source_info <- paste0("Table showing mean of '", values_var, "' generated by surveydatar::", paste(call_text, collapse = " "), ")")
-  } else {
-    call_text <- deparse(original_call, width.cutoff = 500)
-    source_info <- paste0("Table showing survey ", statistic_id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
+    # Add source information row with original call
+    if (statistic_id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
+      values_var <- attr(tab_result, "values_variable")
+      call_text <- deparse(original_call, width.cutoff = 500)
+      source_info <- paste0("Table showing mean of '", values_var, "' generated by surveydatar::", paste(call_text, collapse = " "), ")")
+    } else {
+      call_text <- deparse(original_call, width.cutoff = 500)
+      source_info <- paste0("Table showing survey ", statistic_id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
+    }
+
+    source_row <- output_data[1, ]
+    source_row[1, ] <- source_info
+    source_row[, -1] <- ""
+    output_data <- rbind(output_data, source_row)
   }
-  source_row <- output_data[1, ]
-  source_row[1, ] <- source_info
-  source_row[, -1] <- ""
-  output_data <- rbind(output_data, source_row)
 
   # Convert to character matrix for clipboard
   output_matrix <- as.matrix(output_data)
@@ -1683,7 +1718,7 @@ copy_tab <- function(tab_result) {
   # Copy to clipboard
   tryCatch({
     clipr::write_clip(output_string)
-    message("Table copied to clipboard. Ready to paste into Google Sheets.")
+    message("Table copied to clipboard. Ready to paste into Sheets.")
   }, error = function(e) {
     stop("Failed to copy to clipboard: ", e$message)
   })

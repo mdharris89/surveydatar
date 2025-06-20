@@ -2,7 +2,8 @@
 % Please edit documentation in R/tab.R
 \name{formula_to_array}
 \alias{formula_to_array}
-\title{Convert formula specification to numeric array}
+\title{Convert formula specification to numeric array
+Convert formula specification to numeric array}
 \usage{
 formula_to_array(formula_spec, data)
 }
@@ -15,6 +16,7 @@ formula_to_array(formula_spec, data)
 Numeric vector of length nrow(data)
 }
 \description{
+Convert formula specification to numeric array
 Convert formula specification to numeric array
 }
 \keyword{internal}
