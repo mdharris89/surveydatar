@@ -68,7 +68,7 @@ change_from <- function(var, condition) {
     }
     create_statistic("column_pct", stat_column_pct,
                      summary_row = "NET",
-                     summary_col = NULL,
+                     summary_col = "NET",
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = FALSE
     )
@@ -89,10 +89,12 @@ change_from <- function(var, condition) {
       sum(final_array) / row_total * 100
     }
     create_statistic("row_pct", stat_row_pct,
-                     summary_row = NULL,
+                     summary_row = "NET",
                      summary_col = "NET",
                      format_fn = function(x) sprintf("%.1f%%", x),
-                     requires_values = FALSE
+                     requires_values = FALSE,
+                     base_label = "Base (n)",
+                     base_orientation = "row"
     )
 
     # Count

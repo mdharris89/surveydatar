@@ -457,7 +457,7 @@ test_that("tab handles edge cases", {
   na_data <- create_test_data()
   na_data$gender <- NA
   expect_warning(
-    result <- tab(na_data, gender, remove_empty_rows = FALSE, remove_empty_cols = FALSE),
+    result <- tab(na_data, gender),
     "All values are NA or zero for the row variable"
   )
   expect_true(all(result[1, -1] == 0 | is.na(result[1, -1])))
@@ -716,7 +716,7 @@ test_that("tab handles complex filtering accurately", {
   )
 
   # Test multiple filter conditions
-  result <- tab(data, var1 * (age > 30) * (income > 1500), var2, statistic = "count", remove_empty_rows = FALSE, remove_empty_cols = FALSE)
+  result <- tab(data, var1 * (age > 30) * (income > 1500), var2, statistic = "count")
 
   # Manual calculation:
   # age > 30: rows 51-100 (50 rows)
@@ -1170,7 +1170,7 @@ test_that("edge cases with labelled variables are handled", {
   # Test with all same values
   data$satisfaction[] <- 1  # All "Very dissatisfied"
 
-  result <- tab(data, satisfaction, remove_empty_rows = FALSE, remove_empty_cols = FALSE)
+  result <- tab(data, satisfaction)
 
   # Should still create all categories, but most will be 0%
   expect_equal(nrow(result) - 2, 5)  # All 5 categories should appear
@@ -1778,7 +1778,7 @@ test_that("sd statistic calculates correctly", {
     values = c(1, 2, 3, 10, 10, 10)
   )
 
-  result <- tab(data, group, statistic = "sd", values = "values", remove_empty_rows = FALSE, remove_empty_cols = FALSE)
+  result <- tab(data, group, statistic = "sd", values = "values")
 
   # Group A: sd of (1,2,3) = 1
   # Group B: sd of (10,10,10) = 0
@@ -2173,3 +2173,97 @@ test_that("validate_statistic_variables catches inappropriate variable types", {
     validate_statistic_variables(mean_stat, rows, cols, data, dpdict = NULL)
   })
 })
+
+##### Other tests #####
+
+test_that("summary row calculation handles removed empty columns correctly", {
+  # Create test data where column "C" will be empty after filtering
+  test_data <- data.frame(
+    Q5 = c(5, 4, 3, 2, 1, 5, 4, 3),
+    Q11 = c(4, 5, 3, 2, 1, 4, 5, 3),
+    Q8coded_13 = c(1, 0, 1, 0, 1, 0, 1, 0),
+    Q9 = c(5, 5, 4, 3, 2, 5, 4, 3),
+    ad_name = c("A", "A", "B", "B", "C", "C", "D", "D"),
+    test = c(2, 2, 2, 2, 1, 1, 2, 2),
+    stringsAsFactors = FALSE
+  )
+  test_data <- realiselabelled(test_data)
+
+  # This previously caused "subscript out of bounds" error
+  # Now it should work without error
+  result <- tab(test_data,
+                rows = rows_list(
+                  "Q5 Top Box" = (Q5 >= 4),
+                  "Q11 Top Box" = (Q11 >= 4)
+                ),
+                cols = ad_name,
+                filter = (test == 2))
+
+  # Verify the result structure
+  expect_s3_class(result, "tab_result")
+
+  # Should have 4 rows: 2 data rows + NET + Base
+  expect_equal(nrow(result), 4)
+
+  # Should have 5 columns: row_label + 3 non-empty columns + Total
+  expect_equal(ncol(result), 5)
+
+  # Column names include prefix and Total column
+  expect_equal(names(result), c("row_label", "ad_name: A",  "ad_name: B", "ad_name: D", "Total"))
+
+  # NET row should be present
+  expect_true("NET" %in% result$row_label)
+
+  # Base row should be present
+  expect_true("Base (n)" %in% result$row_label)
+
+  # Verify base counts using correct column names
+  base_row <- result[result$row_label == "Base (n)", ]
+  expect_equal(as.numeric(base_row[["ad_name: A"]]), 2)
+  expect_equal(as.numeric(base_row[["ad_name: B"]]), 2)
+  expect_equal(as.numeric(base_row[["ad_name: D"]]), 2)
+  expect_equal(as.numeric(base_row[["Total"]]), 6)  # Total should be 6 (2+2+2)
+
+  # Verify that column C was indeed removed (it was empty after filter)
+  expect_false("ad_name: C" %in% names(result))
+})
+
+test_that("row bases display correctly and low_base_threshold works for row statistics", {
+  # Create data where some rows will have 0 base
+  test_data <- data.frame(
+    category = c("A", "A", "B", "B", "C", "C"),
+    region = c("East", "West", "East", "West", "East", "West"),
+    value = c(1, 1, 0, 0, 1, 1),  # B category has no valid responses
+    stringsAsFactors = FALSE
+  )
+  test_data <- realiselabelled(test_data)
+
+  # Use row_pct statistic which should show row bases
+  result <- tab(test_data,
+                rows = category,
+                cols = region,
+                filter = (value == 1),  # This makes category B have 0 base
+                statistic = "row_pct",
+                low_base_threshold = 0)  # Should remove 0-base rows
+
+  # Should have only 2 data rows (A and C, not B) + Base column
+  expect_equal(nrow(result), 2)
+
+  # Should show "Base (n)" as a column for row statistics
+  expect_true("Base (n)" %in% names(result))
+
+  # Row bases should be shown (2 for A, 2 for C)
+  expect_equal(result$`Base (n)`, c(2, 2))
+
+  # Category B should be removed (had 0 base)
+  expect_false("B" %in% result$row_label)
+
+  # Test with higher threshold
+  result2 <- tab(test_data, category, region,
+                 filter = (value == 1),
+                 statistic = "row_pct",
+                 low_base_threshold = 3)  # Should remove all rows (base=2)
+
+  expect_equal(nrow(result2), 0)  # All rows removed
+})
+

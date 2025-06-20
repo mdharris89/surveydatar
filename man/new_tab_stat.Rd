@@ -12,6 +12,7 @@ new_tab_stat(
   format_fn = NULL,
   requires_values = FALSE,
   base_label = "Base (n)",
+  base_orientation = "column",
   ...
 )
 }

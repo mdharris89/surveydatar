@@ -7,12 +7,9 @@
 #' @param weight Weight variable name (optional)
 #' @param statistic Type of statistic: "column_pct", "count", "row_pct", "mean"
 #' @param values Variable name to aggregate for value-based statistics like mean (optional)
-#' @param show_column_net Whether to show column NET/Avg
-#' @param show_column_total Whether to show a “Total” column
-#' @param remove_empty_cols Logical, whether to remove columns where all values are 0 or NA (default FALSE)
-#' @param remove_empty_rows Logical, whether to remove rows where all values are 0 or NA (default FALSE)
-#' @param hide_low_base Logical, whether to remove columns with base sizes below the threshold (default FALSE)
-#' @param low_base_threshold Numeric, minimum base size required to show a column (default 30)
+#' @param show_row_nets Whether to show NET of rows (NET row for column_pct, NET column for row_pct)
+#' @param show_col_nets Whether to show NET of columns (NET column for column_pct, NET row for row_pct)
+#' @param low_base_threshold Numeric, minimum base size required to show a column
 #' @param helpers List of custom tab_helper objects
 #' @param stats List of custom tab_stat objects
 #' @param resolve_report Whether to return variable resolution details
@@ -34,9 +31,8 @@
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
-                show_column_net = TRUE, show_column_total = TRUE,
-                remove_empty_cols = TRUE, remove_empty_rows = TRUE,
-                hide_low_base = FALSE, low_base_threshold = 30,
+                show_row_nets = TRUE, show_col_nets = TRUE,
+                low_base_threshold = 0,
                 prefix_variable_label = TRUE,
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
                 ...) {
@@ -425,7 +421,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   # Compute each cell
   for (i in seq_len(n_rows)) {
-    for (j in seq_len(n_cols)) {
+    for (j in seq_along(col_arrays)) {
       result_matrix[i, j] <- compute_cell(
         base_array = base_array,
         row_array = row_arrays[[i]],
@@ -471,67 +467,124 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   names(result_df)[-1] <- col_labels
 
-  # Track which rows and columns we keep
+  # Calculate bases early for removal decisions
+  row_bases <- numeric(length(row_arrays))
+  col_bases <- numeric(length(col_arrays))
+
+  # Calculate row bases (sum of base_array where row condition is true)
+  for (i in seq_along(row_arrays)) {
+    row_bases[i] <- sum(base_array * row_arrays[[i]])
+  }
+
+  # Calculate column bases (sum of base_array where column condition is true)
+  for (j in seq_along(col_arrays)) {
+    col_bases[j] <- sum(base_array * col_arrays[[j]])
+  }
+
+  # Determine base orientation from statistic
+  base_orientation <- stat_obj$base_orientation %||% "column"
+
+  # Remove low-base rows/columns based on threshold and orientation
   kept_row_indices <- seq_len(nrow(result_df))
-  kept_col_indices <- seq_along(col_arrays)
+  kept_col_indices <- seq_len(ncol(result_df) - 1)  # Excluding row_label column
 
-  # Remove empty rows and columns BEFORE calculating summaries
-  if (remove_empty_rows || remove_empty_cols) {
-
-    if (remove_empty_rows) {
-      # Identify non-empty rows
-      non_empty_rows <- logical(nrow(result_df))
-
-      for (i in seq_len(nrow(result_df))) {
-        data_cols <- result_df[i, -1, drop = FALSE]
-        has_values <- any(!is.na(data_cols) & data_cols != 0)
-        non_empty_rows[i] <- has_values
+  if (!is.null(low_base_threshold)) {
+    if (base_orientation == "row") {
+      # For row statistics, check row bases
+      adequate_rows <- if (low_base_threshold == 0) {
+        row_bases > 0
+      } else {
+        row_bases >= low_base_threshold
       }
-
-      if (any(non_empty_rows)) {
-        result_df <- result_df[non_empty_rows, , drop = FALSE]
-        kept_row_indices <- which(non_empty_rows)
+      if (any(adequate_rows)) {
+        kept_row_indices <- which(adequate_rows)
+        result_df <- result_df[kept_row_indices, , drop = FALSE]
         row_arrays <- row_arrays[kept_row_indices]
+        row_bases <- row_bases[kept_row_indices]
       } else {
-        # All rows empty - return minimal result
-        result_df <- result_df[FALSE, , drop = FALSE]
-        kept_row_indices <- integer(0)
+        # All rows have inadequate base
+        result_df <- result_df[0, , drop = FALSE]
         row_arrays <- list()
+        row_bases <- numeric(0)
       }
-    }
-
-    if (remove_empty_cols) {
-      # Identify non-empty columns (excluding row_label)
-      data_col_indices <- 2:ncol(result_df)
-      non_empty_cols <- logical(length(data_col_indices))
-
-      for (i in seq_along(data_col_indices)) {
-        col_idx <- data_col_indices[i]
-        col_data <- result_df[, col_idx]
-        has_values <- any(!is.na(col_data) & col_data != 0)
-        non_empty_cols[i] <- has_values
-      }
-
-      if (any(non_empty_cols)) {
-        cols_to_keep <- c(1, data_col_indices[non_empty_cols])
-        result_df <- result_df[, cols_to_keep, drop = FALSE]
-        kept_col_indices <- which(non_empty_cols)
-        col_arrays <- col_arrays[kept_col_indices]
+    } else {
+      # For column statistics (default), check column bases
+      adequate_cols <- if (low_base_threshold == 0) {
+        col_bases > 0
       } else {
-        # All columns empty
+        col_bases >= low_base_threshold
+      }
+      if (any(adequate_cols)) {
+        cols_to_keep <- c(1, which(adequate_cols) + 1)
+        result_df <- result_df[, cols_to_keep, drop = FALSE]
+        kept_col_indices <- which(adequate_cols)
+        col_arrays <- col_arrays[kept_col_indices]
+        col_bases <- col_bases[kept_col_indices]
+      } else {
+        # All columns have inadequate base
         result_df <- result_df[, 1, drop = FALSE]
-        kept_col_indices <- integer(0)
         col_arrays <- list()
+        col_bases <- numeric(0)
       }
     }
   }
 
-  # Now calculate summary row/column based on remaining data
+  # Continue with remaining logic based on remaining data
+  summary_row_label <- NULL
+  summary_row_array <- NULL
+
+  # Add summary column if specified and we have multiple remaining columns
   summary_col_label <- NULL
   summary_col_array <- NULL
 
+  # For column-oriented stats (column_pct), summary_col is NET of columns
+  # For row-oriented stats (row_pct), summary_col is NET of rows
+  show_summary_col <- if (stat_obj$base_orientation == "column") {
+    show_col_nets
+  } else {
+    show_row_nets
+  }
+
+  if (length(col_arrays) > 1 && !is.null(stat_obj$summary_col) && show_summary_col) {
+    summary_col_label <- stat_obj$summary_col
+  }
+
+  if (!is.null(summary_col_label)) {
+    # Calculate summary column based on REMAINING columns only
+    if (summary_col_label %in% c("NET", "Avg")) {
+      combined_col_matrix <- do.call(cbind, col_arrays)
+      summary_col_array   <- as.numeric(rowSums(combined_col_matrix) > 0)
+    } else {
+      # Custom summary types can be added here
+      stop("Unknown summary column type: ", summary_col_label)
+    }
+
+    # calculate the statistic for every row
+    summary_values <- numeric(nrow(result_df))
+    current_row_arrays <- row_arrays
+    for (i in seq_len(nrow(result_df))) {
+      summary_values[i] <- compute_cell(
+        base_array = base_array,
+        row_array = current_row_arrays[[i]],
+        col_array  = summary_col_array,
+        statistic  = statistic,
+        values     = values_array
+      )
+    }
+
+    # tack the column onto the table
+    result_df[[summary_col_label]] <- summary_values
+    col_arrays <- c(col_arrays, list(summary_col_array))
+  }
+
   # Add summary row if specified, multiple rows exist and requested
-  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_column_net == TRUE) {
+  show_summary_row <- if (stat_obj$base_orientation == "column") {
+    show_row_nets
+  } else {
+    show_col_nets
+  }
+
+  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_summary_row) {
     # Calculate summary array based on summary type
     if (stat_obj$summary_row %in% c("NET", "Avg")) {
       # Union of all row conditions
@@ -547,7 +600,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
     # Calculate summary values for each column
     summary_values <- numeric(length(col_arrays))
-    for (j in seq_len(n_cols)) {
+    for (j in seq_along(col_arrays)) {
       summary_values[j] <- compute_cell(
         base_array = base_array,
         row_array = summary_row_array,
@@ -570,76 +623,38 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     row_arrays <- c(row_arrays, list(summary_row_array))
   }
 
-  # Add summary column if specified and we have multiple remaining columns
-  if (length(col_arrays) > 1) {
-    if (!is.null(stat_obj$summary_col)) {
-      summary_col_label <- stat_obj$summary_col
-    } else if (show_column_total) {
-      summary_col_label <- "Total"
-    }
-  }
-
-  if (!is.null(summary_col_label)) {
-    # work out which rows belong to the summary column
-    if (summary_col_label %in% c("NET", "Avg")) {
-      combined_col_matrix <- do.call(cbind, col_arrays)
-      summary_col_array   <- as.numeric(rowSums(combined_col_matrix) > 0)
-    } else {                         # "Total"
-      summary_col_array   <- rep(1, nrow(data))
-    }
-
-    # calculate the statistic for every row
-    summary_values <- numeric(nrow(result_df))
-    current_row_arrays <- row_arrays
+  # Add base information based on statistic orientation
+  if (base_orientation == "row") {
+    # For row statistics, add base as a column
+    row_base_values <- character(nrow(result_df))
     for (i in seq_len(nrow(result_df))) {
-      summary_values[i] <- compute_cell(
-        base_array = base_array,
-        row_array = current_row_arrays[[i]],
-        col_array  = summary_col_array,
-        statistic  = statistic,
-        values     = values_array
-      )
+      if (i <= length(row_bases)) {
+        row_base_values[i] <- as.character(as.integer(row_bases[i]))
+      } else if (!is.null(summary_row_array)) {
+        # For summary rows (NET), calculate their base
+        base_val <- sum(base_array * summary_row_array)
+        row_base_values[i] <- as.character(as.integer(base_val))
+      } else {
+        row_base_values[i] <- NA_character_
+      }
+    }
+    result_df[[stat_obj$base_label]] <- row_base_values
+    attr(result_df, "base_column") <- stat_obj$base_label
+  } else {
+    # For column statistics, add base as a row (current behavior)
+    col_bases <- sapply(col_arrays, function(x) sum(base_array * x))
+
+    base_row <- data.frame(
+      row_label = stat_obj$base_label,
+      stringsAsFactors = FALSE
+    )
+
+    for (i in seq_along(col_bases)) {
+      base_row[[names(result_df)[i + 1]]] <- col_bases[i]
     }
 
-    # tack the column onto the table
-    result_df[[summary_col_label]] <- summary_values
-    col_arrays <- c(col_arrays, list(summary_col_array))
-  }
-
-  # Calculate base row for remaining columns
-  col_bases <- sapply(col_arrays, function(x) sum(base_array * x))
-
-  base_row <- data.frame(
-    row_label = stat_obj$base_label,
-    stringsAsFactors = FALSE
-  )
-
-  for (i in seq_along(col_bases)) {
-    base_row[[names(result_df)[i + 1]]] <- col_bases[i]
-  }
-
-  # Add base row
-  result_df <- rbind(result_df, base_row)
-
-  # Apply hide_low_base if requested
-  if (hide_low_base && ncol(result_df) > 1) {
-    # Find base row
-    base_row_idx <- nrow(result_df)  # Base row is always last
-    base_values <- as.numeric(result_df[base_row_idx, -1])
-
-    # Identify columns with adequate base
-    adequate_base_cols <- base_values >= low_base_threshold & !is.na(base_values)
-
-    if (any(adequate_base_cols)) {
-      cols_to_keep <- c(1, which(adequate_base_cols) + 1)
-      result_df <- result_df[, cols_to_keep, drop = FALSE]
-      # Update col_arrays to match
-      col_arrays <- col_arrays[adequate_base_cols]
-    } else {
-      # All columns have low base
-      result_df <- result_df[, 1, drop = FALSE]
-      col_arrays <- list()
-    }
+    # Add base row
+    result_df <- rbind(result_df, base_row)
   }
 
   # Store arrays for significance testing
@@ -656,7 +671,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
 
   # Store summary labels if used
-  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_column_net == TRUE) {
+  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_summary_row) {
     attr(result_df, "summary_row_label") <- stat_obj$summary_row
   }
   if (!is.null(summary_col_label)) {
@@ -789,8 +804,17 @@ print.tab_result <- function(x, ...) {
 
   # Create column letter mapping
   col_names <- names(x)[-1]
-  col_letters <- LETTERS[seq_along(col_names)]
-  names(col_letters) <- col_names
+  base_column <- attr(x, "base_column")
+
+  # Create letters only for non-base columns
+  non_base_cols <- if (!is.null(base_column)) {
+    col_names[col_names != base_column]
+  } else {
+    col_names
+  }
+
+  col_letters <- LETTERS[seq_along(non_base_cols)]
+  names(col_letters) <- non_base_cols
 
   # Create a copy for formatting to avoid modifying the original
   x_formatted        <- x
@@ -853,10 +877,21 @@ print.tab_result <- function(x, ...) {
     }, character(1))
   }
 
+  # Get base column attribute if present
+  base_column <- attr(x, "base_column")
+
   # Update column names to include letters in brackets (after formatting is complete)
+  letter_index <- 1
   for (i in seq_along(col_names)) {
     col_name <- col_names[i]
-    new_col_name <- paste0(col_name, " (", col_letters[i], ")")
+    if (!is.null(base_column) && col_name == base_column) {
+      # Don't add letter to base column
+      new_col_name <- col_name
+    } else {
+      # Add letter for non-base columns
+      new_col_name <- paste0(col_name, " (", LETTERS[letter_index], ")")
+      letter_index <- letter_index + 1
+    }
     names(x_formatted)[i + 1] <- new_col_name  # +1 to skip row_label column
   }
 
@@ -1557,9 +1592,18 @@ copy_tab <- function(tab_result) {
     original_values <- x[[col]]
     formatted_col <- character(length(original_values))
 
+    # Get base column name if present
+    base_column <- attr(tab_result, "base_column")
+
+    # Apply formatting function to all non-base rows and non-base columns
     for (col in names(output_data)[-1]) {
+      # Skip formatting for base column
+      if (!is.null(base_column) && col == base_column) {
+        next
+      }
       original_values <- output_data[[col]]           # <-- use output_data
-      output_data[[col]] <- vapply(seq_along(original_values), function(i) {
+      output_data[[col]] <- vapply(
+        seq_along(original_values), function(i) {
         if (i %in% base_row_idx) {
           as.character(original_values[i])            # keep base as raw
         } else if (is.numeric(original_values[i]) && !is.na(original_values[i])) {

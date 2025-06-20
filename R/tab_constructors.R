@@ -38,6 +38,7 @@ new_tab_stat <- function(id, processor,
                          format_fn = NULL,
                          requires_values = FALSE,
                          base_label = "Base (n)",
+                         base_orientation = "column",
                          ...) {
   stopifnot(is.character(id), length(id) == 1, nzchar(id))
   stopifnot(is.function(processor))
@@ -56,6 +57,7 @@ new_tab_stat <- function(id, processor,
       format_fn = format_fn,
       requires_values = requires_values,
       base_label = base_label,
+      base_orientation = base_orientation,
       ...
     ),
     class = "tab_stat"
@@ -95,6 +97,7 @@ create_statistic <- function(id, processor,
                              format_fn = NULL,
                              requires_values = FALSE,
                              base_label = "Base (n)",
+                             base_orientation = "column",
                              ...) {
   if (id %in% names(.tab_registry$stats)) {
     warning("Overwriting existing statistic '", id, "'")
@@ -107,6 +110,7 @@ create_statistic <- function(id, processor,
                       format_fn    = format_fn,
                       requires_values = requires_values,
                       base_label   = base_label,
+                      base_orientation = base_orientation,
                       ...)
 
   .tab_registry$stats[[id]] <- obj
