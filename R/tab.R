@@ -1300,6 +1300,24 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
   }
 }
 
+#' Prepare data for expression evaluation by converting haven_labelled to numeric
+#' @param data Data frame
+#' @return Data frame with haven_labelled variables converted to numeric
+#' @keywords internal
+prepare_eval_data <- function(data) {
+  # Convert haven_labelled to numeric, preserve everything else
+  data[] <- lapply(data, function(x) {
+    if (inherits(x, "haven_labelled")) {
+      as.numeric(x)
+    } else {
+      x
+    }
+  })
+  data
+}
+
+#' Convert formula specification to numeric array
+
 #' Convert formula specification to numeric array
 #'
 #' @param formula_spec Parsed formula specification
@@ -1345,8 +1363,9 @@ formula_to_array <- function(formula_spec, data) {
     }
 
   } else if (formula_spec$type == "expression") {
-    # Evaluate the expression
-    expr_result <- rlang::eval_tidy(formula_spec$components$expr, data)
+    # Evaluate the expression with numeric-only data
+    eval_data <- prepare_eval_data(data)
+    expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
     if (!is.logical(expr_result) && !is.numeric(expr_result)) {
       stop("Expression must evaluate to logical or numeric")
     }
@@ -1357,9 +1376,10 @@ formula_to_array <- function(formula_spec, data) {
     result <- result * process_helper(formula_spec, data)
 
   } else if (formula_spec$type == "numeric_expression") {
-    # Evaluate numeric expressions in data context
+    # Evaluate numeric expressions in data context with numeric-only data
     tryCatch({
-      expr_result <- rlang::eval_tidy(formula_spec$components$expr, data)
+      eval_data <- prepare_eval_data(data)
+      expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
       if (!is.numeric(expr_result)) {
         stop("Expression must evaluate to numeric values")
       }
