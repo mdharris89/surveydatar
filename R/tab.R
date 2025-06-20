@@ -550,14 +550,16 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
 
   if (!is.null(summary_col_label)) {
-    # Calculate summary column based on REMAINING columns only
-    if (summary_col_label %in% c("NET", "Avg")) {
-      combined_col_matrix <- do.call(cbind, col_arrays)
-      summary_col_array   <- as.numeric(rowSums(combined_col_matrix) > 0)
-    } else {
-      # Custom summary types can be added here
-      stop("Unknown summary column type: ", summary_col_label)
+    # Calculate summary column using the statistic's column calculator
+    if (is.null(stat_obj$summary_col_calculator)) {
+      stop("Statistic '", stat_obj$id, "' has summary_col='", summary_col_label,
+           "' but no summary_col_calculator defined")
     }
+
+    summary_col_array <- stat_obj$summary_col_calculator(
+      arrays = col_arrays,
+      base_array = base_array
+    )
 
     # calculate the statistic for every row
     summary_values <- numeric(nrow(result_df))
@@ -585,18 +587,16 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
 
   if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_summary_row) {
-    # Calculate summary array based on summary type
-    if (stat_obj$summary_row %in% c("NET", "Avg")) {
-      # Union of all row conditions
-      combined_row_matrix <- do.call(cbind, row_arrays)
-      summary_row_array <- as.numeric(rowSums(combined_row_matrix) > 0)
-    } else if (stat_obj$summary_row == "Total") {
-      # Simple total
-      summary_row_array <- rep(1, nrow(data))
-    } else {
-      # Custom summary types can be added here
-      stop("Unknown summary row type: ", stat_obj$summary_row)
+    # Calculate summary row using the statistic's row calculator
+    if (is.null(stat_obj$summary_row_calculator)) {
+      stop("Statistic '", stat_obj$id, "' has summary_row='", stat_obj$summary_row,
+           "' but no summary_row_calculator defined")
     }
+
+    summary_row_array <- stat_obj$summary_row_calculator(
+      arrays = row_arrays,
+      base_array = base_array
+    )
 
     # Calculate summary values for each column
     summary_values <- numeric(length(col_arrays))
@@ -626,16 +626,16 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Add base information based on statistic orientation
   if (base_orientation == "row") {
     # For row statistics, add base as a column
-    row_base_values <- character(nrow(result_df))
+    row_base_values <- numeric(nrow(result_df))
     for (i in seq_len(nrow(result_df))) {
       if (i <= length(row_bases)) {
-        row_base_values[i] <- as.character(as.integer(row_bases[i]))
+        row_base_values[i] <- as.integer(row_bases[i])
       } else if (!is.null(summary_row_array)) {
         # For summary rows (NET), calculate their base
         base_val <- sum(base_array * summary_row_array)
-        row_base_values[i] <- as.character(as.integer(base_val))
+        row_base_values[i] <- as.integer(base_val)
       } else {
-        row_base_values[i] <- NA_character_
+        row_base_values[i] <- NA_real_
       }
     }
     result_df[[stat_obj$base_label]] <- row_base_values
@@ -824,8 +824,11 @@ print.tab_result <- function(x, ...) {
     orig <- x[[col]]
     col_idx <- which(names(x_formatted) == col) - 1  # Adjust for row_label column
 
+    # Check if this column is the base column
+    is_base_column <- !is.null(base_column) && col == base_column
+
     x_formatted[[col]] <- vapply(seq_along(orig), function(i) {
-      if (i %in% base_row_idx) {
+      if (i %in% base_row_idx || is_base_column) {
         as.character(orig[i])
       } else if (is.numeric(orig[i]) && !is.na(orig[i])) {
         formatted_val <- stat_obj$format_fn(orig[i])

@@ -12,8 +12,8 @@ tab(
   weight = NULL,
   statistic = c("column_pct", "count", "row_pct", "mean"),
   values = NULL,
-  show_column_net = TRUE,
-  show_column_total = TRUE,
+  show_row_nets = TRUE,
+  show_col_nets = TRUE,
   low_base_threshold = 0,
   prefix_variable_label = TRUE,
   helpers = NULL,
@@ -37,9 +37,9 @@ tab(
 
 \item{values}{Variable name to aggregate for value-based statistics like mean (optional)}
 
-\item{show_column_net}{Whether to show column NET/Avg}
+\item{show_row_nets}{Whether to show NET of rows (NET row for column_pct, NET column for row_pct)}
 
-\item{show_column_total}{Whether to show a “Total” column}
+\item{show_col_nets}{Whether to show NET of columns (NET column for column_pct, NET row for row_pct)}
 
 \item{low_base_threshold}{Numeric, minimum base size required to show a column}
 

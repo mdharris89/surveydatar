@@ -9,6 +9,8 @@ new_tab_stat(
   processor,
   summary_row = NULL,
   summary_col = NULL,
+  summary_row_calculator = NULL,
+  summary_col_calculator = NULL,
   format_fn = NULL,
   requires_values = FALSE,
   base_label = "Base (n)",

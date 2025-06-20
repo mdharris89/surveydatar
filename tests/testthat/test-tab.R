@@ -407,7 +407,7 @@ test_that("different statistics compute correctly", {
   # Row percentage
   result_row_pct <- tab(data, gender, region, statistic = "row_pct")
   # Each row should sum to 100%
-  row_sums <- rowSums(apply(result_row_pct[c(TRUE, TRUE, FALSE), c(FALSE, TRUE, TRUE, TRUE, TRUE)], 2, function(x) {
+  row_sums <- rowSums(apply(result_row_pct[c(TRUE, TRUE, FALSE), c(FALSE, TRUE, TRUE, TRUE, TRUE, FALSE)], 2, function(x) {
     as.numeric(gsub("%", "", x))
   }))
   expect_true(all(abs(row_sums - 100) < 0.1))
@@ -599,8 +599,8 @@ test_that("tab calculates row percentages accurately", {
   expect_equal(as.numeric(gsub("%", "", result[2, "var2: Y"])), 58.33, tolerance = 0.1)
 
   # Verify rows sum to 100%
-  row_a_sum <- sum(as.numeric(gsub("%", "", result[1, -1])))-100
-  row_b_sum <- sum(as.numeric(gsub("%", "", result[2, -1])))-100
+  row_a_sum <- sum(as.numeric(gsub("%", "", result[1, 2:(ncol(result)-2)])))
+  row_b_sum <- sum(as.numeric(gsub("%", "", result[2, 2:(ncol(result)-2)])))
   expect_equal(row_a_sum, 100, tolerance = 0.1)
   expect_equal(row_b_sum, 100, tolerance = 0.1)
 })
@@ -849,14 +849,14 @@ test_that("NET column is added for row_pct statistic with multiple columns", {
 
   result <- tab(data, gender, region, statistic = "row_pct")
 
-  # Should have 3 columns: row_label, North, South, NET
-  expect_equal(ncol(result), 4)
+  # Should have 5 columns: row_label, North, South, NET, Base
+  expect_equal(ncol(result), 5)
 
   # Check that NET column exists
   expect_true("NET" %in% names(result))
 
-  # NET should be the last data column (before any future additions)
-  expect_equal(names(result)[ncol(result)], "NET")
+  # NET should be the second last data column (before Base)
+  expect_equal(names(result)[ncol(result)-1], "NET")
 })
 
 test_that("NET column calculates correctly for row_pct statistic", {
@@ -921,8 +921,8 @@ test_that("NET not added for single column", {
   result <- tab(data, var1, single_col, statistic = "row_pct")
   expect_false("NET" %in% names(result))
 
-  # Should only have: row_label + single_col = 2 columns
-  expect_equal(ncol(result), 2)
+  # Should only have: row_label + single_col + Base = 3 columns
+  expect_equal(ncol(result), 3)
 })
 
 test_that("NET calculations with complex filtering", {
@@ -956,7 +956,7 @@ test_that("NET base sizes calculated correctly", {
   )
 
   # Test NET column base for row_pct
-  result <- tab(data, var1, var2, weight = "weight", statistic = "row_pct")
+  result <- tab(data, var1, var2, weight = "weight", statistic = "column_pct")
 
   # Check that base row includes NET column
   base_row <- result[result$row_label == "Base (n)", ]
@@ -2208,8 +2208,8 @@ test_that("summary row calculation handles removed empty columns correctly", {
   # Should have 5 columns: row_label + 3 non-empty columns + Total
   expect_equal(ncol(result), 5)
 
-  # Column names include prefix and Total column
-  expect_equal(names(result), c("row_label", "ad_name: A",  "ad_name: B", "ad_name: D", "Total"))
+  # Column names include prefix and NET column
+  expect_equal(names(result), c("row_label", "ad_name: A",  "ad_name: B", "ad_name: D", "NET"))
 
   # NET row should be present
   expect_true("NET" %in% result$row_label)
@@ -2222,7 +2222,7 @@ test_that("summary row calculation handles removed empty columns correctly", {
   expect_equal(as.numeric(base_row[["ad_name: A"]]), 2)
   expect_equal(as.numeric(base_row[["ad_name: B"]]), 2)
   expect_equal(as.numeric(base_row[["ad_name: D"]]), 2)
-  expect_equal(as.numeric(base_row[["Total"]]), 6)  # Total should be 6 (2+2+2)
+  expect_equal(as.numeric(base_row[["NET"]]), 6)  # Total should be 6 (2+2+2)
 
   # Verify that column C was indeed removed (it was empty after filter)
   expect_false("ad_name: C" %in% names(result))
@@ -2246,14 +2246,14 @@ test_that("row bases display correctly and low_base_threshold works for row stat
                 statistic = "row_pct",
                 low_base_threshold = 0)  # Should remove 0-base rows
 
-  # Should have only 2 data rows (A and C, not B) + Base column
-  expect_equal(nrow(result), 2)
+  # Should have only 3 data rows (A and C, not B) + NET
+  expect_equal(nrow(result), 3)
 
   # Should show "Base (n)" as a column for row statistics
   expect_true("Base (n)" %in% names(result))
 
-  # Row bases should be shown (2 for A, 2 for C)
-  expect_equal(result$`Base (n)`, c(2, 2))
+  # Row bases should be shown (2 for A, 2 for C, 4 for NET)
+  expect_equal(result$`Base (n)`, c(2, 2, 4))
 
   # Category B should be removed (had 0 base)
   expect_false("B" %in% result$row_label)

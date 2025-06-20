@@ -49,6 +49,23 @@ change_from <- function(var, condition) {
   # Only register if not already registered (avoid duplicates)
   if (!"count" %in% names(.tab_registry$stats)) {
 
+    # SUMMARY CALCULATORS ------------------------------------------------
+
+    calc_union <- function(arrays, base_array) {
+      combined_matrix <- do.call(cbind, arrays)
+      as.numeric(rowSums(combined_matrix) > 0)
+    }
+
+    calc_not_union <- function(arrays, base_array) {
+      combined_matrix <- do.call(cbind, arrays)
+      as.numeric(rowSums(combined_matrix) == 0)
+    }
+
+    calc_intersection <- function(arrays, base_array) {
+      combined_matrix <- do.call(cbind, arrays)
+      as.numeric(rowSums(combined_matrix) == ncol(combined_matrix))
+    }
+
     # STATISTICS --------------------------------------------------------
 
     # Column percentage
@@ -69,6 +86,8 @@ change_from <- function(var, condition) {
     create_statistic("column_pct", stat_column_pct,
                      summary_row = "NET",
                      summary_col = "NET",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = FALSE
     )
@@ -91,6 +110,8 @@ change_from <- function(var, condition) {
     create_statistic("row_pct", stat_row_pct,
                      summary_row = "NET",
                      summary_col = "NET",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = FALSE,
                      base_label = "Base (n)",
@@ -109,7 +130,9 @@ change_from <- function(var, condition) {
     }
     create_statistic("count", stat_count,
                      summary_row = "NET",
-                     summary_col = NULL,
+                     summary_col = "Total",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) as.character(x),
                      requires_values = FALSE
     )
@@ -139,7 +162,9 @@ change_from <- function(var, condition) {
     }
     create_statistic("mean", stat_mean,
                      summary_row = "Avg",
-                     summary_col = NULL,
+                     summary_col = "Avg",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.2f", x),
                      requires_values = TRUE,
                      base_label = "Base (n)"
@@ -168,8 +193,10 @@ change_from <- function(var, condition) {
       median(cell_values, na.rm = TRUE)
     }
     create_statistic("median", stat_median,
-                     summary_row = NULL,
-                     summary_col = NULL,
+                     summary_row = "Total",
+                     summary_col = "Total",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f", x),
                      requires_values = TRUE,
                      base_label = "Base (n)"
@@ -198,8 +225,10 @@ change_from <- function(var, condition) {
       sd(cell_values, na.rm = TRUE)
     }
     create_statistic("sd", stat_sd,
-                     summary_row = NULL,
-                     summary_col = NULL,
+                     summary_row = "Total",
+                     summary_col = "Total",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.2f", x),
                      requires_values = TRUE,
                      base_label = "Base (n)"
@@ -233,8 +262,10 @@ change_from <- function(var, condition) {
       (sd_val / abs(mean_val)) * 100
     }
     create_statistic("cv", stat_cv,
-                     summary_row = NULL,
-                     summary_col = NULL,
+                     summary_row = "Total",
+                     summary_col = "Total",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = TRUE,
                      base_label = "Base (n)"
@@ -270,7 +301,9 @@ change_from <- function(var, condition) {
     }
     create_statistic("index", stat_index,
                      summary_row = "NET",
-                     summary_col = NULL,
+                     summary_col = "NET",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.0f", x),
                      requires_values = FALSE,
                      base_label = "Base (n)"
@@ -300,8 +333,10 @@ change_from <- function(var, condition) {
     }
     # Create specific percentile statistics
     create_statistic("p25", function(...) stat_percentile(..., percentile = 25),
-                     summary_row = NULL,
-                     summary_col = NULL,
+                     summary_row = "Total",
+                     summary_col = "Total",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f", x),
                      requires_values = TRUE,
                      base_label = "Base (n)"
