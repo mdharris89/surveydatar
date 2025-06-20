@@ -457,7 +457,7 @@ test_that("tab handles edge cases", {
   na_data <- create_test_data()
   na_data$gender <- NA
   expect_warning(
-    result <- tab(na_data, gender),
+    result <- tab(na_data, gender, remove_empty_rows = FALSE, remove_empty_cols = FALSE),
     "All values are NA or zero for the row variable"
   )
   expect_true(all(result[1, -1] == 0 | is.na(result[1, -1])))
@@ -716,7 +716,7 @@ test_that("tab handles complex filtering accurately", {
   )
 
   # Test multiple filter conditions
-  result <- tab(data, var1 * (age > 30) * (income > 1500), var2, statistic = "count")
+  result <- tab(data, var1 * (age > 30) * (income > 1500), var2, statistic = "count", remove_empty_rows = FALSE, remove_empty_cols = FALSE)
 
   # Manual calculation:
   # age > 30: rows 51-100 (50 rows)
@@ -1170,7 +1170,7 @@ test_that("edge cases with labelled variables are handled", {
   # Test with all same values
   data$satisfaction[] <- 1  # All "Very dissatisfied"
 
-  result <- tab(data, satisfaction)
+  result <- tab(data, satisfaction, remove_empty_rows = FALSE, remove_empty_cols = FALSE)
 
   # Should still create all categories, but most will be 0%
   expect_equal(nrow(result) - 2, 5)  # All 5 categories should appear
@@ -1778,7 +1778,7 @@ test_that("sd statistic calculates correctly", {
     values = c(1, 2, 3, 10, 10, 10)
   )
 
-  result <- tab(data, group, statistic = "sd", values = "values")
+  result <- tab(data, group, statistic = "sd", values = "values", remove_empty_rows = FALSE, remove_empty_cols = FALSE)
 
   # Group A: sd of (1,2,3) = 1
   # Group B: sd of (10,10,10) = 0

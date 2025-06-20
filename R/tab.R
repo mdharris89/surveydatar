@@ -612,11 +612,11 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       if (any(non_empty_rows)) {
         result_df <- result_df[non_empty_rows, , drop = FALSE]
         # Also subset the row arrays to match
-        final_row_arrays <- final_row_arrays[c(which(non_empty_rows), length(final_row_arrays))]
+        row_arrays <- row_arrays[non_empty_rows]
       } else {
         # If all rows are empty, keep the structure but with empty data
         result_df <- result_df[FALSE, , drop = FALSE]
-        final_row_arrays <- final_row_arrays[length(final_row_arrays)]  # Keep only base array
+        row_arrays <- list()  # Empty list for consistency
       }
     }
 
@@ -638,13 +638,11 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       if (length(cols_to_keep) > 1) {
         result_df <- result_df[, cols_to_keep, drop = FALSE]
         # Also subset the column arrays to match (excluding any summary columns)
-        if (length(final_col_arrays) == length(data_col_indices)) {
-          final_col_arrays <- final_col_arrays[non_empty_cols]
-        }
+        col_arrays <- col_arrays[non_empty_cols]
       } else {
         # If all data columns are empty, keep just the row_label column
         result_df <- result_df[, 1, drop = FALSE]
-        final_col_arrays <- list()
+        col_arrays <- list()
       }
     }
   }
