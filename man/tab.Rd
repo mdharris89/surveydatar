@@ -14,6 +14,10 @@ tab(
   values = NULL,
   show_column_net = TRUE,
   show_column_total = TRUE,
+  remove_empty_cols = TRUE,
+  remove_empty_rows = TRUE,
+  hide_low_base = FALSE,
+  low_base_threshold = 30,
   prefix_variable_label = TRUE,
   helpers = NULL,
   stats = NULL,
@@ -39,6 +43,14 @@ tab(
 \item{show_column_net}{Whether to show column NET/Avg}
 
 \item{show_column_total}{Whether to show a “Total” column}
+
+\item{remove_empty_cols}{Logical, whether to remove columns where all values are 0 or NA (default FALSE)}
+
+\item{remove_empty_rows}{Logical, whether to remove rows where all values are 0 or NA (default FALSE)}
+
+\item{hide_low_base}{Logical, whether to remove columns with base sizes below the threshold (default FALSE)}
+
+\item{low_base_threshold}{Numeric, minimum base size required to show a column (default 30)}
 
 \item{helpers}{List of custom tab_helper objects}
 

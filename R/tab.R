@@ -9,6 +9,10 @@
 #' @param values Variable name to aggregate for value-based statistics like mean (optional)
 #' @param show_column_net Whether to show column NET/Avg
 #' @param show_column_total Whether to show a “Total” column
+#' @param remove_empty_cols Logical, whether to remove columns where all values are 0 or NA (default FALSE)
+#' @param remove_empty_rows Logical, whether to remove rows where all values are 0 or NA (default FALSE)
+#' @param hide_low_base Logical, whether to remove columns with base sizes below the threshold (default FALSE)
+#' @param low_base_threshold Numeric, minimum base size required to show a column (default 30)
 #' @param helpers List of custom tab_helper objects
 #' @param stats List of custom tab_stat objects
 #' @param resolve_report Whether to return variable resolution details
@@ -31,6 +35,8 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
                 show_column_net = TRUE, show_column_total = TRUE,
+                remove_empty_cols = TRUE, remove_empty_rows = TRUE,
+                hide_low_base = FALSE, low_base_threshold = 30,
                 prefix_variable_label = TRUE,
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
                 ...) {
@@ -588,8 +594,97 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
   }
 
+  # Remove empty rows and columns if requested
+  if (remove_empty_rows || remove_empty_cols) {
+
+    if (remove_empty_rows) {
+      # Identify non-empty rows (excluding base row considerations)
+      non_empty_rows <- logical(nrow(result_df))
+
+      for (i in seq_len(nrow(result_df))) {
+        # Check if any data column has non-zero, non-NA values
+        data_cols <- result_df[i, -1, drop = FALSE]  # Exclude row_label column
+        has_values <- any(!is.na(data_cols) & data_cols != 0)
+        non_empty_rows[i] <- has_values
+      }
+
+      # Keep only non-empty rows
+      if (any(non_empty_rows)) {
+        result_df <- result_df[non_empty_rows, , drop = FALSE]
+        # Also subset the row arrays to match
+        final_row_arrays <- final_row_arrays[c(which(non_empty_rows), length(final_row_arrays))]
+      } else {
+        # If all rows are empty, keep the structure but with empty data
+        result_df <- result_df[FALSE, , drop = FALSE]
+        final_row_arrays <- final_row_arrays[length(final_row_arrays)]  # Keep only base array
+      }
+    }
+
+    if (remove_empty_cols) {
+      # Identify non-empty columns (excluding row_label column)
+      data_col_indices <- 2:ncol(result_df)  # Skip row_label column
+      non_empty_cols <- logical(length(data_col_indices))
+
+      for (i in seq_along(data_col_indices)) {
+        col_idx <- data_col_indices[i]
+        col_data <- result_df[, col_idx]
+        # Check if any value in this column is non-zero, non-NA
+        has_values <- any(!is.na(col_data) & col_data != 0)
+        non_empty_cols[i] <- has_values
+      }
+
+      # Keep row_label column plus non-empty data columns
+      cols_to_keep <- c(1, data_col_indices[non_empty_cols])
+      if (length(cols_to_keep) > 1) {
+        result_df <- result_df[, cols_to_keep, drop = FALSE]
+        # Also subset the column arrays to match (excluding any summary columns)
+        if (length(final_col_arrays) == length(data_col_indices)) {
+          final_col_arrays <- final_col_arrays[non_empty_cols]
+        }
+      } else {
+        # If all data columns are empty, keep just the row_label column
+        result_df <- result_df[, 1, drop = FALSE]
+        final_col_arrays <- list()
+      }
+    }
+  }
+
   # Add base row to the result
   result_df <- rbind(result_df, base_row)
+
+  # Remove low base columns if requested
+  if (hide_low_base) {
+    # Find the base row
+    base_row_idx <- which(result_df$row_label == stat_obj$base_label)
+
+    if (length(base_row_idx) == 1) {
+      # Get base values for each column (excluding row_label column)
+      base_values <- result_df[base_row_idx, -1, drop = FALSE]
+
+      # Identify columns with adequate base sizes
+      adequate_base_cols <- logical(ncol(base_values))
+      for (i in seq_len(ncol(base_values))) {
+        base_val <- base_values[1, i]
+        # Check if base is above threshold (handle NA values)
+        adequate_base_cols[i] <- !is.na(base_val) && base_val >= low_base_threshold
+      }
+
+      # Keep row_label column plus columns with adequate base
+      cols_to_keep <- c(1, which(adequate_base_cols) + 1)  # +1 to account for row_label column
+
+      if (length(cols_to_keep) > 1) {
+        result_df <- result_df[, cols_to_keep, drop = FALSE]
+        # Also subset the column arrays to match
+        if (length(final_col_arrays) == length(adequate_base_cols)) {
+          final_col_arrays <- final_col_arrays[adequate_base_cols]
+        }
+      } else {
+        # If all columns have low base, keep just the row_label column
+        result_df <- result_df[, 1, drop = FALSE]
+        final_col_arrays <- list()
+      }
+    }
+  }
 
   # Store statistic
   attr(result_df, "statistic") <- statistic
