@@ -1363,8 +1363,12 @@ formula_to_array <- function(formula_spec, data) {
     }
 
   } else if (formula_spec$type == "expression") {
-    # Evaluate the expression with numeric-only data
-    eval_data <- prepare_eval_data(data)
+    # Extract variables referenced in the expression
+    expr_vars <- all.vars(formula_spec$components$expr)
+    # Create subset with only needed variables
+    data_subset <- data[, expr_vars, drop = FALSE]
+    # Evaluate the expression with numeric-only data for relevant variables
+    eval_data <- prepare_eval_data(data_subset)
     expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
     if (!is.logical(expr_result) && !is.numeric(expr_result)) {
       stop("Expression must evaluate to logical or numeric")
@@ -1378,7 +1382,11 @@ formula_to_array <- function(formula_spec, data) {
   } else if (formula_spec$type == "numeric_expression") {
     # Evaluate numeric expressions in data context with numeric-only data
     tryCatch({
-      eval_data <- prepare_eval_data(data)
+      # Extract variables referenced in the expression
+      expr_vars <- all.vars(formula_spec$components$expr)
+      # Create subset with only needed variables
+      data_subset <- data[, expr_vars, drop = FALSE]
+      eval_data <- prepare_eval_data(data_subset)
       expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
       if (!is.numeric(expr_result)) {
         stop("Expression must evaluate to numeric values")
@@ -1436,7 +1444,12 @@ process_helper <- function(formula_spec, data) {
       } else {
         # It's a regular expression - evaluate in data context
         tryCatch({
-          evaluated_args[[i]] <- rlang::eval_tidy(arg, data)
+          # Extract variables referenced in the argument expression
+          expr_vars <- all.vars(arg)
+          # Create subset with only needed variables
+          data_subset <- data[, expr_vars, drop = FALSE]
+          eval_data <- prepare_eval_data(data_subset)
+          evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
         }, error = function(e) {
           stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
         })
@@ -1447,7 +1460,12 @@ process_helper <- function(formula_spec, data) {
     } else {
       # Simple argument - evaluate directly
       tryCatch({
-        evaluated_args[[i]] <- rlang::eval_tidy(arg, data)
+        # Extract variables referenced in the argument expression
+        expr_vars <- all.vars(arg)
+        # Create subset with only needed variables
+        data_subset <- data[, expr_vars, drop = FALSE]
+        eval_data <- prepare_eval_data(data_subset)
+        evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
       }, error = function(e) {
         stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
       })
