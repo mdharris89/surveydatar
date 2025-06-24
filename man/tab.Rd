@@ -15,7 +15,7 @@ tab(
   show_row_nets = TRUE,
   show_col_nets = TRUE,
   low_base_threshold = 0,
-  prefix_variable_label = TRUE,
+  label_mode = c("smart", "full", "suffix"),
   helpers = NULL,
   stats = NULL,
   resolve_report = FALSE,
@@ -42,6 +42,15 @@ tab(
 \item{show_col_nets}{Whether to show NET of columns (NET column for column_pct, NET row for row_pct)}
 
 \item{low_base_threshold}{Numeric, minimum base size required to show a column}
+
+\item{label_mode}{Character string specifying how labels should be displayed:
+\itemize{
+\item \code{"smart"}: Show suffixes for multi-item questions, full labels
+for single items
+\item \code{"full"}: Always show full variable labels
+\item \code{"suffix"}: Show question suffixes when available, otherwise
+extract from label
+}}
 
 \item{helpers}{List of custom tab_helper objects}
 

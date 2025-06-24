@@ -10,6 +10,14 @@
 #' @param show_row_nets Whether to show NET of rows (NET row for column_pct, NET column for row_pct)
 #' @param show_col_nets Whether to show NET of columns (NET column for column_pct, NET row for row_pct)
 #' @param low_base_threshold Numeric, minimum base size required to show a column
+#' @param label_mode Character string specifying how labels should be displayed:
+#'   \itemize{
+#'     \item \code{"smart"}: Show suffixes for multi-item questions, full labels
+#'           for single items
+#'     \item \code{"full"}: Always show full variable labels (default)
+#'     \item \code{"suffix"}: Show question suffixes when available, otherwise
+#'           extract from label
+#'   }
 #' @param helpers List of custom tab_helper objects
 #' @param stats List of custom tab_stat objects
 #' @param resolve_report Whether to return variable resolution details
@@ -33,7 +41,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 values = NULL,
                 show_row_nets = TRUE, show_col_nets = TRUE,
                 low_base_threshold = 0,
-                prefix_variable_label = TRUE,
+                label_mode = "full",
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
                 ...) {
 
@@ -342,7 +350,22 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Expand variables for rows
   rows_expanded <- list()
   for (row_spec in rows_parsed) {
-    expanded <- expand_variables(row_spec, data, dpdict, statistic_id, values_var = NULL, prefix_variable_label)
+    expanded <- expand_variables(row_spec, data, dpdict, statistic_id, values_var = NULL, label_mode = label_mode)
+    for (exp in expanded) {
+      # Only set group_label if we're dealing with rows_list (multiple named specs)
+      if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
+        exp$group_label <- row_spec$label
+      }
+      # For simple cases like tab(data, gender), group_label stays NULL
+      rows_expanded <- append(rows_expanded, list(exp))
+    }
+  }
+
+  rows_expanded <- list()
+  for (row_spec in rows_parsed) {
+    expanded <- expand_variables(row_spec, data, dpdict, statistic_id, values,
+                                 label_mode = label_mode)
+
     for (exp in expanded) {
       # Only set group_label if we're dealing with rows_list (multiple named specs)
       if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
@@ -357,7 +380,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   if (!is.null(cols_parsed)) {
     cols_expanded <- list()
     for (col_spec in cols_parsed) {
-      expanded <- expand_variables(col_spec, data, dpdict, statistic_id, values_var = NULL, prefix_variable_label)
+      expanded <- expand_variables(col_spec, data, dpdict, statistic_id, values_var = NULL, label_mode)
       cols_expanded <- append(cols_expanded, expanded)
     }
   } else {
@@ -1043,42 +1066,142 @@ get_var_label <- function(var_name, dpdict = NULL) {
   return(var_name)
 }
 
-#' Get display label based on prefix_variable_label setting
+#' Get display label based on label mode
+#'
 #' @param var_name Variable name
 #' @param dpdict Data dictionary
-#' @param prefix_variable_label Whether to include variable prefix
-#' @param category_name Category name for expanded variables (NULL for non-expanded)
+#' @param label_mode One of "full", "suffix", or "smart"
+#' @param category_name For expanded categorical variables
+#' @param data Optional data frame for separator detection
+#' @return Character string label
 #' @keywords internal
-get_display_label <- function(var_name, dpdict = NULL, prefix_variable_label = TRUE, category_name = NULL) {
-  if (prefix_variable_label) {
-    base_label <- get_var_label(var_name, dpdict)
-    if (!is.null(category_name)) {
-      return(paste0(base_label, ": ", category_name))
-    } else {
-      return(base_label)
-    }
+get_display_label <- function(var_name, dpdict = NULL, label_mode = "full", category_name = NULL, data = NULL) {
+
+  # Get var info from dpdict if available
+  var_idx <- if (!is.null(dpdict) && var_name %in% dpdict$variable_names) {
+    match(var_name, dpdict$variable_names)
   } else {
-    if (!is.null(category_name)) {
-      # For expanded variables, just return the category name
-      return(category_name)
-    } else {
-      # For non-expanded variables, try to extract suffix
-      full_label <- get_var_label(var_name, dpdict)
-      separators <- c(" - ", ": ", " | ", " / ")
+    NA
+  }
 
-      for (sep in separators) {
-        if (grepl(sep, full_label, fixed = TRUE)) {
-          parts <- strsplit(full_label, sep, fixed = TRUE)[[1]]
-          if (length(parts) > 1) {
-            return(trimws(parts[length(parts)]))
-          }
-        }
+  # Handle each mode
+  switch(label_mode,
+         "full" = {
+           if (!is.null(category_name)) {
+             base_label <- if (!is.na(var_idx)) dpdict$variable_labels[var_idx] else var_name
+             paste0(base_label, ": ", category_name)
+           } else {
+             if (!is.na(var_idx)) dpdict$variable_labels[var_idx] else var_name
+           }
+         },
+
+         "suffix" = {
+           if (!is.null(category_name)) {
+             category_name
+           } else if (!is.na(var_idx)) {
+             if ("question_suffix" %in% names(dpdict) &&
+                 !is.na(dpdict$question_suffix[var_idx]) &&
+                 nzchar(dpdict$question_suffix[var_idx])) {
+               dpdict$question_suffix[var_idx]
+             } else {
+               # Updated call with dpdict and data parameters
+               extract_suffix_from_label(dpdict$variable_labels[var_idx], dpdict, data)
+             }
+           } else {
+             var_name
+           }
+         },
+
+         "smart" = {
+           if (!is.null(category_name)) {
+             category_name
+           } else {
+             # Check if multi-item question
+             is_multi <- if (!is.na(var_idx) && "singlevariablequestion" %in% names(dpdict)) {
+               !isTRUE(dpdict$singlevariablequestion[var_idx])
+             } else if (!is.na(var_idx) && "question_group" %in% names(dpdict)) {
+               qgroup <- dpdict$question_group[var_idx]
+               sum(dpdict$question_group == qgroup, na.rm = TRUE) > 1
+             } else {
+               FALSE  # Assume single-item, will use full label
+             }
+
+             if (is_multi) {
+               # Multi-item: use suffix
+               if (!is.na(var_idx) && "question_suffix" %in% names(dpdict) &&
+                   !is.na(dpdict$question_suffix[var_idx])) {
+                 dpdict$question_suffix[var_idx]
+               } else if (!is.na(var_idx)) {
+                 # Updated call with dpdict and data parameters
+                 extract_suffix_from_label(dpdict$variable_labels[var_idx], dpdict, data)
+               } else {
+                 var_name
+               }
+             } else {
+               # Single item: use full
+               if (!is.na(var_idx)) dpdict$variable_labels[var_idx] else var_name
+             }
+           }
+         },
+
+         # Default fallback
+         stop("Invalid label_mode: ", label_mode)
+  )
+}
+
+#' Extract suffix from a label string using detected separator patterns
+#' @param label Variable label to extract suffix from
+#' @param dpdict Optional data dictionary containing separator patterns
+#' @param data Optional data frame to detect separators from if dpdict lacks patterns
+#' @keywords internal
+extract_suffix_from_label <- function(label, dpdict = NULL, data = NULL) {
+  if (is.null(label) || is.na(label) || !nzchar(label)) {
+    return(label)
+  }
+
+  # Try to get separator patterns from dpdict
+  separators <- NULL
+  if (!is.null(dpdict)) {
+    sep_patterns <- attr(dpdict, "sep_patterns")
+    if (!is.null(sep_patterns)) {
+      # Use statement_sep first (most relevant for suffixes), then prefix_sep
+      if (!is.na(sep_patterns[["statement_sep"]])) {
+        separators <- c(sep_patterns[["statement_sep"]])
       }
-
-      # If no separator found, return full label
-      return(full_label)
+      if (!is.na(sep_patterns[["prefix_sep"]])) {
+        separators <- c(separators, sep_patterns[["prefix_sep"]])
+      }
     }
   }
+
+  # If no separators from dpdict, try to detect from data
+  if (is.null(separators) && !is.null(data)) {
+    sep_analysis <- check_seps(data)
+    if (!is.na(sep_analysis$separators[["statement_sep"]])) {
+      separators <- c(sep_analysis$separators[["statement_sep"]])
+    }
+    if (!is.na(sep_analysis$separators[["prefix_sep"]])) {
+      separators <- c(separators, sep_analysis$separators[["prefix_sep"]])
+    }
+  }
+
+  # Fall back to common defaults if no patterns detected
+  if (is.null(separators) || length(separators) == 0) {
+    separators <- c(" - ", ": ", " | ", " / ")
+  }
+
+  # Try each separator
+  for (sep in separators) {
+    if (grepl(sep, label, fixed = TRUE)) {
+      parts <- strsplit(label, sep, fixed = TRUE)[[1]]
+      if (length(parts) > 1) {
+        suffix <- trimws(parts[length(parts)])
+        if (nzchar(suffix)) return(suffix)
+      }
+    }
+  }
+
+  label
 }
 
 #' Expand variables and question groups into individual components
@@ -1089,7 +1212,7 @@ get_display_label <- function(var_name, dpdict = NULL, prefix_variable_label = T
 #' @param statistic_id The ID of the statistic being calculated
 #' @return List of expanded variable specifications
 #' @keywords internal
-expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL, values_var = NULL, prefix_variable_label = TRUE) {
+expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL, values_var = NULL, label_mode = "smart") {
   # Handle complex expressions by recursively expanding components
   if (is.list(var_spec) && !is.null(var_spec$type)) {
 
@@ -1101,7 +1224,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
     if (var_spec$type == "multiplication") {
       # Expand each component and return all combinations
       expanded_components <- lapply(var_spec$components, function(comp) {
-        expand_variables(comp, data, dpdict, statistic_id, values_var, prefix_variable_label)
+        expand_variables(comp, data, dpdict, statistic_id, values_var, label_mode)
       })
 
       # Create combinations of all expanded components
@@ -1150,7 +1273,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
             list(
               type = "expression",
               components = list(expr = call("==", as.name(var_name), labels[i])),
-              label = get_display_label(var_name, dpdict, prefix_variable_label, names(labels)[i])
+              label = get_display_label(var_name, dpdict, label_mode, names(labels)[i], data)
             )
           }))
         } else if (is.factor(var_data)) {
@@ -1159,7 +1282,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
             list(
               type = "expression",
               components = list(expr = call("==", as.name(var_name), labels[i])),
-              label = get_display_label(var_name, dpdict, prefix_variable_label, levs[i])
+              label = get_display_label(var_name, dpdict, label_mode, levs[i], data)
             )
           }))
         } else {
@@ -1171,7 +1294,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
           return(list(list(
             type = "simple",
             components = list(var = var_spec),
-            label = get_display_label(var_spec, dpdict, prefix_variable_label)
+            label = get_display_label(var_spec, dpdict, label_mode, NULL, data)
           )))
         } else {
           return(list(var_spec))
@@ -1189,7 +1312,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         list(
           type = "expression",
           components = list(expr = call("==", as.name(var_name), labels[i])),
-          label = get_display_label(var_name, dpdict, prefix_variable_label, names(labels)[i])
+          label = get_display_label(var_name, dpdict, label_mode, names(labels)[i])
         )
       }))
     }
@@ -1201,7 +1324,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         list(
           type = "expression",
           components = list(expr = call("==", as.name(var_name), lev)),
-          label = get_display_label(var_name, dpdict, prefix_variable_label, lev)
+          label = get_display_label(var_name, dpdict, label_mode, lev, data)
         )
       }))
     }
@@ -1212,8 +1335,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         return(list(list(
           type = "simple",
           components = list(var = var_spec),
-          label = get_display_label(var_spec, dpdict, prefix_variable_label)
-        )))
+          label = get_display_label(var_spec, dpdict, label_mode, NULL, data))))
       } else {
         return(list(var_spec))
       }
@@ -1225,7 +1347,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
         return(list(list(
           type = "simple",
           components = list(var = var_spec),
-          label = get_display_label(var_spec, dpdict, prefix_variable_label)
+          label = get_display_label(var_spec, dpdict, label_mode, NULL, data)
         )))
       } else {
         return(list(var_spec))
@@ -1255,7 +1377,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
       # Recursively expand each variable found in the question group
       all_expanded <- list()
       for (v in exact_match_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, prefix_variable_label)
+        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, label_mode)
         all_expanded <- append(all_expanded, expanded)
       }
       return(all_expanded)
@@ -1271,7 +1393,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
       # Recursively expand each variable found in the matching groups
       all_expanded <- list()
       for (v in group_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, prefix_variable_label)
+        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, label_mode)
         all_expanded <- append(all_expanded, expanded)
       }
       return(all_expanded)
@@ -1293,7 +1415,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
     return(list(list(
       type = "simple",
       components = list(var = var_spec),
-      label = get_display_label(var_spec, dpdict, prefix_variable_label)
+      label = get_display_label(var_spec, dpdict, label_mode, NULL, data)
     )))
   } else {
     return(list(var_spec))

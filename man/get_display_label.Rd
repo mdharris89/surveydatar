@@ -2,12 +2,12 @@
 % Please edit documentation in R/tab.R
 \name{get_display_label}
 \alias{get_display_label}
-\title{Get display label based on prefix_variable_label setting}
+\title{Get display label based on label mode}
 \usage{
 get_display_label(
   var_name,
   dpdict = NULL,
-  prefix_variable_label = TRUE,
+  label_mode = "full",
   category_name = NULL
 )
 }
@@ -16,11 +16,14 @@ get_display_label(
 
 \item{dpdict}{Data dictionary}
 
-\item{prefix_variable_label}{Whether to include variable prefix}
+\item{label_mode}{One of "full", "suffix", or "smart"}
 
-\item{category_name}{Category name for expanded variables (NULL for non-expanded)}
+\item{category_name}{For expanded categorical variables}
+}
+\value{
+Character string label
 }
 \description{
-Get display label based on prefix_variable_label setting
+Get display label based on label mode
 }
 \keyword{internal}

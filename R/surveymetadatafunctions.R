@@ -377,18 +377,18 @@ check_seps <- function(temp_dat,
 
   # get var name patterns
   if(is.null(var_name_seps_to_check)){
-    var_name_seps_to_check <- "[[:punct:]]"
-  } else {
-    var_name_seps_to_check <- puncts_to_pattern(var_name_seps_to_check)
+    var_name_seps_to_check <- c("_", ".")
   }
+  var_name_seps_to_check <- puncts_to_pattern(var_name_seps_to_check)
+
   var_name_patterns <- check_seps_from_regex(var_names, regex_pattern = "^[A-Za-z]+[0-9A-Za-z]*", seps_to_check = var_name_seps_to_check)
 
   # then get prefix patterns. we assume that whitespace follows any label prefix.
   if(is.null(prefixes_to_check)){
-    prefixes_to_check <- "[[:punct:]][[:space:]]"
-  } else {
-    prefixes_to_check <- puncts_to_pattern(prefixes_to_check)
+    prefixes_to_check <- c(": ", ". ", "- ", "___")
   }
+  prefixes_to_check <- puncts_to_pattern(prefixes_to_check)
+
   prefix_patterns <- check_seps_from_regex(var_labels, regex_pattern = "^[A-Za-z]+[-_.,0-9A-Za-z]*[A-Za-z0-9]", seps_to_check = prefixes_to_check)
 
   # then look for statement separators. we remove any prefixes first.
@@ -407,10 +407,10 @@ check_seps <- function(temp_dat,
     }
   }
   if(is.null(statement_seps_to_check)){
-    statement_seps_to_check <- "[[:space:]][[:punct:]][[:space:]]"
-  } else {
-    statement_seps_to_check <- puncts_to_pattern(statement_seps_to_check)
+    statement_seps_to_check <- c(" - ", " | ", " : ", "_")
   }
+  statement_seps_to_check <- puncts_to_pattern(statement_seps_to_check)
+
   statement_patterns <- check_seps_from_regex(labels_without_prefixes, regex_pattern = "^.*", seps_to_check = statement_seps_to_check)
 
   # Compile results
@@ -421,7 +421,7 @@ check_seps <- function(temp_dat,
   )
 
   results$consistency <- c(
-    var_name_sep = length(var_name_patterns$separators) <= 1 && var_name_patterns$consistent,
+    var_name_sep = length(var_name_patterns$separators) <= 1 && all(var_name_patterns$consistent),
     prefix_sep = length(prefix_patterns$separators) <= 1 && all(prefix_patterns$consistent),
     statement_sep = length(statement_patterns$separators) <= 1 && all(statement_patterns$consistent)
   )

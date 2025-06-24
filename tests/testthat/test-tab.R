@@ -2312,3 +2312,206 @@ test_that("copy_tab handles digits, empty_zeros and na_display parameters", {
   copied_na_custom <- copy_tab(result, na_display = "Missing")
   expect_true(any(grepl("Missing", copied_na_custom)))
 })
+
+
+
+
+
+# Test smart labelling functionality
+
+# Helper function to create test data with various separator patterns
+create_test_dpdict_for_smart_labelling <- function(sep_patterns = NULL) {
+  dpdict <- data.frame(
+    variable_names = c("q1_1", "q1_2", "q1_3", "q2", "q3_a", "q3_b"),
+    variable_labels = c(
+      "Satisfaction - Very satisfied",
+      "Satisfaction - Somewhat satisfied",
+      "Satisfaction - Not satisfied",
+      "Overall rating",
+      "Brand preference - Brand A",
+      "Brand preference - Brand B"
+    ),
+    question_group = c("q1", "q1", "q1", "q2", "q3", "q3"),
+    question_suffix = c("Very satisfied", "Somewhat satisfied", "Not satisfied",
+                        NA, "Brand A", "Brand B"),
+    singlevariablequestion = c(FALSE, FALSE, FALSE, TRUE, FALSE, FALSE),
+    stringsAsFactors = FALSE
+  )
+
+  if (!is.null(sep_patterns)) {
+    attr(dpdict, "sep_patterns") <- sep_patterns
+  }
+
+  return(dpdict)
+}
+
+# Test 1: Basic smart labelling logic
+test_that("smart labelling shows suffixes for multi-item questions and full labels for single items", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+
+  # Multi-item question should use suffix
+  result_multi <- get_display_label("q1_1", dpdict, label_mode = "smart")
+  expect_equal(result_multi, "Very satisfied")
+
+  # Single item should use full label
+  result_single <- get_display_label("q2", dpdict, label_mode = "smart")
+  expect_equal(result_single, "Overall rating")
+})
+
+# Test 2: Smart labelling with singlevariablequestion column
+test_that("smart labelling respects singlevariablequestion column", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+
+  # Multi-item (singlevariablequestion = FALSE) should use suffix
+  result <- get_display_label("q1_1", dpdict, label_mode = "smart")
+  expect_equal(result, "Very satisfied")
+
+  # Single item (singlevariablequestion = TRUE) should use full label
+  result <- get_display_label("q2", dpdict, label_mode = "smart")
+  expect_equal(result, "Overall rating")
+})
+
+# Test 3: Smart labelling fallback to question_group counting
+test_that("smart labelling falls back to question_group counting when singlevariablequestion missing", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+  dpdict$singlevariablequestion <- NULL  # Remove column
+
+  # Should count question_group members
+  result_multi <- get_display_label("q1_1", dpdict, label_mode = "smart")
+  expect_equal(result_multi, "Very satisfied")
+
+  result_single <- get_display_label("q2", dpdict, label_mode = "smart")
+  expect_equal(result_single, "Overall rating")
+})
+
+# Test 4: Smart labelling with category names (expanded variables)
+test_that("smart labelling uses category names for expanded variables", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+
+  result <- get_display_label("q1_1", dpdict, label_mode = "smart", category_name = "Yes")
+  expect_equal(result, "Yes")
+})
+
+# Test 5: Suffix extraction with different separators
+test_that("extract_suffix_from_label works with various separators", {
+  # Test with dpdict containing separator patterns
+  sep_patterns <- list(statement_sep = " - ", prefix_sep = ": ")
+  dpdict <- create_test_dpdict_for_smart_labelling(sep_patterns)
+
+  result1 <- extract_suffix_from_label("Question - Answer", dpdict)
+  expect_equal(result1, "Answer")
+
+  result2 <- extract_suffix_from_label("Q1: Statement - Detail", dpdict)
+  expect_equal(result2, "Detail")
+})
+
+# Test 6: Suffix extraction fallback to defaults
+test_that("extract_suffix_from_label falls back to default separators", {
+  result1 <- extract_suffix_from_label("Question - Answer", NULL, NULL)
+  expect_equal(result1, "Answer")
+
+  result2 <- extract_suffix_from_label("Question: Answer", NULL, NULL)
+  expect_equal(result2, "Answer")
+
+  result3 <- extract_suffix_from_label("Question | Answer", NULL, NULL)
+  expect_equal(result3, "Answer")
+
+  result4 <- extract_suffix_from_label("Question / Answer", NULL, NULL)
+  expect_equal(result4, "Answer")
+})
+
+# Test 7: Suffix extraction with question_suffix column
+test_that("smart labelling prefers question_suffix when available", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+
+  result <- get_display_label("q1_1", dpdict, label_mode = "smart")
+  expect_equal(result, "Very satisfied")  # From question_suffix, not extracted
+})
+
+# Test 8: Full and suffix modes work correctly
+test_that("full and suffix label modes work correctly", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+
+  # Full mode
+  result_full <- get_display_label("q1_1", dpdict, label_mode = "full")
+  expect_equal(result_full, "Satisfaction - Very satisfied")
+
+  # Suffix mode
+  result_suffix <- get_display_label("q1_1", dpdict, label_mode = "suffix")
+  expect_equal(result_suffix, "Very satisfied")
+})
+
+# Test 9: Full mode with category names
+test_that("full mode correctly combines base label with category name", {
+  dpdict <- create_test_dpdict_for_smart_labelling()
+
+  result <- get_display_label("q1_1", dpdict, label_mode = "full", category_name = "Selected")
+  expect_equal(result, "Satisfaction - Very satisfied: Selected")
+})
+
+# Test 10: Handling missing dpdict or variable
+test_that("get_display_label handles missing dpdict gracefully", {
+  # No dpdict - should return variable name
+  result <- get_display_label("test_var", NULL, label_mode = "smart")
+  expect_equal(result, "test_var")
+
+  # Variable not in dpdict - should return variable name
+  dpdict <- create_test_dpdict_for_smart_labelling()
+  result <- get_display_label("missing_var", dpdict, label_mode = "smart")
+  expect_equal(result, "missing_var")
+})
+
+# Test 11: Edge cases for suffix extraction
+test_that("extract_suffix_from_label handles edge cases", {
+  # Empty or NULL input
+  expect_equal(extract_suffix_from_label(NULL), NULL)
+  expect_equal(extract_suffix_from_label(NA_character_), NA_character_)
+  expect_equal(extract_suffix_from_label(""), "")
+
+  # No separator found - should return original
+  result <- extract_suffix_from_label("No separator here", NULL, NULL)
+  expect_equal(result, "No separator here")
+
+  # Multiple separators - should use last part
+  result <- extract_suffix_from_label("Part1 - Part2 - Part3", NULL, NULL)
+  expect_equal(result, "Part3")
+})
+
+# Test 12: Smart labelling default behavior when neither column exists
+test_that("smart labelling defaults to full mode when metadata columns missing", {
+  dpdict <- data.frame(
+    variable_names = "test_var",
+    variable_labels = "Test Variable",
+    stringsAsFactors = FALSE
+  )
+
+  # Should default to full label (single item behavior)
+  result <- get_display_label("test_var", dpdict, label_mode = "smart")
+  expect_equal(result, "Test Variable")
+})
+
+# Test 13: Integration test with realistic dpdict structure
+test_that("smart labelling works with realistic survey data structure", {
+  # Create dpdict similar to what would be generated by create_dict_with_metadata
+  dpdict <- data.frame(
+    variable_names = c("satisfaction_overall", "satisfaction_service", "satisfaction_price", "gender"),
+    variable_labels = c(
+      "Overall satisfaction - How satisfied are you overall?",
+      "Service satisfaction - How satisfied are you with service?",
+      "Price satisfaction - How satisfied are you with pricing?",
+      "Gender"
+    ),
+    question_group = c("satisfaction", "satisfaction", "satisfaction", "gender"),
+    singlevariablequestion = c(FALSE, FALSE, FALSE, TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  # Multi-item questions should show extracted suffixes
+  result1 <- get_display_label("satisfaction_overall", dpdict, label_mode = "smart")
+  expect_equal(result1, "How satisfied are you overall?")
+
+  # Single item should show full label
+  result2 <- get_display_label("gender", dpdict, label_mode = "smart")
+  expect_equal(result2, "Gender")
+})
+
