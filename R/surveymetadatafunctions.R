@@ -183,33 +183,24 @@ datamap_questions <- function(survey_obj, view_or_return = "view"){
 
   out <- data.frame(question_group = unique_question_groups, stringsAsFactors = FALSE)
 
-  out$question_types <- sapply(unique_question_groups, function(x) {
-    paste(unique(temp_dpdict$questiontype[temp_dpdict$question_group == x]), collapse = " ")
-  })
-
   out$var_count <- sapply(unique_question_groups, function(x) sum(temp_dpdict$question_group == x))
 
   first_indices <- match(unique_question_groups, temp_dpdict$question_group)
+  first_var_names <- temp_dpdict$variable_names[first_indices]
+
+  out$first_var_question_type <- temp_dpdict$questiontype[first_indices]
   out$first_var_label <- temp_dpdict$variable_labels[first_indices]
-  out$first_var_name <- temp_dpdict$variable_names[first_indices]
+  out$first_var_name <- first_var_names
+  out$first_var_class <- sapply(temp_dat[first_var_names], function(x) paste(class(x), collapse = ", "))
 
-  out$var_classes <- sapply(unique_question_groups, function(x) {
-    classes <- unique(sapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], class))
-    paste(classes, collapse = " ")
+  out$first_var_values <- lapply(temp_dat[first_var_names], function(v) {
+    if (inherits(v, "haven_labelled")) {
+      v <- haven::zap_labels(v)
+    }
+    unique(v)
   })
-  out$var_values <- lapply(unique_question_groups, function(x) {
-    unique(unlist(lapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], function(v) {
-      if (inherits(v, "haven_labelled")) {
-        v <- haven::zap_labels(v)
-      }
-      unique(v)
-    })))
-  })
-  out$unique_values_count <- sapply(out$var_values, length)
-
-  out$var_labels <- lapply(unique_question_groups, function(x) {
-    unique(unlist(lapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], sjlabelled::get_labels)))
-  })
+  out$first_var_unique_count <- sapply(out$first_var_values, length)
+  out$first_var_labels <- lapply(temp_dat[first_var_names], sjlabelled::get_labels)
 
   if (view_or_return == "view") {
     my_view(out, paste0("datamap_questions ", deparse(substitute(survey_obj))))
