@@ -152,16 +152,24 @@ datamap_internal <- function(temp_dat, view_or_return = "view") {
 #' provides a convenient view similar to SPSS variables like datamap, but by question group instead of individual variables.
 #'
 #' @param survey_obj A survey_data object containing the survey data and metadata.
+#' @param view_or_return "view" to call View, or "return" to return the summary as a dataframe
 #'
 #' @return a data frame with columns for question_group, var_count, first_var_label, first_var_name, var_classes, var_values, var_labels, and question_types
 #' @export
 #'
 #' @examples
 #' datamap_questions(create_survey_data(get_big_test_dat(10)))
-datamap_questions <- function(survey_obj){
+datamap_questions <- function(survey_obj, view_or_return = "view"){
 
   if (!is.survey_data(survey_obj)) {
     stop("Input must be a survey_data object")
+  }
+
+  match.arg(view_or_return, c("view", "return"))
+
+  if (view_or_return == "view" && !(interactive())) {
+    view_or_return <- "return"
+    warning("View only possible in RStudio. Will instead return the summary")
   }
 
   temp_dat <- survey_obj$dat
@@ -203,7 +211,12 @@ datamap_questions <- function(survey_obj){
     unique(unlist(lapply(temp_dat[temp_dpdict$variable_names[temp_dpdict$question_group == x]], sjlabelled::get_labels)))
   })
 
-  return(out)
+  if (view_or_return == "view") {
+    my_view(out, paste0("datamap_questions ", deparse(substitute(survey_obj))))
+    return(invisible(out))
+  } else {
+    return(out)
+  }
 }
 
 ##### functions for creating metadata #####
