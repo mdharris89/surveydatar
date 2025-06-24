@@ -30,6 +30,8 @@ new_tab_helper <- function(id, processor, ...) {
 #' @param format_fn Function to format values
 #' @param requires_values Whether 'values' parameter required
 #' @param base_label Label for Base row
+#' @param base_orientation Whether to add bases below columns or next to rows
+#' @param vectorized_processor Optionally use vectorised statistic computation
 #' @param ... Additional attributes
 #' @keywords internal
 new_tab_stat <- function(id, processor,
@@ -41,6 +43,7 @@ new_tab_stat <- function(id, processor,
                          requires_values = FALSE,
                          base_label = "Base (n)",
                          base_orientation = "column",
+                         vectorized_processor = NULL,
                          ...) {
   stopifnot(is.character(id), length(id) == 1, nzchar(id))
   stopifnot(is.function(processor))
@@ -54,6 +57,7 @@ new_tab_stat <- function(id, processor,
     list(
       id = id,
       processor = processor,
+      vectorized_processor = vectorized_processor,
       summary_row = summary_row,
       summary_col = summary_col,
       summary_row_calculator = summary_row_calculator,
@@ -92,6 +96,8 @@ create_helper <- function(id, processor, ...) {
 #' @param format_fn Function to format values for display
 #' @param requires_values Whether this statistic requires a 'values' parameter
 #' @param base_label Label for the base row
+#' @param base_orientation Whether to add bases below columns or next to rows
+#' @param vectorized_processor Optionally use vectorised statistic computation
 #' @param ... Additional attributes
 #' @return The created statistic object (invisibly)
 #' @export
@@ -104,6 +110,7 @@ create_statistic <- function(id, processor,
                              requires_values = FALSE,
                              base_label = "Base (n)",
                              base_orientation = "column",
+                             vectorized_processor = NULL,
                              ...) {
   if (id %in% names(.tab_registry$stats)) {
     warning("Overwriting existing statistic '", id, "'")
@@ -111,6 +118,7 @@ create_statistic <- function(id, processor,
 
   obj <- new_tab_stat(id          = id,
                       processor    = processor,
+                      vectorized_processor = vectorized_processor,
                       summary_row  = summary_row,
                       summary_col  = summary_col,
                       summary_row_calculator = summary_row_calculator,

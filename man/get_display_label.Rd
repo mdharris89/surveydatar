@@ -8,7 +8,8 @@ get_display_label(
   var_name,
   dpdict = NULL,
   label_mode = "full",
-  category_name = NULL
+  category_name = NULL,
+  data = NULL
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ get_display_label(
 \item{label_mode}{One of "full", "suffix", or "smart"}
 
 \item{category_name}{For expanded categorical variables}
+
+\item{data}{Optional data frame for separator detection}
 }
 \value{
 Character string label

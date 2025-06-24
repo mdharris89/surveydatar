@@ -9,6 +9,7 @@
 #' @param values Variable name to aggregate for value-based statistics like mean (optional)
 #' @param show_row_nets Whether to show NET of rows (NET row for column_pct, NET column for row_pct)
 #' @param show_col_nets Whether to show NET of columns (NET column for column_pct, NET row for row_pct)
+#' @param show_col_nets Whether to show Base row/column
 #' @param low_base_threshold Numeric, minimum base size required to show a column
 #' @param label_mode Character string specifying how labels should be displayed:
 #'   \itemize{
@@ -39,7 +40,7 @@
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
-                show_row_nets = TRUE, show_col_nets = TRUE,
+                show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
                 low_base_threshold = 0,
                 label_mode = "full",
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
@@ -443,17 +444,13 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
 
   # Compute each cell
-  for (i in seq_len(n_rows)) {
-    for (j in seq_along(col_arrays)) {
-      result_matrix[i, j] <- compute_cell(
-        base_array = base_array,
-        row_array = row_arrays[[i]],
-        col_array = col_arrays[[j]],
-        statistic = statistic,
-        values = values_array
-      )
-    }
-  }
+  result_matrix <- compute_cells_vectorized(
+    base_array = base_array,
+    row_arrays = row_arrays,
+    col_arrays = col_arrays,
+    statistic = statistic,
+    values = values_array
+  )
 
   # Add summary rows/columns based on statistic metadata
   stat_obj <- if (is.character(statistic)) {
@@ -464,6 +461,36 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   # Convert to data frame early
   result_df <- as.data.frame(result_matrix)
+
+  # Handle case where no rows were expanded (empty data or no matching variables)
+  if (length(rows_expanded) == 0) {
+    # Create empty result with proper structure
+    col_labels <- if (length(cols_expanded) > 0) {
+      vapply(cols_expanded, function(x) {
+        if (!is.null(x$group_label) && x$group_label != x$label) {
+          paste(x$group_label, x$label, sep = " - ")
+        } else {
+          x$label
+        }
+      }, character(1))
+    } else {
+      "Total"
+    }
+
+    empty_result <- data.frame(
+      row_label = character(0),
+      stringsAsFactors = FALSE
+    )
+    for (col_name in col_labels) {
+      empty_result[[col_name]] <- numeric(0)
+    }
+
+    class(empty_result) <- c("tab_result", "data.frame")
+    attr(empty_result, "statistic") <- statistic
+    attr(empty_result, "call") <- original_call
+
+    return(empty_result)
+  }
 
   # Add row labels
   row_labels <- vapply(rows_expanded, function(x) {
@@ -647,37 +674,39 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
 
   # Add base information based on statistic orientation
-  if (base_orientation == "row") {
-    # For row statistics, add base as a column
-    row_base_values <- numeric(nrow(result_df))
-    for (i in seq_len(nrow(result_df))) {
-      if (i <= length(row_bases)) {
-        row_base_values[i] <- as.integer(row_bases[i])
-      } else if (!is.null(summary_row_array)) {
-        # For summary rows (NET), calculate their base
-        base_val <- sum(base_array * summary_row_array)
-        row_base_values[i] <- as.integer(base_val)
-      } else {
-        row_base_values[i] <- NA_real_
+  if (show_base) {
+    if (base_orientation == "row") {
+      # For row statistics, add base as a column
+      row_base_values <- numeric(nrow(result_df))
+      for (i in seq_len(nrow(result_df))) {
+        if (i <= length(row_bases)) {
+          row_base_values[i] <- as.integer(row_bases[i])
+        } else if (!is.null(summary_row_array)) {
+          # For summary rows (NET), calculate their base
+          base_val <- sum(base_array * summary_row_array)
+          row_base_values[i] <- as.integer(base_val)
+        } else {
+          row_base_values[i] <- NA_real_
+        }
       }
+      result_df[[stat_obj$base_label]] <- row_base_values
+      attr(result_df, "base_column") <- stat_obj$base_label
+    } else {
+      # For column statistics, add base as a row (current behavior)
+      col_bases <- sapply(col_arrays, function(x) sum(base_array * x))
+
+      base_row <- data.frame(
+        row_label = stat_obj$base_label,
+        stringsAsFactors = FALSE
+      )
+
+      for (i in seq_along(col_bases)) {
+        base_row[[names(result_df)[i + 1]]] <- col_bases[i]
+      }
+
+      # Add base row
+      result_df <- rbind(result_df, base_row)
     }
-    result_df[[stat_obj$base_label]] <- row_base_values
-    attr(result_df, "base_column") <- stat_obj$base_label
-  } else {
-    # For column statistics, add base as a row (current behavior)
-    col_bases <- sapply(col_arrays, function(x) sum(base_array * x))
-
-    base_row <- data.frame(
-      row_label = stat_obj$base_label,
-      stringsAsFactors = FALSE
-    )
-
-    for (i in seq_along(col_bases)) {
-      base_row[[names(result_df)[i + 1]]] <- col_bases[i]
-    }
-
-    # Add base row
-    result_df <- rbind(result_df, base_row)
   }
 
   # Store arrays for significance testing
@@ -1685,6 +1714,69 @@ compute_cell <- function(base_array, row_array, col_array,
   }
 }
 
+
+#' Compute values for multiple cells using vectorized operations
+#'
+#' @param base_array Base array for filtering
+#' @param row_arrays List of row arrays
+#' @param col_arrays List of column arrays
+#' @param statistic Type of statistic to compute
+#' @param values Optional values array for mean calculations
+#' @return Matrix of computed cell values
+#' @keywords internal
+compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
+                                     statistic = "column_pct", values = NULL) {
+
+  n_rows <- length(row_arrays)
+  n_cols <- length(col_arrays)
+
+  # Handle empty data case
+  if (length(base_array) == 0 || n_rows == 0 || n_cols == 0) {
+    return(matrix(NA_real_, nrow = max(1, n_rows), ncol = max(1, n_cols)))
+  }
+
+  # Convert string statistic to object if needed
+  if (is.character(statistic)) {
+    stat_obj <- .tab_registry$stats[[statistic]]
+    if (is.null(stat_obj)) {
+      stop("Unknown statistic: '", statistic, "'. Available statistics: ",
+           paste(names(.tab_registry$stats), collapse = ", "))
+    }
+  } else {
+    stat_obj <- statistic
+  }
+
+  # Check if statistic has vectorized processor
+  if (!is.null(stat_obj$vectorized_processor)) {
+    # Use vectorized computation
+    row_matrix <- do.call(cbind, row_arrays)
+    col_matrix <- do.call(cbind, col_arrays)
+
+    result_matrix <- stat_obj$vectorized_processor(
+      base_array = base_array,
+      row_matrix = row_matrix,
+      col_matrix = col_matrix,
+      values = values
+    )
+  } else {
+    # Fall back to loop-based computation
+    result_matrix <- matrix(NA_real_, nrow = n_rows, ncol = n_cols)
+
+    for (i in seq_len(n_rows)) {
+      for (j in seq_len(n_cols)) {
+        result_matrix[i, j] <- compute_cell(
+          base_array = base_array,
+          row_array = row_arrays[[i]],
+          col_array = col_arrays[[j]],
+          statistic = statistic,
+          values = values
+        )
+      }
+    }
+  }
+
+  return(result_matrix)
+}
 
 #' Copy tab results to clipboard for pasting into Sheets
 #'

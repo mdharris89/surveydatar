@@ -4,10 +4,12 @@
 \alias{datamap_questions}
 \title{datamap_questions}
 \usage{
-datamap_questions(survey_obj)
+datamap_questions(survey_obj, view_or_return = "view")
 }
 \arguments{
 \item{survey_obj}{A survey_data object containing the survey data and metadata.}
+
+\item{view_or_return}{"view" to call View, or "return" to return the summary as a dataframe}
 }
 \value{
 a data frame with columns for question_group, var_count, first_var_label, first_var_name, var_classes, var_values, var_labels, and question_types

@@ -86,7 +86,7 @@ datamap.data.frame <- function(x, view_or_return = "view") {
 
 #' @export
 datamap.survey_data <- function(x, view_or_return = "view") {
-  result <- datamap_internal(x$dat, view_or_return)
+  result <- datamap_internal(x$dat, "return")
 
   # Add additional metadata from dpdict
   result$`question type` <- x$dpdict$questiontype[match(result$variable, x$dpdict$variable_names)]

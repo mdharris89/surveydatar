@@ -15,6 +15,7 @@ new_tab_stat(
   requires_values = FALSE,
   base_label = "Base (n)",
   base_orientation = "column",
+  vectorized_processor = NULL,
   ...
 )
 }
@@ -28,6 +29,10 @@ new_tab_stat(
 \item{requires_values}{Whether 'values' parameter required}
 
 \item{base_label}{Label for Base row}
+
+\item{base_orientation}{Whether to add bases below columns or next to rows}
+
+\item{vectorized_processor}{Optionally use vectorised statistic computation}
 
 \item{...}{Additional attributes}
 }

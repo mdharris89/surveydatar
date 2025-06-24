@@ -2,11 +2,18 @@
 % Please edit documentation in R/tab.R
 \name{extract_suffix_from_label}
 \alias{extract_suffix_from_label}
-\title{Extract suffix from a label string}
+\title{Extract suffix from a label string using detected separator patterns}
 \usage{
-extract_suffix_from_label(label)
+extract_suffix_from_label(label, dpdict = NULL, data = NULL)
+}
+\arguments{
+\item{label}{Variable label to extract suffix from}
+
+\item{dpdict}{Optional data dictionary containing separator patterns}
+
+\item{data}{Optional data frame to detect separators from if dpdict lacks patterns}
 }
 \description{
-Extract suffix from a label string
+Extract suffix from a label string using detected separator patterns
 }
 \keyword{internal}

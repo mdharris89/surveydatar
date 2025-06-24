@@ -15,6 +15,7 @@ create_statistic(
   requires_values = FALSE,
   base_label = "Base (n)",
   base_orientation = "column",
+  vectorized_processor = NULL,
   ...
 )
 }
@@ -32,6 +33,10 @@ create_statistic(
 \item{requires_values}{Whether this statistic requires a 'values' parameter}
 
 \item{base_label}{Label for the base row}
+
+\item{base_orientation}{Whether to add bases below columns or next to rows}
+
+\item{vectorized_processor}{Optionally use vectorised statistic computation}
 
 \item{...}{Additional attributes}
 }

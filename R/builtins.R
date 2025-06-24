@@ -83,13 +83,23 @@ change_from <- function(var, condition) {
       if (column_total == 0) return(NA_real_)
       sum(final_array) / column_total * 100
     }
+
+    stat_column_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
+      col_totals <- colSums(base_array * col_matrix)
+      cell_counts <- t(row_matrix * base_array) %*% col_matrix
+      result <- sweep(cell_counts, 2, col_totals, "/") * 100
+      result[is.nan(result)] <- NA_real_
+      result
+    }
+
     create_statistic("column_pct", stat_column_pct,
                      summary_row = "NET",
                      summary_col = "NET",
                      summary_row_calculator = calc_union,
                      summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
-                     requires_values = FALSE
+                     requires_values = FALSE,
+                     vectorized_processor = stat_column_pct_vectorized
     )
 
     # Row percentage
@@ -107,6 +117,13 @@ change_from <- function(var, condition) {
       if (row_total == 0) return(NA_real_)
       sum(final_array) / row_total * 100
     }
+    stat_row_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
+      row_totals <- colSums(base_array * row_matrix)
+      cell_counts <- t(row_matrix * base_array) %*% col_matrix
+      result <- sweep(cell_counts, 1, row_totals, "/") * 100
+      result[is.nan(result)] <- NA_real_
+      result
+    }
     create_statistic("row_pct", stat_row_pct,
                      summary_row = "NET",
                      summary_col = "NET",
@@ -115,7 +132,8 @@ change_from <- function(var, condition) {
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = FALSE,
                      base_label = "Base (n)",
-                     base_orientation = "row"
+                     base_orientation = "row",
+                     vectorized_processor = stat_row_pct_vectorized
     )
 
     # Count
@@ -128,13 +146,17 @@ change_from <- function(var, condition) {
 
       sum(base_array * row_array * col_array)
     }
+    stat_count_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
+      t(row_matrix * base_array) %*% col_matrix
+    }
     create_statistic("count", stat_count,
                      summary_row = "NET",
                      summary_col = "Total",
                      summary_row_calculator = calc_union,
                      summary_col_calculator = calc_union,
                      format_fn = function(x) as.character(x),
-                     requires_values = FALSE
+                     requires_values = FALSE,
+                     vectorized_processor = stat_count_vectorized
     )
 
     # Mean (requires values parameter)
