@@ -17,7 +17,7 @@ split_into_question_groups(
 \arguments{
 \item{temp_dpdict}{A dpdict data frame. Must contain 'variable_names' and
 'variable_labels'. A 'question_group' column will be created if it
-doesn't exist (based on variable names before \code{variable_name_sep})}
+doesn't exist (based on variable names before \code{var_name_sep})}
 
 \item{temp_dat}{The corresponding survey data dataframe.}
 
@@ -28,7 +28,7 @@ original group will be processed}
 
 \item{seps_to_use}{List specifying separators used for parsing names/labels.
 Defaults are used if not provided. See \code{\link{check_seps}}. Key elements:
-'variable_name_sep', 'prefix_sep', 'statement_sep'.}
+'var_name_sep', 'prefix_sep', 'statement_sep'.}
 
 \item{ignorelabelbeforeprefix}{Logical. If TRUE, removes substring before prefix_sep before working with variable labels.}
 
@@ -56,7 +56,7 @@ attempts to find a $question_group within a temp_dpdict with a unique suffix tha
 }
 \details{
 key function for defining survey metadata (e.g. as part of create_dict_with_metadata)
-will work within existing question groups if $question_group already exists, else will create starting $question_group from prefix to variable_name_sep
+will work within existing question groups if $question_group already exists, else will create starting $question_group from prefix to var_name_sep
 will also provide a column question_lcs which is the longest common string found within a question group (this is used to define question groups when splitbycommonlabel == TRUE)
 
 note: if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
@@ -91,7 +91,7 @@ temp_dpdict <- temp_dpdict[, !(names(temp_dpdict) \%in\% c("old_variable_names",
                                                    "old_value_labels"))]
 # basic usage
 temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
-                                         seps_to_use = list(variable_name_sep = "_",
+                                         seps_to_use = list(var_name_sep = "_",
                                          prefix_sep = ": ", statement_sep = " - "))
 
 # usage with custom configuration
@@ -100,7 +100,7 @@ config <- list(
   splitbycommonlabel = TRUE
 )
 temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
-                                         seps_to_use = list(variable_name_sep = "_",
+                                         seps_to_use = list(var_name_sep = "_",
                                          prefix_sep = ": ", statement_sep = " - "),
                                          config = config)
 }

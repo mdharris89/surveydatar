@@ -27,14 +27,15 @@ new_tab_helper <- function(id, processor, ...) {
 #' Low-level constructor for tab statistics
 #' @param id Character identifier for the statistic
 #' @param processor Function that processes the statistic
+#' @param base_calculator Function that calculates base for each cell
 #' @param format_fn Function to format values
 #' @param requires_values Whether 'values' parameter required
 #' @param base_label Label for Base row
-#' @param base_orientation Whether to add bases below columns or next to rows
 #' @param vectorized_processor Optionally use vectorised statistic computation
 #' @param ... Additional attributes
 #' @keywords internal
 new_tab_stat <- function(id, processor,
+                         base_calculator,
                          summary_row = NULL,
                          summary_col = NULL,
                          summary_row_calculator = NULL,
@@ -42,11 +43,11 @@ new_tab_stat <- function(id, processor,
                          format_fn = NULL,
                          requires_values = FALSE,
                          base_label = "Base (n)",
-                         base_orientation = "column",
                          vectorized_processor = NULL,
                          ...) {
   stopifnot(is.character(id), length(id) == 1, nzchar(id))
   stopifnot(is.function(processor))
+  stopifnot(is.function(base_calculator))
 
   # Default formatter if none provided
   if (is.null(format_fn)) {
@@ -57,6 +58,7 @@ new_tab_stat <- function(id, processor,
     list(
       id = id,
       processor = processor,
+      base_calculator = base_calculator,
       vectorized_processor = vectorized_processor,
       summary_row = summary_row,
       summary_col = summary_col,
@@ -65,7 +67,6 @@ new_tab_stat <- function(id, processor,
       format_fn = format_fn,
       requires_values = requires_values,
       base_label = base_label,
-      base_orientation = base_orientation,
       ...
     ),
     class = "tab_stat"
@@ -91,17 +92,18 @@ create_helper <- function(id, processor, ...) {
 #' Create and register a custom statistic
 #' @param id Character identifier for the statistic
 #' @param processor Function that processes the statistic
+#' @param base_calculator Function that calculates base for each cell
 #' @param summary_row Type of summary row ("NET", "Avg", "Total", or NULL)
 #' @param summary_col Type of summary column ("NET", "Avg", "Total", or NULL)
 #' @param format_fn Function to format values for display
 #' @param requires_values Whether this statistic requires a 'values' parameter
 #' @param base_label Label for the base row
-#' @param base_orientation Whether to add bases below columns or next to rows
 #' @param vectorized_processor Optionally use vectorised statistic computation
 #' @param ... Additional attributes
 #' @return The created statistic object (invisibly)
 #' @export
 create_statistic <- function(id, processor,
+                             base_calculator,
                              summary_row = NULL,
                              summary_col = NULL,
                              summary_row_calculator = NULL,
@@ -109,7 +111,6 @@ create_statistic <- function(id, processor,
                              format_fn = NULL,
                              requires_values = FALSE,
                              base_label = "Base (n)",
-                             base_orientation = "column",
                              vectorized_processor = NULL,
                              ...) {
   if (id %in% names(.tab_registry$stats)) {
@@ -118,6 +119,7 @@ create_statistic <- function(id, processor,
 
   obj <- new_tab_stat(id          = id,
                       processor    = processor,
+                      base_calculator = base_calculator,
                       vectorized_processor = vectorized_processor,
                       summary_row  = summary_row,
                       summary_col  = summary_col,
@@ -126,8 +128,28 @@ create_statistic <- function(id, processor,
                       format_fn    = format_fn,
                       requires_values = requires_values,
                       base_label   = base_label,
-                      base_orientation = base_orientation,
                       ...)
+
+  # Validate base calculator
+  tryCatch({
+    # Test with dummy data
+    test_result <- obj$base_calculator(
+      base_array = c(1, 1, 1),
+      row_array = c(1, 0, 1),
+      col_array = c(1, 1, 0),
+      values_array = c(1, 2, 3)
+    )
+
+    if (!is.numeric(test_result) || length(test_result) != 1) {
+      stop("base_calculator must return a single numeric value")
+    }
+
+    if (test_result < 0) {
+      stop("base_calculator must return a non-negative value")
+    }
+  }, error = function(e) {
+    stop("Invalid base_calculator for statistic '", id, "': ", e$message)
+  })
 
   .tab_registry$stats[[id]] <- obj
   invisible(obj)
@@ -146,8 +168,6 @@ get_helper <- function(id) {
 get_statistic <- function(id) {
   .tab_registry$stats[[id]]
 }
-
-# Add these functions to the existing R/tab-constructors.R file:
 
 #' Clear all registered helpers and statistics (useful for testing)
 #' @export
@@ -256,3 +276,98 @@ get_significance_test <- function(id) {
 list_tab_significance_tests <- function() {
   names(.tab_registry$sig_tests)
 }
+
+
+#' Built-in base calculator: Column total
+#' @description Base is the total count in the column
+#' @keywords internal
+base_column_total <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  sum(base_array * col_array)
+}
+
+#' Built-in base calculator: Row total
+#' @description Base is the total count in the row
+#' @keywords internal
+base_row_total <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  sum(base_array * row_array)
+}
+
+#' Built-in base calculator: Cell count
+#' @description Base is the count in the specific cell
+#' @keywords internal
+base_cell_count <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  sum(base_array * row_array * col_array)
+}
+
+#' Built-in base calculator: Grand total
+#' @description Base is the total count across all data
+#' @keywords internal
+base_grand_total <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  sum(base_array)
+}
+
+#' Built-in base calculator: Column total excluding NA values
+#' @description Base is the column total excluding NA in values array
+#' @keywords internal
+base_column_total_valid <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  if (is.null(values_array)) {
+    return(sum(base_array * col_array))
+  }
+  valid_mask <- !is.na(values_array)
+  sum(base_array * col_array * valid_mask)
+}
+
+#' Built-in base calculator: Row total excluding NA values
+#' @description Base is the row total excluding NA in values array
+#' @keywords internal
+base_row_total_valid <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  if (is.null(values_array)) {
+    return(sum(base_array * row_array))
+  }
+  valid_mask <- !is.na(values_array)
+  sum(base_array * row_array * valid_mask)
+}
+
+#' Built-in base calculator: Cell count excluding NA values
+#' @description Base is the cell count excluding NA in values array
+#' @keywords internal
+base_cell_count_valid <- function(base_array, row_array, col_array, values_array = NULL, ...) {
+  if (is.null(values_array)) {
+    return(sum(base_array * row_array * col_array))
+  }
+  valid_mask <- !is.na(values_array)
+  sum(base_array * row_array * col_array * valid_mask)
+}
+
+#' Export base calculators for user access
+#' @rdname base_calculators
+#' @name base_calculators
+NULL
+
+#' @export
+#' @rdname base_calculators
+base_column_total <- base_column_total
+
+#' @export
+#' @rdname base_calculators
+base_row_total <- base_row_total
+
+#' @export
+#' @rdname base_calculators
+base_cell_count <- base_cell_count
+
+#' @export
+#' @rdname base_calculators
+base_grand_total <- base_grand_total
+
+#' @export
+#' @rdname base_calculators
+base_column_total_valid <- base_column_total_valid
+
+#' @export
+#' @rdname base_calculators
+base_row_total_valid <- base_row_total_valid
+
+#' @export
+#' @rdname base_calculators
+base_cell_count_valid <- base_cell_count_valid

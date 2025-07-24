@@ -359,6 +359,14 @@ check_seps <- function(temp_dat,
     # count occurances of each sep
     sep_count <- stats::setNames(as.vector(table(ending_seps)), names(table(ending_seps)))
 
+    # prioritise most common seps
+    if(length(unique_ending_seps) > 1) {
+      # Get counts for each unique separator
+      sep_counts_ordered <- sep_count[unique_ending_seps]
+      # Sort by count (descending), maintaining original order for ties
+      unique_ending_seps <- unique_ending_seps[order(sep_counts_ordered, decreasing = TRUE)]
+    }
+
     # find examples showing each separator
     examples <- character(length(unique_ending_seps))
     names(examples) <- unique_ending_seps
@@ -710,7 +718,7 @@ standardise_survey_separators <- function(temp_dat, temp_dpdict = NULL, seps_to_
 #' @param temp_dpdict a dpdict to update
 #' @param variables_to_update optional logical vector to specify that only certain variables in the existing temp_dpdict should be updated
 #' @param seps_to_use optional specifying separators to use for processing:
-#'        - variable_name_sep: String that separates each variable within a common question, e.g. "_" for Q1_1, Q1_2.
+#'        - var_name_sep: String that separates each variable within a common question, e.g. "_" for Q1_1, Q1_2.
 #'        - prefix_sep: String. If ignorelabelbeforeprefix == TRUE, substring before prefix_sep will be removed before working with variable labels.
 #'        - statement_sep: String. For findlongest == FALSE, uses substring prior to statement_sep as commonlabel.
 #' @param ignorelabelbeforeprefix Logical. If TRUE, removes substring before prefix_sep before working with variable labels.
@@ -986,14 +994,14 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #' attempts to find a $question_group within a temp_dpdict with a unique suffix that groups variables into sensible questions
 #'
 #' key function for defining survey metadata (e.g. as part of create_dict_with_metadata)
-#' will work within existing question groups if $question_group already exists, else will create starting $question_group from prefix to variable_name_sep
+#' will work within existing question groups if $question_group already exists, else will create starting $question_group from prefix to var_name_sep
 #' will also provide a column question_lcs which is the longest common string found within a question group (this is used to define question groups when splitbycommonlabel == TRUE)
 #'
 #' note: if last variable in a question in returned dict just keeps its full string, min_common_strings may be set too high
 #'
 #' @param temp_dpdict A dpdict data frame. Must contain 'variable_names' and
 #'        'variable_labels'. A 'question_group' column will be created if it
-#'        doesn't exist (based on variable names before `variable_name_sep`)
+#'        doesn't exist (based on variable names before `var_name_sep`)
 #' @param temp_dat The corresponding survey data dataframe.
 #' @param variables_to_process Optional logical vector (length = nrow(temp_dpdict))
 #'        indicating which variables to process. If NULL (default), all are processed.
@@ -1001,7 +1009,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'        original group will be processed
 #' @param seps_to_use List specifying separators used for parsing names/labels.
 #'        Defaults are used if not provided. See \code{\link{check_seps}}. Key elements:
-#'        'variable_name_sep', 'prefix_sep', 'statement_sep'.
+#'        'var_name_sep', 'prefix_sep', 'statement_sep'.
 #' @param ignorelabelbeforeprefix Logical. If TRUE, removes substring before prefix_sep before working with variable labels.
 #' @param config Optional list with configuration settings. Can include:
 #'        - splitbyclass: Logical. If TRUE, every successive new class is given a new unique suffix.
@@ -1051,7 +1059,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'                                                    "old_value_labels"))]
 #' # basic usage
 #' temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
-#'                                          seps_to_use = list(variable_name_sep = "_",
+#'                                          seps_to_use = list(var_name_sep = "_",
 #'                                          prefix_sep = ": ", statement_sep = " - "))
 #'
 #' # usage with custom configuration
@@ -1060,7 +1068,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'   splitbycommonlabel = TRUE
 #' )
 #' temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat,
-#'                                          seps_to_use = list(variable_name_sep = "_",
+#'                                          seps_to_use = list(var_name_sep = "_",
 #'                                          prefix_sep = ": ", statement_sep = " - "),
 #'                                          config = config)
 split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_process = NULL,
@@ -1069,7 +1077,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
   # Default seps_to_use
   default_seps_to_use <- list(
-    variable_name_sep = "_",
+    var_name_sep = "_",
     prefix_sep = ": ",
     statement_sep = " - "
   )
@@ -1116,7 +1124,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
   }
 
   # Extract parameters for easier access
-  variable_name_sep <- seps_to_use$variable_name_sep
+  var_name_sep <- seps_to_use$var_name_sep
   prefix_sep <- seps_to_use$prefix_sep
   statement_sep <- seps_to_use$statement_sep
 
@@ -1137,8 +1145,8 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
     stop("temp_dpdict and temp_dat must be data frames")
   }
 
-  if (!is.character(variable_name_sep)) {
-    stop("variable_name_sep must be a character string")
+  if (!is.character(var_name_sep)) {
+    stop("var_name_sep must be a character string")
   }
 
   if (!is.numeric(noisy) || length(noisy) != 1 || noisy < 0 || noisy > 4) {
@@ -1179,7 +1187,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
   # initalise question group for those rows
   if(any(rows_to_update)) {
-    temp_dpdict$question_group[rows_to_update] <- gsub(paste0(variable_name_sep,".*"), "",
+    temp_dpdict$question_group[rows_to_update] <- gsub(paste0(var_name_sep,".*"), "",
                                                        temp_dpdict$variable_names[rows_to_update])
     # Add suffix to these initialized groups
     temp_dpdict$question_group[rows_to_update] <- paste0(temp_dpdict$question_group[rows_to_update], "_a")
@@ -2673,9 +2681,9 @@ validate_dat_dpdict_alignment <- function(temp_dat, temp_dpdict, warn_only = FAL
 #' @param check_variable_names logical. whether to check for and report on duplicate variable names.
 #' @param check_variable_labels logical. whether to check for and report on duplicate variable labels.
 #' @param check_alias_with_suffix logical. whether to check for and report on duplicate aliases with suffixes.
-#' @param ignore_variable_name_from_label if TRUE, removes any cases of paste0(new_variable_name, variable_name_sep) from new_variable_label before working
+#' @param ignore_variable_name_from_label if TRUE, removes any cases of paste0(new_variable_name, var_name_sep) from new_variable_label before working
 #' for example, would remove "SC1: ", from "SC1: Country"
-#' @param variable_name_sep specify the sep used to delineate variable name from label, e.g. ":" in "SC1: Country"
+#' @param var_name_sep specify the sep used to delineate variable name from label, e.g. ":" in "SC1: Country"
 #' @param warn_only logical. if TRUE returns warnings instead of errors
 #'
 #' @return TRUE (invisibly) if no issues, else warnings or errors
@@ -2685,10 +2693,10 @@ validate_dat_dpdict_alignment <- function(temp_dat, temp_dpdict, warn_only = FAL
 #' validate_no_dpdict_duplicates(create_dict_with_metadata(get_big_test_dat(n=10)))
 validate_no_dpdict_duplicates <- function(temp_dpdict,
                                           check_variable_names = TRUE, check_variable_labels = TRUE, check_alias_with_suffix = TRUE,
-                                          ignore_variable_name_from_label = FALSE, variable_name_sep = ": ", warn_only = FALSE){
+                                          ignore_variable_name_from_label = FALSE, var_name_sep = ": ", warn_only = FALSE){
 
   if(ignore_variable_name_from_label == TRUE){
-    temp_dpdict$variable_labels <- mapply(function(label, name) gsub(paste0(name, variable_name_sep), "", label),
+    temp_dpdict$variable_labels <- mapply(function(label, name) gsub(paste0(name, var_name_sep), "", label),
                                           temp_dpdict$variable_labels, temp_dpdict$variable_names)
   }
 

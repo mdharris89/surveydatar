@@ -10,7 +10,7 @@ validate_no_dpdict_duplicates(
   check_variable_labels = TRUE,
   check_alias_with_suffix = TRUE,
   ignore_variable_name_from_label = FALSE,
-  variable_name_sep = ": ",
+  var_name_sep = ": ",
   warn_only = FALSE
 )
 }
@@ -23,10 +23,10 @@ validate_no_dpdict_duplicates(
 
 \item{check_alias_with_suffix}{logical. whether to check for and report on duplicate aliases with suffixes.}
 
-\item{ignore_variable_name_from_label}{if TRUE, removes any cases of paste0(new_variable_name, variable_name_sep) from new_variable_label before working
+\item{ignore_variable_name_from_label}{if TRUE, removes any cases of paste0(new_variable_name, var_name_sep) from new_variable_label before working
 for example, would remove "SC1: ", from "SC1: Country"}
 
-\item{variable_name_sep}{specify the sep used to delineate variable name from label, e.g. ":" in "SC1: Country"}
+\item{var_name_sep}{specify the sep used to delineate variable name from label, e.g. ":" in "SC1: Country"}
 
 \item{warn_only}{logical. if TRUE returns warnings instead of errors}
 }

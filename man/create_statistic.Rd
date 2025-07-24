@@ -7,6 +7,7 @@
 create_statistic(
   id,
   processor,
+  base_calculator,
   summary_row = NULL,
   summary_col = NULL,
   summary_row_calculator = NULL,
@@ -14,7 +15,6 @@ create_statistic(
   format_fn = NULL,
   requires_values = FALSE,
   base_label = "Base (n)",
-  base_orientation = "column",
   vectorized_processor = NULL,
   ...
 )
@@ -23,6 +23,8 @@ create_statistic(
 \item{id}{Character identifier for the statistic}
 
 \item{processor}{Function that processes the statistic}
+
+\item{base_calculator}{Function that calculates base for each cell}
 
 \item{summary_row}{Type of summary row ("NET", "Avg", "Total", or NULL)}
 
@@ -33,8 +35,6 @@ create_statistic(
 \item{requires_values}{Whether this statistic requires a 'values' parameter}
 
 \item{base_label}{Label for the base row}
-
-\item{base_orientation}{Whether to add bases below columns or next to rows}
 
 \item{vectorized_processor}{Optionally use vectorised statistic computation}
 

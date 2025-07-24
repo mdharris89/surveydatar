@@ -5,7 +5,7 @@
 \title{Validate Variable Types for Statistics}
 \usage{
 validate_statistic_variables(
-  stat_obj,
+  statistic,
   rows_expanded,
   cols_expanded,
   data,
@@ -13,7 +13,7 @@ validate_statistic_variables(
 )
 }
 \arguments{
-\item{stat_obj}{A tab_stat object containing statistic metadata}
+\item{statistic}{A tab_stat object containing statistic metadata}
 
 \item{rows_expanded}{List of expanded row variable specifications}
 

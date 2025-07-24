@@ -19,14 +19,26 @@
 #'     \item \code{"suffix"}: Show question suffixes when available, otherwise
 #'           extract from label
 #'   }
+#' @param smart_collapse_row_labels Logical. If TRUE, intelligently collapses rows
+#'   with common prefixes when each column has at most one non-zero value per group.
+#'   Useful for reshaping categorical array data. Default is FALSE.
 #' @param helpers List of custom tab_helper objects
 #' @param stats List of custom tab_stat objects
 #' @param resolve_report Whether to return variable resolution details
 #' @param ... Additional arguments
+#' @details
+#' Base (n) Calculation:
+#' For statistics that use the 'values' parameter (like mean), the base (n)
+#' represents the count of non-NA values actually used in calculations.
+#' When different rows have varying numbers of valid values within a column
+#' (or vice versa for row-oriented statistics), the base will display NA
+#' and issue a warning. The full base matrix is stored as an attribute
+#' 'base_matrix' on the result object.
+#'
 #' @return Cross-tabulation table as data.frame
 #' @export
 #' @examples
-#' # Traditional syntaxcorrec
+#' # String syntax
 #' tab(data, "q1", "gender")
 #'
 #' # Formula syntax
@@ -43,73 +55,59 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
                 low_base_threshold = 0,
                 label_mode = "full",
+                smart_collapse_row_labels = FALSE,
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
                 ...) {
 
   # Store original call for later use
   original_call <- match.call()
 
-  # Handle statistic parameter - can be string or tab_stat object
-  if (is.character(statistic)) {
-    if (length(statistic) > 1) {
-      statistic <- match.arg(statistic)
-    }
-    # Will be resolved to object later
-  } else if (!inherits(statistic, "tab_stat")) {
-    stop("statistic must be a character string or tab_stat object")
-  }
+  ## Statistics validation and setup ------------------------------------------
 
-  # Determine statistic ID early for validation
-  statistic_id <- if (is.character(statistic)) {
-    statistic
-  } else if (inherits(statistic, "tab_stat")) {
-    statistic$id
-  } else {
-    "unknown"
-  }
-
-  # Validate values parameter based on statistic metadata
-  stat_obj <- if (is.character(statistic)) {
-    .tab_registry$stats[[statistic_id]]
-  } else {
-    statistic
-  }
-
-  if (!is.null(stat_obj)) {
-    if (stat_obj$requires_values && is.null(values)) {
-      stop(stat_obj$id, " statistic requires 'values' parameter")
-    }
-
-    if (!is.null(values) && !stat_obj$requires_values) {
-      warning("Values parameter ignored for ", stat_obj$id, " statistic")
-    }
-  }
-
-  all_stats <- .tab_registry$stats
+  # Handle custom stats registry first to create effective registry
+  effective_stats <- .tab_registry$stats
   if (!is.null(stats)) {
     if (!is.list(stats)) {
       stop("stats must be a list of tab_stat objects")
     }
-    # Check that all items are tab_stat objects
-    stat_check <- vapply(stats, inherits, logical(1), "tab_stat")
-    if (!all(stat_check)) {
+    if (!all(vapply(stats, inherits, logical(1), "tab_stat"))) {
       stop("All items in stats list must be tab_stat objects")
     }
-    # Add to registry (with potential overwrites)
-    for (stat in stats) {
-      all_stats[[stat$id]] <- stat
-    }
+    # Create temporary registry with overrides
+    effective_stats <- c(stats, .tab_registry$stats)
+    names(effective_stats) <- c(
+      vapply(stats, `[[`, character(1), "id"),
+      names(.tab_registry$stats)
+    )
+    # Remove duplicates, keeping first (custom) version
+    effective_stats <- effective_stats[!duplicated(names(effective_stats))]
   }
 
-  # Resolve statistic to object if it's still a string
+  # Resolve statistic to object
   if (is.character(statistic)) {
-    if (!statistic %in% names(all_stats)) {
-      stop("Unknown statistic: '", statistic, "'. Available: ",
-           paste(names(all_stats), collapse = ", "))
+    # Handle default arguments
+    if (length(statistic) > 1) {
+      statistic <- match.arg(statistic)
     }
-    statistic <- all_stats[[statistic]]
+    # Look up in registry
+    if (!statistic %in% names(effective_stats)) {
+      stop("Unknown statistic: '", statistic, "'. Available: ",
+           paste(names(effective_stats), collapse = ", "))
+    }
+    statistic <- effective_stats[[statistic]]
+  } else if (!inherits(statistic, "tab_stat")) {
+    stop("statistic must be a character string or tab_stat object")
   }
 
+  # Validate values parameter
+  if (statistic$requires_values && is.null(values)) {
+    stop(statistic$id, " statistic requires 'values' parameter")
+  }
+  if (!is.null(values) && !statistic$requires_values) {
+    warning("Values parameter ignored for ", statistic$id, " statistic")
+  }
+
+  ## Custom helpers validation and setup --------------------------------------
   # Merge custom helpers and stats with built-ins
   all_helpers <- .tab_registry$helpers
   if (!is.null(helpers)) {
@@ -127,6 +125,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
   }
 
+  ## Data validation and setup ------------------------------------------------
   # Extract data and dpdict if survey_data object
   if (inherits(data, "survey_data")) {
     dpdict <- data$dpdict
@@ -137,9 +136,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   # Check for empty data
   if (nrow(data) == 0) {
-    warning("Data has 0 rows. Returning empty result.")
+    stop("Data has 0 rows.")
   }
 
+  ## Expression handling ------------------------------------------------------
   if (resolve_report) {
     message("Starting variable resolution...")
   }
@@ -173,6 +173,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     var_candidates <- c(var_candidates, values)
   }
 
+  ## Variable resolution ------------------------------------------------------
   # Resolve variable names if any string candidates found
   if (length(var_candidates) > 0 && resolve_report) {
     tryCatch({
@@ -223,6 +224,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     })
   }
 
+  ## Prep base array, weights and whole-table filter ---------------------------
   base_array <- rep(1, nrow(data))
 
   # Apply weights
@@ -241,11 +243,12 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     base_array <- base_array * filter_logic
   }
 
+  ## Parse row and column specs ------------------------------------------------
   # Parse row specifications
   rows_quo <- rlang::enquo(rows)
   rows_expr <- rlang::quo_get_expr(rows_quo)
 
-  # Check if it's traditional string syntax
+  # Check if it's string syntax
   if (rlang::is_string(rows_expr)) {
     rows_parsed <- list(parse_table_formula(rows_quo, data, dpdict, all_helpers))
   } else {
@@ -254,7 +257,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       rlang::eval_tidy(rows_quo),
       error = function(e) NULL
     )
-    # Check for tab_helper BEFORE checking is_list (since tab_helper inherits from list)
+    # Check for tab_helper before checking is_list (since tab_helper inherits from list)
     if (inherits(rows_eval, "tab_helper")) {
       # It's a single helper function
       rows_parsed <- list(parse_table_formula(rows_eval, data, dpdict, all_helpers))
@@ -306,7 +309,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
         rlang::eval_tidy(cols_quo),
         error = function(e) NULL
       )
-      # Check for tab_helper BEFORE checking is_list (since tab_helper inherits from list)
+      # Check for tab_helper before checking is_list (since tab_helper inherits from list)
       if (inherits(cols_eval, "tab_helper")) {
         # It's a single helper function
         cols_parsed <- list(parse_table_formula(cols_eval, data, dpdict, all_helpers))
@@ -348,31 +351,16 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     cols_parsed <- NULL
   }
 
+  ## Variable expansion -------------------------------------------------------
   # Expand variables for rows
   rows_expanded <- list()
   for (row_spec in rows_parsed) {
-    expanded <- expand_variables(row_spec, data, dpdict, statistic_id, values_var = NULL, label_mode = label_mode)
-    for (exp in expanded) {
-      # Only set group_label if we're dealing with rows_list (multiple named specs)
-      if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
-        exp$group_label <- row_spec$label
-      }
-      # For simple cases like tab(data, gender), group_label stays NULL
-      rows_expanded <- append(rows_expanded, list(exp))
-    }
-  }
-
-  rows_expanded <- list()
-  for (row_spec in rows_parsed) {
-    expanded <- expand_variables(row_spec, data, dpdict, statistic_id, values,
+    expanded <- expand_variables(row_spec, data, dpdict, statistic$id, values,
                                  label_mode = label_mode)
-
     for (exp in expanded) {
-      # Only set group_label if we're dealing with rows_list (multiple named specs)
       if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
         exp$group_label <- row_spec$label
       }
-      # For simple cases like tab(data, gender), group_label stays NULL
       rows_expanded <- append(rows_expanded, list(exp))
     }
   }
@@ -381,7 +369,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   if (!is.null(cols_parsed)) {
     cols_expanded <- list()
     for (col_spec in cols_parsed) {
-      expanded <- expand_variables(col_spec, data, dpdict, statistic_id, values_var = NULL, label_mode)
+      expanded <- expand_variables(col_spec, data, dpdict, statistic$id, values_var = NULL, label_mode)
       cols_expanded <- append(cols_expanded, expanded)
     }
   } else {
@@ -389,45 +377,109 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
 
   # validate rows and columns for value statistics
-  if(!is.null(stat_obj) && stat_obj$requires_values){
-    validate_statistic_variables(stat_obj, rows_expanded, cols_expanded, data, dpdict)
+  if(!is.null(statistic) && statistic$requires_values){
+    # Throws error if variables inappropriate for statistic, else continues
+    validate_statistic_variables(statistic, rows_expanded, cols_expanded, data, dpdict)
   }
 
+  ## Create row, column and value arrays ---------------------------------------
   # Create arrays for each specification
-  row_arrays <- lapply(rows_expanded, function(spec) {
-    array <- formula_to_array(spec, data)
-    return(array)
-  })
+  row_arrays <- list()
+  rows_expanded_final <- list()
+
+  for (spec in rows_expanded) {
+    array_result <- formula_to_array(spec, data, dpdict)
+
+    # Check if helper returned multiple arrays
+    if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
+      # Multi-column helper - expand to multiple rows
+      for (row_name in names(array_result)) {
+        row_arrays <- append(row_arrays, list(array_result[[row_name]]))
+        # Create a new spec for each row
+        new_spec <- spec
+        new_spec$label <- row_name
+        new_spec$original_helper <- spec$helper_type
+        rows_expanded_final <- append(rows_expanded_final, list(new_spec))
+      }
+    } else {
+      # Single array
+      row_arrays <- append(row_arrays, list(array_result))
+      rows_expanded_final <- append(rows_expanded_final, list(spec))
+    }
+  }
+
+  # Update rows_expanded to reflect any expansion from multi-column helpers
+  rows_expanded <- rows_expanded_final
 
   col_arrays <- if (!is.null(cols_parsed)) {
-    lapply(cols_expanded, function(spec) {
+    arrays_list <- list()
+    expanded_specs <- list()
+
+    for (spec in cols_expanded) {
       if (spec$type == "total") {
         array <- rep(1, nrow(data))
+        arrays_list <- append(arrays_list, list(array))
+        expanded_specs <- append(expanded_specs, list(spec))
       } else {
-        array <- formula_to_array(spec, data)
+        array_result <- formula_to_array(spec, data, dpdict)
+
+        # Check if helper returned multiple arrays
+        if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
+          # Multi-column helper - add each array separately
+          for (col_name in names(array_result)) {
+            arrays_list <- append(arrays_list, list(array_result[[col_name]]))
+            # Create a new spec for each column
+            new_spec <- spec
+            new_spec$label <- col_name
+            new_spec$original_helper <- spec$helper_type
+            expanded_specs <- append(expanded_specs, list(new_spec))
+          }
+        } else {
+          # Single array
+          arrays_list <- append(arrays_list, list(array_result))
+          expanded_specs <- append(expanded_specs, list(spec))
+        }
       }
-      return(array)
-    })
+    }
+
+    # Update cols_expanded to reflect any expansion from multi-column helpers
+    cols_expanded <- expanded_specs
+    arrays_list
   } else {
     array <- rep(1, nrow(data))
     list(array)
   }
 
-  # Check for all-NA/zero arrays (indicating no valid data)
-  if (all(sapply(row_arrays, function(x) all(x == 0 | is.na(x))))) {
-    warning("All values are NA or zero for the row variable(s). Results may not be meaningful.")
+  # Check for label collisions with Base or summary rows and columns
+  meta_labels <- c(statistic$base_label)
+  if (!is.null(statistic$summary_row)) {
+    meta_labels <- c(meta_labels, statistic$summary_row)
+  }
+  if (!is.null(statistic$summary_col)) {
+    meta_labels <- c(meta_labels, statistic$summary_col)
   }
 
-  if (length(col_arrays) > 1 && all(sapply(col_arrays, function(x) all(x == 0 | is.na(x))))) {
-    warning("All values are NA or zero for the column variable(s). Results may not be meaningful.")
+  # Check row labels
+  for (spec in rows_expanded) {
+    if (spec$label %in% meta_labels) {
+      stop("Label collision detected: Row label '", spec$label,
+           "' matches a reserved meta-category label. ",
+           "Reserved labels are: ", paste(meta_labels, collapse = ", "), ". ",
+           "Please rename your data or use a custom label in rows specification.")
+    }
   }
 
-  # Build the table
-  n_rows <- length(row_arrays)
-  n_cols <- length(col_arrays)
-
-  # Initialize result matrix
-  result_matrix <- matrix(NA, nrow = n_rows, ncol = n_cols)
+  # Check column labels if they exist
+  if (!is.null(cols_parsed) && exists("cols_expanded")) {
+    for (spec in cols_expanded) {
+      if (spec$label %in% meta_labels) {
+        stop("Label collision detected: Column label '", spec$label,
+             "' matches a reserved meta-category label. ",
+             "Reserved labels are: ", paste(meta_labels, collapse = ", "), ". ",
+             "Please rename your data or use a custom label in cols specification.")
+      }
+    }
+  }
 
   # Create values array if needed
   values_array <- NULL
@@ -443,6 +495,14 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
   }
 
+  ## Calculate table ----------------------------------------------------------
+  # Build the table
+  n_rows <- length(row_arrays)
+  n_cols <- length(col_arrays)
+
+  # Initialize result matrix
+  result_matrix <- matrix(NA, nrow = n_rows, ncol = n_cols)
+
   # Compute each cell
   result_matrix <- compute_cells_vectorized(
     base_array = base_array,
@@ -452,46 +512,13 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     values = values_array
   )
 
-  # Add summary rows/columns based on statistic metadata
-  stat_obj <- if (is.character(statistic)) {
-    .tab_registry$stats[[statistic_id]]
-  } else {
-    statistic
-  }
+  # Convert to data frame
+  result_df <- as.data.frame(row_label = row_labels,
+                             result_matrix,
+                             stringsAsFactors = FALSE)
 
-  # Convert to data frame early
-  result_df <- as.data.frame(result_matrix)
 
-  # Handle case where no rows were expanded (empty data or no matching variables)
-  if (length(rows_expanded) == 0) {
-    # Create empty result with proper structure
-    col_labels <- if (length(cols_expanded) > 0) {
-      vapply(cols_expanded, function(x) {
-        if (!is.null(x$group_label) && x$group_label != x$label) {
-          paste(x$group_label, x$label, sep = " - ")
-        } else {
-          x$label
-        }
-      }, character(1))
-    } else {
-      "Total"
-    }
-
-    empty_result <- data.frame(
-      row_label = character(0),
-      stringsAsFactors = FALSE
-    )
-    for (col_name in col_labels) {
-      empty_result[[col_name]] <- numeric(0)
-    }
-
-    class(empty_result) <- c("tab_result", "data.frame")
-    attr(empty_result, "statistic") <- statistic
-    attr(empty_result, "call") <- original_call
-
-    return(empty_result)
-  }
-
+  ## Add row and column labels ------------------------------------------------
   # Add row labels
   row_labels <- vapply(rows_expanded, function(x) {
     if (!is.null(x$group_label) && x$group_label != x$label) {
@@ -506,7 +533,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     result_df
   )
 
-  # Add column names
+  # Add column labels
   col_labels <- vapply(cols_expanded, function(x) {
     if (!is.null(x$group_label) && x$group_label != x$label) {
       paste(x$group_label, x$label, sep = " - ")
@@ -517,67 +544,112 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   names(result_df)[-1] <- col_labels
 
-  # Calculate bases early for removal decisions
-  row_bases <- numeric(length(row_arrays))
-  col_bases <- numeric(length(col_arrays))
+  ## Calculate bases and remove any low-base according to low_base_threshold ----
 
-  # Calculate row bases (sum of base_array where row condition is true)
-  for (i in seq_along(row_arrays)) {
-    row_bases[i] <- sum(base_array * row_arrays[[i]])
+  base_matrix <- NULL
+
+  # Calculate base_matrix
+  if (length(col_arrays) > 0) {
+    base_matrix <- matrix(NA_real_, nrow = length(row_arrays), ncol = length(col_arrays))
+
+    for (i in seq_along(row_arrays)) {
+      for (j in seq_along(col_arrays)) {
+        base_matrix[i, j] <- statistic$base_calculator(
+          base_array = base_array,
+          row_array = row_arrays[[i]],
+          col_array = col_arrays[[j]],
+          values_array = values_array
+        )
+      }
+    }
+
+  } else {
+    # No columns - create single column base calculations
+    base_matrix <- matrix(NA_real_, nrow = length(row_arrays), ncol = 1)
+    for (i in seq_along(row_arrays)) {
+      base_matrix[i, 1] <- statistic$base_calculator(
+        base_array = base_array,
+        row_array = row_arrays[[i]],
+        col_array = rep(1, length(base_array)),  # Dummy column array
+        values_array = values_array
+      )
+    }
   }
 
-  # Calculate column bases (sum of base_array where column condition is true)
-  for (j in seq_along(col_arrays)) {
-    col_bases[j] <- sum(base_array * col_arrays[[j]])
-  }
-
-  # Determine base orientation from statistic
-  base_orientation <- stat_obj$base_orientation %||% "column"
-
-  # Remove low-base rows/columns based on threshold and orientation
+  ## Remove low-base rows/columns based on threshold ----
   kept_row_indices <- seq_len(nrow(result_df))
   kept_col_indices <- seq_len(ncol(result_df) - 1)  # Excluding row_label column
 
-  if (!is.null(low_base_threshold)) {
-    if (base_orientation == "row") {
-      # For row statistics, check row bases
-      adequate_rows <- if (low_base_threshold == 0) {
-        row_bases > 0
-      } else {
-        row_bases >= low_base_threshold
-      }
-      if (any(adequate_rows)) {
-        kept_row_indices <- which(adequate_rows)
-        result_df <- result_df[kept_row_indices, , drop = FALSE]
-        row_arrays <- row_arrays[kept_row_indices]
-        row_bases <- row_bases[kept_row_indices]
-      } else {
-        # All rows have inadequate base
-        result_df <- result_df[0, , drop = FALSE]
-        row_arrays <- list()
-        row_bases <- numeric(0)
-      }
+  if (!is.null(low_base_threshold) && !is.null(base_matrix)) {
+    # Note: Summary rows and columns are added AFTER this filtering step,
+    # so they are automatically excluded from the low_base_threshold check
+
+    # Apply threshold to each cell in the result matrix
+    # First, create a mask of which cells meet the threshold
+    if (low_base_threshold == 0) {
+      adequate_base <- base_matrix > 0
     } else {
-      # For column statistics (default), check column bases
-      adequate_cols <- if (low_base_threshold == 0) {
-        col_bases > 0
-      } else {
-        col_bases >= low_base_threshold
-      }
-      if (any(adequate_cols)) {
-        cols_to_keep <- c(1, which(adequate_cols) + 1)
-        result_df <- result_df[, cols_to_keep, drop = FALSE]
-        kept_col_indices <- which(adequate_cols)
-        col_arrays <- col_arrays[kept_col_indices]
-        col_bases <- col_bases[kept_col_indices]
-      } else {
-        # All columns have inadequate base
-        result_df <- result_df[, 1, drop = FALSE]
-        col_arrays <- list()
-        col_bases <- numeric(0)
+      adequate_base <- base_matrix >= low_base_threshold
+    }
+
+    # Replace inadequate cells with NA in result_df
+    for (i in seq_len(nrow(result_df))) {
+      for (j in seq_len(ncol(result_df) - 1)) {  # Skip row_label column
+        if (!adequate_base[i, j]) {
+          result_df[i, j + 1] <- NA  # +1 to account for row_label column
+        }
       }
     }
+
+    # Identify rows that have at least one non-NA value
+    rows_with_data <- logical(nrow(result_df))
+    for (i in seq_len(nrow(result_df))) {
+      row_values <- result_df[i, -1, drop = TRUE]  # Exclude row_label
+      rows_with_data[i] <- any(!is.na(row_values))
+    }
+
+    # Identify columns that have at least one non-NA value
+    cols_with_data <- logical(ncol(result_df) - 1)
+    for (j in seq_len(ncol(result_df) - 1)) {
+      col_values <- result_df[, j + 1, drop = TRUE]
+      cols_with_data[j] <- any(!is.na(col_values))
+    }
+
+    # Remove rows with all NA values
+    if (any(rows_with_data)) {
+      kept_row_indices <- which(rows_with_data)
+      result_df <- result_df[kept_row_indices, , drop = FALSE]
+      row_arrays <- row_arrays[kept_row_indices]
+      # Update base matrix
+      if (!is.null(base_matrix)) {
+        base_matrix <- base_matrix[kept_row_indices, , drop = FALSE]
+      }
+    } else {
+      # All rows have inadequate base
+      result_df <- result_df[0, , drop = FALSE]
+      row_arrays <- list()
+      base_matrix <- NULL
+    }
+
+    # Remove columns with all NA values
+    if (any(cols_with_data)) {
+      cols_to_keep <- c(1, which(cols_with_data) + 1)  # +1 for row_label, +1 for 1-based indexing
+      result_df <- result_df[, cols_to_keep, drop = FALSE]
+      kept_col_indices <- which(cols_with_data)
+      col_arrays <- col_arrays[kept_col_indices]
+      # Update base matrix
+      if (!is.null(base_matrix)) {
+        base_matrix <- base_matrix[, kept_col_indices, drop = FALSE]
+      }
+    } else if (length(col_arrays) > 0) {
+      # All columns have inadequate base
+      result_df <- result_df[, 1, drop = FALSE]
+      col_arrays <- list()
+      base_matrix <- NULL
+    }
   }
+
+  ## Build summary rows and columns -------------------------------------------
 
   # Continue with remaining logic based on remaining data
   summary_row_label <- NULL
@@ -587,26 +659,21 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   summary_col_label <- NULL
   summary_col_array <- NULL
 
-  # For column-oriented stats (column_pct), summary_col is NET of columns
-  # For row-oriented stats (row_pct), summary_col is NET of rows
-  show_summary_col <- if (stat_obj$base_orientation == "column") {
-    show_col_nets
-  } else {
-    show_row_nets
-  }
+  show_summary_col <- show_col_nets
+  show_summary_row <- show_row_nets
 
-  if (length(col_arrays) > 1 && !is.null(stat_obj$summary_col) && show_summary_col) {
-    summary_col_label <- stat_obj$summary_col
+  if (length(col_arrays) > 1 && !is.null(statistic$summary_col) && show_summary_col) {
+    summary_col_label <- statistic$summary_col
   }
 
   if (!is.null(summary_col_label)) {
     # Calculate summary column using the statistic's column calculator
-    if (is.null(stat_obj$summary_col_calculator)) {
-      stop("Statistic '", stat_obj$id, "' has summary_col='", summary_col_label,
+    if (is.null(statistic$summary_col_calculator)) {
+      stop("Statistic '", statistic$id, "' has summary_col='", summary_col_label,
            "' but no summary_col_calculator defined")
     }
 
-    summary_col_array <- stat_obj$summary_col_calculator(
+    summary_col_array <- statistic$summary_col_calculator(
       arrays = col_arrays,
       base_array = base_array
     )
@@ -624,26 +691,33 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       )
     }
 
-    # tack the column onto the table
+    # Add summary col to result
     result_df[[summary_col_label]] <- summary_values
     col_arrays <- c(col_arrays, list(summary_col_array))
+
+    # Update base matrix to include summary column bases
+    if (!is.null(base_matrix) && nrow(base_matrix) > 0) {
+      summary_col_bases <- numeric(nrow(base_matrix))
+      for (i in seq_len(nrow(base_matrix))) {
+        summary_col_bases[i] <- statistic$base_calculator(
+          base_array = base_array,
+          row_array = row_arrays[[i]],
+          col_array = summary_col_array,
+          values_array = values_array
+        )
+      }
+      base_matrix <- cbind(base_matrix, summary_col_bases)
+    }
   }
 
-  # Add summary row if specified, multiple rows exist and requested
-  show_summary_row <- if (stat_obj$base_orientation == "column") {
-    show_row_nets
-  } else {
-    show_col_nets
-  }
-
-  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_summary_row) {
+  if (!is.null(statistic$summary_row) && length(row_arrays) > 1 && show_summary_row) {
     # Calculate summary row using the statistic's row calculator
-    if (is.null(stat_obj$summary_row_calculator)) {
-      stop("Statistic '", stat_obj$id, "' has summary_row='", stat_obj$summary_row,
+    if (is.null(statistic$summary_row_calculator)) {
+      stop("Statistic '", statistic$id, "' has summary_row='", statistic$summary_row,
            "' but no summary_row_calculator defined")
     }
 
-    summary_row_array <- stat_obj$summary_row_calculator(
+    summary_row_array <- statistic$summary_row_calculator(
       arrays = row_arrays,
       base_array = base_array
     )
@@ -662,7 +736,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
     # Add summary row to result
     summary_row_df <- data.frame(
-      row_label = stat_obj$summary_row,
+      row_label = statistic$summary_row,
       stringsAsFactors = FALSE
     )
     for (i in seq_along(summary_values)) {
@@ -671,74 +745,162 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
     result_df <- rbind(result_df, summary_row_df)
     row_arrays <- c(row_arrays, list(summary_row_array))
+
+    # Update base matrix to include summary row bases
+    if (!is.null(base_matrix) && ncol(base_matrix) > 0) {
+      summary_row_bases <- numeric(ncol(base_matrix))
+      for (j in seq_len(ncol(base_matrix))) {
+        # Handle both regular columns and summary column
+        is_summary_column <- (!is.null(summary_col_array) && j == length(col_arrays))
+        col_array_to_use <- if (is_summary_column) {
+          summary_col_array
+        } else {
+          col_arrays[[j]]
+        }
+
+        summary_row_bases[j] <- statistic$base_calculator(
+          base_array = base_array,
+          row_array = summary_row_array,
+          col_array = col_array_to_use,
+          values_array = values_array
+        )
+      }
+      base_matrix <- rbind(base_matrix, matrix(summary_row_bases, nrow = 1))
+    }
   }
 
-  # Add base information based on statistic orientation
-  if (show_base) {
-    if (base_orientation == "row") {
-      # For row statistics, add base as a column
-      row_base_values <- numeric(nrow(result_df))
-      for (i in seq_len(nrow(result_df))) {
-        if (i <= length(row_bases)) {
-          row_base_values[i] <- as.integer(row_bases[i])
-        } else if (!is.null(summary_row_array)) {
-          # For summary rows (NET), calculate their base
-          base_val <- sum(base_array * summary_row_array)
-          row_base_values[i] <- as.integer(base_val)
-        } else {
-          row_base_values[i] <- NA_real_
+  ## Add base (using pre-calculation base matrix) ------------------------------
+  if (show_base && !is.null(base_matrix)) {
+    # Determine orientation from the base_matrix structure
+    display_as_row <- TRUE
+    display_as_column <- TRUE
+
+    if (ncol(base_matrix) > 1) {
+      # Check if bases are constant within columns
+      for (j in seq_len(ncol(base_matrix))) {
+        if (length(unique(base_matrix[, j])) > 1) {
+          display_as_row <- FALSE
+          break
         }
       }
-      result_df[[stat_obj$base_label]] <- row_base_values
-      attr(result_df, "base_column") <- stat_obj$base_label
-    } else {
-      # For column statistics, add base as a row (current behavior)
-      col_bases <- sapply(col_arrays, function(x) sum(base_array * x))
+    }
 
+    if (nrow(base_matrix) > 1) {
+      # Check if bases are constant within rows
+      for (i in seq_len(nrow(base_matrix))) {
+        if (length(unique(base_matrix[i, ])) > 1) {
+          display_as_column <- FALSE
+          break
+        }
+      }
+    }
+
+    # Decide on display format
+    if (display_as_row && !display_as_column) {
+      # Bases are constant within columns - display as row
+      base_orientation <- "column"
+    } else if (display_as_column && !display_as_row) {
+      # Bases are constant within rows - display as column
+      base_orientation <- "row"
+    } else if (display_as_row && display_as_column) {
+      # All bases are the same - default to row display
+      base_orientation <- "column"
+    } else {
+      # Bases vary in both dimensions - default to row but show warning
+      base_orientation <- "column"
+      warning("Base values vary within both rows and columns. Displaying as row.", call. = FALSE)
+    }
+
+    # Now add bases based on detected orientation
+    base_varies_warning <- FALSE
+
+    if (base_orientation == "row") {
+      # Display base as a column
+      row_base_values <- numeric(nrow(result_df))
+
+      # Extract base values for each row from pre-calculated matrix
+      for (i in seq_len(nrow(base_matrix))) {
+        if (ncol(base_matrix) > 0) {
+          # Get the common base for this row
+          row_bases_unique <- unique(base_matrix[i, ])
+          if (length(row_bases_unique) == 1) {
+            row_base_values[i] <- as.integer(row_bases_unique)
+          } else {
+            # This shouldn't happen given our detection logic
+            row_base_values[i] <- as.integer(base_matrix[i, 1])
+          }
+        } else {
+          row_base_values[i] <- as.integer(base_matrix[i, 1])
+        }
+      }
+
+      result_df[[statistic$base_label]] <- row_base_values
+
+    } else {
+      # Display base as a row
+      col_base_values <- numeric(ncol(base_matrix))
+
+      # Extract base values for each column from pre-calculated matrix
+      for (j in seq_len(ncol(base_matrix))) {
+        # Check if all rows have same base for this column
+        col_bases_unique <- unique(base_matrix[, j])
+        if (length(col_bases_unique) == 1) {
+          col_base_values[j] <- as.integer(col_bases_unique)
+        } else {
+          col_base_values[j] <- NA_integer_
+          base_varies_warning <- TRUE
+        }
+      }
+
+      # Create base row
       base_row <- data.frame(
-        row_label = stat_obj$base_label,
+        row_label = statistic$base_label,
         stringsAsFactors = FALSE
       )
 
-      for (i in seq_along(col_bases)) {
-        base_row[[names(result_df)[i + 1]]] <- col_bases[i]
+      # Add values for each column (including summary column if present)
+      for (i in seq_along(col_base_values)) {
+        base_row[[names(result_df)[i + 1]]] <- col_base_values[i]
       }
 
       # Add base row
       result_df <- rbind(result_df, base_row)
+
+      if (base_varies_warning) {
+        warning("Base (n) differs by row; showing NA where base varies", call. = FALSE)
+      }
     }
   }
 
-  # Store arrays for significance testing
-  # Include base array as the last row array
-  final_row_arrays <- c(row_arrays, list(base_array))
-  final_col_arrays <- col_arrays
-
-  # Store statistic
-  attr(result_df, "statistic") <- statistic
-
-  # Store values variable name if used
-  if (!is.null(values)) {
-    attr(result_df, "values_variable") <- values
+  ## Store arrays for significance testing ------------------------------------
+  # Only include arrays for actual data rows (not summary rows)
+  # Determine how many row arrays to keep (exclude summary row if present)
+  n_data_row_arrays <- length(row_arrays)
+  if (!is.null(statistic$summary_row) && length(row_arrays) > 1 && show_summary_row &&
+      !is.null(summary_row_array)) {
+    # The last row array is the summary row array, exclude it
+    n_data_row_arrays <- n_data_row_arrays - 1
   }
 
-  # Store summary labels if used
-  if (!is.null(stat_obj$summary_row) && length(row_arrays) > 1 && show_summary_row) {
-    attr(result_df, "summary_row_label") <- stat_obj$summary_row
-  }
-  if (!is.null(summary_col_label)) {
-    attr(result_df, "summary_col_label") <- summary_col_label
+  # Only keep data row arrays, then add base array
+  data_row_arrays <- row_arrays[seq_len(n_data_row_arrays)]
+  final_row_arrays <- c(data_row_arrays, list(base_array))
+
+  # Build final_col_arrays - only include data column arrays
+  n_data_col_arrays <- length(col_arrays)
+  if (!is.null(summary_col_label) && !is.null(summary_col_array)) {
+    # The last col array is the summary col array, exclude it
+    n_data_col_arrays <- n_data_col_arrays - 1
   }
 
-  # Include summary column array if it was added
-  final_col_arrays <- col_arrays
-  if (!is.null(summary_col_label)) {
-    final_col_arrays <- c(final_col_arrays, list(summary_col_array))
-  }
+  # Only keep data column arrays
+  data_col_arrays <- col_arrays[seq_len(n_data_col_arrays)]
+  final_col_arrays <- data_col_arrays
 
-  # Add base row array to match the base row that was added to result_df
-  # Base row represents all eligible respondents (after weights/filters)
-  final_row_arrays <- c(row_arrays, list(base_array))
+  # Include real base_array for base column if it was displayed as a column
+  if (show_base && !is.null(base_orientation) && base_orientation == "row") {
+    final_col_arrays <- c(final_col_arrays, list(base_array))
+  }
 
   # Store arrays for later significance testing
   attr(result_df, "arrays") <- list(
@@ -748,6 +910,19 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     values_array = values_array
   )
 
+  # Store metadata as attributes
+  attr(result_df, "statistic") <- statistic
+  attr(result_df, "weight") <- weight
+  attr(result_df, "values_variable") <- values
+  attr(result_df, "base_orientation") <- base_orientation
+
+  # Store information about which rows/columns are summary rows/columns
+  attr(result_df, "summary_row_label") <- summary_row_label
+  attr(result_df, "summary_col_label") <- summary_col_label
+
+  # Store the base matrix as an attribute for potential future use
+  attr(result_df, "base_matrix") <- base_matrix
+
   # Store the original call for sourcing when using copy_tab
   attr(result_df, "call") <- original_call
 
@@ -756,14 +931,13 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   return(result_df)
 }
 
-
 #' Validate Variable Types for Statistics
 #'
 #' Validates that variables used in cross-tabulation rows and columns are
 #' appropriate for the specified statistic. For value-based statistics like
 #' mean, ensures variables are categorical rather than continuous numeric.
 #'
-#' @param stat_obj A tab_stat object containing statistic metadata
+#' @param statistic A tab_stat object containing statistic metadata
 #' @param rows_expanded List of expanded row variable specifications
 #' @param cols_expanded List of expanded column variable specifications
 #' @param data Data frame being analyzed
@@ -776,8 +950,8 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 #' accidentally creating meaningless cross-tabs with many numeric categories.
 #' Variables with >15 unique values trigger errors with suggestions to use
 #' factor(), cut(), add value labels, or use correlation statistics instead.
-validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded, data, dpdict = NULL) {
-  if (stat_obj$requires_values) {
+validate_statistic_variables <- function(statistic, rows_expanded, cols_expanded, data, dpdict = NULL) {
+  if (statistic$requires_values) {
     # For value-based statistics (like mean), require categorical rows/columns
 
     # Check rows
@@ -791,7 +965,7 @@ validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded,
           if (!is.null(dpdict) && "questiontype" %in% names(dpdict) && var_name %in% dpdict$variable_names) {
             questiontype <- dpdict$questiontype[dpdict$variable_names == var_name]
             if (questiontype %in% c("numeric", "multinumeric")) {
-              stop("Cannot use numeric variable '", var_name, "' (questiontype: ", questiontype, ") in rows for '", stat_obj$id, "' statistic")
+              stop("Cannot use numeric variable '", var_name, "' (questiontype: ", questiontype, ") in rows for '", statistic$id, "' statistic")
             }
           } else {
             # Fallback to R class checking
@@ -799,7 +973,7 @@ validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded,
                 is.null(attr(var_data, "labels")) &&
                 !is.factor(var_data) &&
                 length(unique(na.omit(var_data))) > 15) {
-              stop("Cannot use numeric variable '", var_name, "' with ", length(unique(na.omit(var_data))), " unique values in rows for '", stat_obj$id, "' statistic")
+              stop("Cannot use numeric variable '", var_name, "' with ", length(unique(na.omit(var_data))), " unique values in rows for '", statistic$id, "' statistic")
             }
           }
         }
@@ -819,7 +993,7 @@ validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded,
                 !is.factor(var_data) &&
                 length(unique(na.omit(var_data))) > 15) {
 
-              stop("Cannot use numeric variable '", var_name, ") in columns for '", stat_obj$id, "' statistic.\n")
+              stop("Cannot use numeric variable '", var_name, ") in columns for '", statistic$id, "' statistic.\n")
             }
           }
         }
@@ -833,12 +1007,6 @@ validate_statistic_variables <- function(stat_obj, rows_expanded, cols_expanded,
 #' @export
 print.tab_result <- function(x, ...) {
   statistic <- attr(x, "statistic")
-  statistic_id  <- if (is.character(statistic)) statistic else statistic$id
-  stat_obj <- if (is.character(statistic)) {
-    .tab_registry$stats[[statistic]]
-  } else {
-    statistic
-  }
 
   # Get values variable name if available
   values_var <- attr(x, "values_variable")
@@ -847,43 +1015,45 @@ print.tab_result <- function(x, ...) {
   all_sig <- attr(x, "significance")
 
   # Construct header
-  if (statistic_id == "mean" && !is.null(values_var)) {
+  if (statistic$id == "mean" && !is.null(values_var)) {
     cat("\nCross-tabulation (mean of ", values_var, ")\n", sep = "")
   } else {
-    cat("\nCross-tabulation (", statistic_id, ")\n", sep = "")
+    cat("\nCross-tabulation (", statistic$id, ")\n", sep = "")
   }
   cat(rep("-", 50), "\n", sep = "")
 
   # Create column letter mapping
   col_names <- names(x)[-1]
-  base_column <- attr(x, "base_column")
 
-  # Create letters only for non-base columns
-  non_base_cols <- if (!is.null(base_column)) {
-    col_names[col_names != base_column]
-  } else {
-    col_names
-  }
+  non_base_cols <- col_names[col_names != statistic$base_label]
 
   col_letters <- LETTERS[seq_along(non_base_cols)]
   names(col_letters) <- non_base_cols
 
   # Create a copy for formatting to avoid modifying the original
   x_formatted        <- x
-  base_row_idx <- which(x_formatted$row_label == stat_obj$base_label)
+  base_row_idx <- which(x_formatted$row_label == statistic$base_label)
 
   for (col in names(x_formatted)[-1]) {
     orig <- x[[col]]
     col_idx <- which(names(x_formatted) == col) - 1  # Adjust for row_label column
 
     # Check if this column is the base column
-    is_base_column <- !is.null(base_column) && col == base_column
+    base_orientation <- attr(x_formatted, "base_orientation")
+    is_base_column <- FALSE
+    if (!is.null(base_orientation) && base_orientation == "row") {
+      # If base is displayed as a column (row orientation), check if this is it
+      is_base_column <- col == statistic$base_label
+    }
+    if (is_base_column) {
+      next  # Skip formatting for base column
+    }
 
     x_formatted[[col]] <- vapply(seq_along(orig), function(i) {
       if (i %in% base_row_idx || is_base_column) {
         as.character(orig[i])
       } else if (is.numeric(orig[i]) && !is.na(orig[i])) {
-        formatted_val <- stat_obj$format_fn(orig[i])
+        formatted_val <- statistic$format_fn(orig[i]) # ERROR HERE?
 
         # Add significance indicators from all tests
         if (!is.null(all_sig)) {
@@ -932,14 +1102,11 @@ print.tab_result <- function(x, ...) {
     }, character(1))
   }
 
-  # Get base column attribute if present
-  base_column <- attr(x, "base_column")
-
   # Update column names to include letters in brackets (after formatting is complete)
   letter_index <- 1
   for (i in seq_along(col_names)) {
     col_name <- col_names[i]
-    if (!is.null(base_column) && col_name == base_column) {
+    if (col_name == statistic$base_label) {
       # Don't add letter to base column
       new_col_name <- col_name
     } else {
@@ -947,7 +1114,7 @@ print.tab_result <- function(x, ...) {
       new_col_name <- paste0(col_name, " (", LETTERS[letter_index], ")")
       letter_index <- letter_index + 1
     }
-    names(x_formatted)[i + 1] <- new_col_name  # +1 to skip row_label column
+    names(x_formatted)[i + 1] <- new_col_name
   }
 
   print.data.frame(x_formatted, row.names = FALSE, ...)
@@ -1233,15 +1400,62 @@ extract_suffix_from_label <- function(label, dpdict = NULL, data = NULL) {
   label
 }
 
+#' Check if all variables exist in data and provide helpful error message
+#' @param vars Character vector of variable names to check
+#' @param data Data frame to check against
+#' @param context String describing where the variables are being used
+#' @keywords internal
+check_variables_exist <- function(vars, data, context = "expression") {
+  if (length(vars) == 0) return(TRUE)
+
+  missing_vars <- setdiff(vars, names(data))
+
+  if (length(missing_vars) > 0) {
+    # Get similar variable names for suggestions
+    all_vars <- names(data)
+    suggestions <- character()
+
+    for (missing in missing_vars) {
+      # Find variables with similar names (using agrep for fuzzy matching)
+      similar <- agrep(missing, all_vars, value = TRUE, max.distance = 0.2)
+      if (length(similar) > 0) {
+        suggestions <- c(suggestions,
+                         paste0("  - '", missing, "' -> did you mean: ",
+                                paste(paste0("'", similar, "'"), collapse = ", "), "?"))
+      } else {
+        suggestions <- c(suggestions, paste0("  - '", missing, "' (no similar variables found)"))
+      }
+    }
+
+    # Build comprehensive error message
+    if(length(all_vars) < 20){
+      error_msg <- paste0(
+        "Variable(s) not found in ", context, ":\n",
+        paste(suggestions, collapse = "\n"),
+        "\n\nAvailable variables in data:\n",
+        paste(strwrap(paste(all_vars, collapse = ", "), width = 70), collapse = "\n  ")
+      )
+    } else {
+      error_msg <- paste0(
+        "Variable(s) not found in ", context, ":\n",
+        paste(suggestions, collapse = "\n")
+      )
+    }
+    stop(error_msg, call. = FALSE)
+  }
+
+  return(TRUE)
+}
+
 #' Expand variables and question groups into individual components
 #'
 #' @param var_spec Variable specification (can be name, expression, or formula)
 #' @param data The data frame
 #' @param dpdict Optional data dictionary
-#' @param statistic_id The ID of the statistic being calculated
+#' @param statistic$id The ID of the statistic being calculated
 #' @return List of expanded variable specifications
 #' @keywords internal
-expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL, values_var = NULL, label_mode = "smart") {
+expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, values_var = NULL, label_mode = "smart") {
   # Handle complex expressions by recursively expanding components
   if (is.list(var_spec) && !is.null(var_spec$type)) {
 
@@ -1253,7 +1467,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
     if (var_spec$type == "multiplication") {
       # Expand each component and return all combinations
       expanded_components <- lapply(var_spec$components, function(comp) {
-        expand_variables(comp, data, dpdict, statistic_id, values_var, label_mode)
+        expand_variables(comp, data, dpdict, statistic$id, values_var, label_mode)
       })
 
       # Create combinations of all expanded components
@@ -1385,7 +1599,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
 
     # Character variables should error
     if (is.character(var_data)) {
-      stop("Cannot use character variable '", var_name, "' in cross-tabulation without labels")
+      stop("Cannot use character variable '", var_name, "' for cross-tabulation")
     }
   }
 
@@ -1406,7 +1620,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
       # Recursively expand each variable found in the question group
       all_expanded <- list()
       for (v in exact_match_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, label_mode)
+        expanded <- expand_variables(v, data, dpdict, statistic$id, values_var, label_mode)
         all_expanded <- append(all_expanded, expanded)
       }
       return(all_expanded)
@@ -1422,7 +1636,7 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic_id = NULL,
       # Recursively expand each variable found in the matching groups
       all_expanded <- list()
       for (v in group_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic_id, values_var, label_mode)
+        expanded <- expand_variables(v, data, dpdict, statistic$id, values_var, label_mode)
         all_expanded <- append(all_expanded, expanded)
       }
       return(all_expanded)
@@ -1473,9 +1687,10 @@ prepare_eval_data <- function(data) {
 #'
 #' @param formula_spec Parsed formula specification
 #' @param data Data frame
+#' @param dpdict Optional data dictionary for context
 #' @return Numeric vector of length nrow(data)
 #' @keywords internal
-formula_to_array <- function(formula_spec, data) {
+formula_to_array <- function(formula_spec, data, dpdict = NULL) {
   n <- nrow(data)
 
   # Start with identity array
@@ -1484,9 +1699,12 @@ formula_to_array <- function(formula_spec, data) {
   # Process based on type
   if (formula_spec$type == "simple") {
     var_name <- formula_spec$components$var
-    if (!var_name %in% names(data)) {
-      stop("Variable '", var_name, "' not found in data")
-    }
+    # if (!var_name %in% names(data)) {
+    #   stop("Variable '", var_name, "' not found in data")
+    # }
+
+    check_variables_exist(var_name, data,
+                          paste0("expression '", formula_spec$label, "'"))
 
     var_data <- data[[var_name]]
 
@@ -1516,6 +1734,11 @@ formula_to_array <- function(formula_spec, data) {
   } else if (formula_spec$type == "expression") {
     # Extract variables referenced in the expression
     expr_vars <- all.vars(formula_spec$components$expr)
+
+    # Check all variables exist before subsetting
+    check_variables_exist(expr_vars, data,
+                          paste0("expression '", formula_spec$label, "'"))
+
     # Create subset with only needed variables
     data_subset <- data[, expr_vars, drop = FALSE]
     # Evaluate the expression with numeric-only data for relevant variables
@@ -1528,13 +1751,28 @@ formula_to_array <- function(formula_spec, data) {
 
   } else if (formula_spec$type == "helper") {
     # Process helper functions
-    result <- result * process_helper(formula_spec, data)
+    helper_result <- process_helper(formula_spec, data, dpdict = dpdict)
+
+    # Check if it's a multi-column helper
+    if (is.list(helper_result) && isTRUE(attr(helper_result, "is_multi_column"))) {
+      # For multi-column helpers, return the list directly
+      # The calling code will handle the expansion
+      return(helper_result)
+    } else {
+      # Single array - multiply as normal
+      result <- result * helper_result
+    }
 
   } else if (formula_spec$type == "numeric_expression") {
     # Evaluate numeric expressions in data context with numeric-only data
     tryCatch({
       # Extract variables referenced in the expression
       expr_vars <- all.vars(formula_spec$components$expr)
+
+      # Check all variables exist before subsetting
+      check_variables_exist(expr_vars, data,
+                            paste0("numeric expression '", formula_spec$label, "'"))
+
       # Create subset with only needed variables
       data_subset <- data[, expr_vars, drop = FALSE]
       eval_data <- prepare_eval_data(data_subset)
@@ -1565,7 +1803,8 @@ formula_to_array <- function(formula_spec, data) {
 
 #' Process helper functions
 #' @keywords internal
-process_helper <- function(formula_spec, data) {
+process_helper <- function(formula_spec, data, dpdict) {
+
   helper_type <- formula_spec$helper_type
 
   # Get the helper from registry
@@ -1591,12 +1830,17 @@ process_helper <- function(formula_spec, data) {
           args = rlang::call_args(arg),
           label = rlang::as_label(arg)
         )
-        evaluated_args[[i]] <- process_helper(nested_spec, data)  # Recursive call
+        evaluated_args[[i]] <- process_helper(nested_spec, data, dpdict)  # Recursive call
       } else {
         # It's a regular expression - evaluate in data context
         tryCatch({
           # Extract variables referenced in the argument expression
           expr_vars <- all.vars(arg)
+
+          # Check variables exist
+          check_variables_exist(expr_vars, data,
+                                paste0("helper '", helper_type, "' argument ", i))
+
           # Create subset with only needed variables
           data_subset <- data[, expr_vars, drop = FALSE]
           eval_data <- prepare_eval_data(data_subset)
@@ -1610,6 +1854,14 @@ process_helper <- function(formula_spec, data) {
       evaluated_args[[i]] <- as.character(arg)
     } else {
       # Simple argument - evaluate directly
+
+      if (length(all.vars(arg)) > 0) {
+        # If it contains variables, check they exist
+        expr_vars <- all.vars(arg)
+        check_variables_exist(expr_vars, data,
+                              paste0("helper '", helper_type, "' argument ", i))
+      }
+
       tryCatch({
         # Extract variables referenced in the argument expression
         expr_vars <- all.vars(arg)
@@ -1631,13 +1883,34 @@ process_helper <- function(formula_spec, data) {
     label = formula_spec$label
   )
 
+  if (!is.null(formula_spec$row_labels)) {
+    processed_spec$row_labels <- formula_spec$row_labels
+  }
+
   # Dispatch to the helper's processor
   tryCatch({
-    result <- helper_obj$processor(processed_spec, data)
-    if (!is.numeric(result) || length(result) != nrow(data)) {
-      stop("Helper '", helper_type, "' returned invalid result. Expected numeric vector of length ", nrow(data))
+    result <- helper_obj$processor(processed_spec, data, dpdict = dpdict)
+
+    if (is.list(result) && !is.numeric(result)) {
+      # Helper returned a list of arrays (multi-column helper)
+      # Validate each array in the list
+      for (name in names(result)) {
+        if (!is.numeric(result[[name]]) || length(result[[name]]) != nrow(data)) {
+          stop("Helper '", helper_type, "' returned invalid result for '", name,
+               "'. Expected numeric vector of length ", nrow(data))
+        }
+      }
+      # Return the list with helper metadata
+      attr(result, "is_multi_column") <- TRUE
+      attr(result, "helper_type") <- helper_type
+      return(result)
+    } else {
+      # Single array return
+      if (!is.numeric(result) || length(result) != nrow(data)) {
+        stop("Helper '", helper_type, "' returned invalid result. Expected numeric vector of length ", nrow(data))
+      }
+      return(result)
     }
-    return(result)
   }, error = function(e) {
     stop("Error in helper '", helper_type, "': ", e$message, call. = FALSE)
   })
@@ -1693,12 +1966,12 @@ compute_cell <- function(base_array, row_array, col_array,
 
   # Convert string statistic to object if needed
   if (is.character(statistic)) {
-    stat_obj <- .tab_registry$stats[[statistic]]
-    if (is.null(stat_obj)) {
+    statistic <- .tab_registry$stats[[statistic]]
+    if (is.null(statistic)) {
       stop("Unknown statistic: '", statistic, "'. Available: ",
            paste(names(.tab_registry$stats), collapse = ", "))
     }
-    statistic <- stat_obj
+    statistic <- statistic
   }
 
   # Dispatch to the statistic's processor
@@ -1737,22 +2010,22 @@ compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
 
   # Convert string statistic to object if needed
   if (is.character(statistic)) {
-    stat_obj <- .tab_registry$stats[[statistic]]
-    if (is.null(stat_obj)) {
+    statistic <- .tab_registry$stats[[statistic]]
+    if (is.null(statistic)) {
       stop("Unknown statistic: '", statistic, "'. Available statistics: ",
            paste(names(.tab_registry$stats), collapse = ", "))
     }
   } else {
-    stat_obj <- statistic
+    statistic <- statistic
   }
 
   # Check if statistic has vectorized processor
-  if (!is.null(stat_obj$vectorized_processor)) {
+  if (!is.null(statistic$vectorized_processor)) {
     # Use vectorized computation
     row_matrix <- do.call(cbind, row_arrays)
     col_matrix <- do.call(cbind, col_arrays)
 
-    result_matrix <- stat_obj$vectorized_processor(
+    result_matrix <- statistic$vectorized_processor(
       base_array = base_array,
       row_matrix = row_matrix,
       col_matrix = col_matrix,
@@ -1822,13 +2095,6 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
 
   # Get the statistic type
   statistic <- attr(tab_result, "statistic")
-  statistic_id <- if (is.character(statistic)) {
-    statistic
-  } else if (inherits(statistic, "tab_stat")) {
-    statistic$id
-  } else {
-    "unknown"
-  }
 
   # Create a copy of the data for processing
   output_data <- tab_result
@@ -1836,24 +2102,15 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   x_formatted <- output_data
   x           <- output_data
 
-  # Apply statistic-specific formatting
-  stat_obj <- if (is.character(statistic)) {
-    .tab_registry$stats[[statistic_id]]
-  } else {
-    statistic
-  }
-
   # Identify the base row
-  base_row_idx <- which(x_formatted$row_label == stat_obj$base_label)
+  base_row_idx <- which(x_formatted$row_label == statistic$base_label)
 
   # Apply formatting function to all non-base rows
   # Apply formatting function to all non-base rows
   for (col in names(output_data)[-1]) {
-    # Get base column name if present
-    base_column <- attr(tab_result, "base_column")
-
-    # Skip formatting for base column
-    if (!is.null(base_column) && col == base_column) {
+    # Check if base column
+    is_base_column <- col == statistic$base_label
+    if (is_base_column) {
       next
     }
 
@@ -1895,7 +2152,7 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
                 return(as.character(rounded_val))
               }
             } else {
-              return(stat_obj$format_fn(val))
+              return(statistic$format_fn(val))
             }
           }
         } else {
@@ -1923,13 +2180,13 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
     output_data <- rbind(output_data, empty_row)
 
     # Add source information row with original call
-    if (statistic_id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
+    if (statistic$id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
       values_var <- attr(tab_result, "values_variable")
       call_text <- deparse(original_call, width.cutoff = 500)
       source_info <- paste0("Table showing mean of '", values_var, "' generated by surveydatar::", paste(call_text, collapse = " "), ")")
     } else {
       call_text <- deparse(original_call, width.cutoff = 500)
-      source_info <- paste0("Table showing survey ", statistic_id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
+      source_info <- paste0("Table showing survey ", statistic$id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
     }
 
     source_row <- output_data[1, ]
@@ -1983,7 +2240,7 @@ calculate_summary <- function(type, arrays, base_array, col_array, statistic, va
 #' Add significance testing to a tab result
 #'
 #' @param tab_result A tab_result object from tab()
-#' @param versus Column to compare against: "first_col", "last_col", "total",
+#' @param versus Column to compare against: "first_col", "last_col",
 #'   column name, or column index
 #' @param test Test to use: "auto", "z_test_proportions", "t_test", etc.
 #' @param level Significance level (default 0.05)
@@ -2011,13 +2268,6 @@ add_sig <- function(tab_result,
 
   # Extract other needed info
   statistic <- attr(tab_result, "statistic")
-
-  # Get stat object for base row identification
-  stat_obj <- if (is.character(statistic)) {
-    .tab_registry$stats[[statistic$id]]
-  } else {
-    statistic
-  }
 
   # Create result matrix (excluding row_label column)
   result_matrix <- as.matrix(tab_result[, -1])
@@ -2118,18 +2368,36 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   )
   config <- utils::modifyList(default_config, sig_config)
 
-  # Get stat object
-  stat_obj <- if (is.character(statistic)) {
-    .tab_registry$stats[[statistic$id]]
-  } else {
-    statistic
+  meta_labels <- c(statistic$base_label)
+  if (!is.null(statistic$summary_row)) {
+    meta_labels <- c(meta_labels, statistic$summary_row)
   }
+  if (!is.null(statistic$summary_col)) {
+    meta_labels <- c(meta_labels, statistic$summary_col)
+  }
+
+  # Identify which columns and rows to exclude
+  col_exclude <- which(colnames(result_matrix) %in% meta_labels)
+  row_exclude <- which(row_labels %in% meta_labels)
+
+  # Get data-only indices
+  data_cols <- setdiff(seq_len(ncol(result_matrix)), col_exclude)
+  data_rows <- setdiff(seq_len(nrow(result_matrix)), row_exclude)
+
+  # Filter to data-only elements
+  result_matrix <- result_matrix[data_rows, data_cols, drop = FALSE]
+  row_arrays <- row_arrays[data_rows]
+  col_arrays <- col_arrays[data_cols]
+  if (!is.null(row_labels)) {
+    row_labels <- row_labels[data_rows]
+  }
+  col_names <- colnames(result_matrix)
 
   # Determine test to use
   if (config$test == "auto") {
     # Auto-determine based on statistic type
     test_id <- switch(
-      stat_obj$id,
+      statistic$id,
       "column_pct" = "z_test_proportions",
       "count" = "z_test_proportions",
       "row_pct" = "z_test_proportions",
@@ -2137,7 +2405,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
       "median" = "mann_whitney",
       "sd" = "t_test",
       "cv" = "t_test",
-      stop("No default test for statistic '", stat_obj$id, "'")
+      stop("No default test for statistic '", statistic$id, "'")
     )
   } else {
     test_id <- config$test
@@ -2180,16 +2448,20 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   }
 
   # Identify data rows (exclude base row and any summary rows)
-  base_row_idx <- which(row_labels %in% c(stat_obj$base_label, "Base (n)"))
-  summary_row_idx <- which(rownames(result_matrix) %in% c("NET", "Total", "Avg"))
-  exclude_rows <- union(base_row_idx, summary_row_idx)
+  exclude_row_labels <- c(statistic$base_label)
+  if (!is.null(statistic$summary_row)) {
+    exclude_row_labels <- c(exclude_row_labels, statistic$summary_row)
+  }
+
+  # Find indices of rows to exclude
+  exclude_rows <- which(row_labels %in% exclude_row_labels)
 
   # Determine actual data rows
   all_rows <- seq_len(nrow(result_matrix))
   data_rows <- setdiff(all_rows, exclude_rows)
 
-  # Initialize matrices for data rows only
-  n_data_rows <- length(data_rows)
+  n_data_rows <- nrow(result_matrix) # n_cols already defined
+
   sig_matrix <- matrix("", nrow = n_data_rows, ncol = n_cols)
   p_matrix <- matrix(NA_real_, nrow = n_data_rows, ncol = n_cols)
 
@@ -2221,13 +2493,26 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   # Check if test is omnibus (tests overall association)
   if (!is.null(test_obj$is_omnibus) && test_obj$is_omnibus) {
     # For omnibus tests, we need arrays for data rows only
-    data_row_arrays <- row_arrays[data_rows]
+    # Map data_rows indices to row_arrays indices
+    array_indices <- seq_along(data_rows)
+    if (length(array_indices) > length(row_arrays)) {
+      array_indices <- array_indices[seq_len(length(row_arrays))]
+    }
+    data_row_arrays <- row_arrays[array_indices]
+
+    # For omnibus tests, also exclude summary columns
+    data_col_arrays <- col_arrays
+    if (!is.null(statistic$summary_col)) {
+      # Find indices of data columns (excluding summary column)
+      data_col_indices <- which(col_names != statistic$summary_col)
+      data_col_arrays <- col_arrays[data_col_indices]
+    }
 
     # Run omnibus test once
     test_result <- test_obj$processor(
       base_array = base_array,
       row_arrays = data_row_arrays,
-      col_arrays = col_arrays,
+      col_arrays = data_col_arrays,
       values = values_array
     )
 
@@ -2255,7 +2540,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   base_col_array <- col_arrays[[base_col]]
 
   # Test each data row against the base column
-  for (i in seq_along(data_rows)) {
+  for (i in seq_len(n_data_rows)) {
     row_idx <- data_rows[i]
 
     array_idx <- i  # The i-th data row uses the i-th row array
@@ -2270,7 +2555,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
       tryCatch({
         test_result <- test_obj$processor(
           base_array = base_array,
-          row_array = row_arrays[[array_idx]],  # <-- CORRECT INDEX
+          row_array = row_arrays[[array_idx]],
           col_array_1 = base_col_array,
           col_array_2 = col_arrays[[j]],
           values = values_array
@@ -2351,11 +2636,6 @@ resolve_versus_to_column_name <- function(versus, tab_result) {
     target_col_idx <- switch(versus,
                              "first_col" = 1,
                              "last_col" = n_cols,
-                             "total" = {
-                               idx <- which(tolower(col_names) == "total")
-                               if (length(idx) == 0) stop("No 'Total' column found")
-                               idx[1]
-                             },
                              # Otherwise treat as column name
                              {
                                idx <- which(col_names == versus)

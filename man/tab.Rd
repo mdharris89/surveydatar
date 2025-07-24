@@ -17,6 +17,7 @@ tab(
   show_base = TRUE,
   low_base_threshold = 0,
   label_mode = "full",
+  smart_collapse_row_labels = FALSE,
   helpers = NULL,
   stats = NULL,
   resolve_report = FALSE,
@@ -53,6 +54,10 @@ for single items
 extract from label
 }}
 
+\item{smart_collapse_row_labels}{Logical. If TRUE, intelligently collapses rows
+with common prefixes when each column has at most one non-zero value per group.
+Useful for reshaping categorical array data. Default is FALSE.}
+
 \item{helpers}{List of custom tab_helper objects}
 
 \item{stats}{List of custom tab_stat objects}
@@ -67,8 +72,17 @@ Cross-tabulation table as data.frame
 \description{
 Create cross-tabulation tables with flexible formula syntax
 }
+\details{
+Base (n) Calculation:
+For statistics that use the 'values' parameter (like mean), the base (n)
+represents the count of non-NA values actually used in calculations.
+When different rows have varying numbers of valid values within a column
+(or vice versa for row-oriented statistics), the base will display NA
+and issue a warning. The full base matrix is stored as an attribute
+'base_matrix' on the result object.
+}
 \examples{
-# Traditional syntaxcorrec
+# String syntax
 tab(data, "q1", "gender")
 
 # Formula syntax

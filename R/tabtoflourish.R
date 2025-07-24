@@ -84,25 +84,17 @@ tab_to_flourish <- function(tab_result,
 
   list(
     stat = stat,
-    id = if (is.character(stat)) stat else stat$id,
-    base_label = if (is.character(stat)) {
-      .tab_registry$stats[[stat]]$base_label
-    } else {
-      stat$base_label
-    },
+    id = stat$id,
+    base_label = stat$base_label,
     summary_row = if (!is.null(actual_summary_row)) {
       actual_summary_row
-    } else if (!is.character(stat)) {
-      stat$summary_row
     } else {
-      .tab_registry$stats[[stat]]$summary_row
+      stat$summary_row
     },
     summary_col = if (!is.null(actual_summary_col)) {
       actual_summary_col
-    } else if (!is.character(stat)) {
-      stat$summary_col
     } else {
-      .tab_registry$stats[[stat]]$summary_col
+      stat$summary_col
     }
   )
 }

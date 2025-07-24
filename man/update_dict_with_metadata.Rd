@@ -26,7 +26,7 @@ update_dict_with_metadata(
 \item{variables_to_update}{optional logical vector to specify that only certain variables in the existing temp_dpdict should be updated}
 
 \item{seps_to_use}{optional specifying separators to use for processing:
-- variable_name_sep: String that separates each variable within a common question, e.g. "_" for Q1_1, Q1_2.
+- var_name_sep: String that separates each variable within a common question, e.g. "_" for Q1_1, Q1_2.
 - prefix_sep: String. If ignorelabelbeforeprefix == TRUE, substring before prefix_sep will be removed before working with variable labels.
 - statement_sep: String. For findlongest == FALSE, uses substring prior to statement_sep as commonlabel.}
 

@@ -1,3 +1,52 @@
+#' Get value label for a variable-value combination
+#'
+#' Looks up the label for a specific value of a variable, checking:
+#' 1. Value labels in dpdict (if available)
+#' 2. Common patterns (e.g., frequency scales)
+#' 3. Falls back to string representation
+#'
+#' @param var Variable name
+#' @param value The value to get a label for
+#' @param dpdict Data dictionary
+#' @return Character string label
+#' @keywords internal
+get_value_label <- function(var, value, dpdict = NULL) {
+  # First check if dpdict has value labels
+  if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
+    var_row <- dpdict[dpdict$variable_names == var, ]
+    if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
+      labels <- var_row$value_labels[[1]]
+      if (as.character(value) %in% names(labels)) {
+        return(labels[[as.character(value)]])
+      }
+    }
+  }
+
+  # Common patterns for frequency scales
+  if (grepl("^(app_|A2_|A3_|freq_|frequency_)", var)) {
+    if (value %in% 1:4) {
+      return(c("Daily", "Weekly", "Monthly", "Never")[value])
+    } else if (value %in% 1:5) {
+      return(c("Daily", "Weekly", "Monthly", "Rarely", "Never")[value])
+    }
+  }
+
+  # Satisfaction scales
+  if (grepl("(satisf|satis)", var, ignore.case = TRUE) && value %in% 1:5) {
+    return(c("Very Dissatisfied", "Dissatisfied", "Neutral",
+             "Satisfied", "Very Satisfied")[value])
+  }
+
+  # Agreement scales
+  if (grepl("(agree|agreement)", var, ignore.case = TRUE) && value %in% 1:5) {
+    return(c("Strongly Disagree", "Disagree", "Neutral",
+             "Agree", "Strongly Agree")[value])
+  }
+
+  # Default: return as character
+  return(as.character(value))
+}
+
 #' Select top n response options
 #'
 #' @param var Variable name or expression
@@ -93,12 +142,14 @@ change_from <- function(var, condition) {
     }
 
     create_statistic("column_pct", stat_column_pct,
+                     base_calculator = base_column_total,
                      summary_row = "NET",
                      summary_col = "NET",
                      summary_row_calculator = calc_union,
                      summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = FALSE,
+                     base_label = "Base (n)",
                      vectorized_processor = stat_column_pct_vectorized
     )
 
@@ -125,6 +176,7 @@ change_from <- function(var, condition) {
       result
     }
     create_statistic("row_pct", stat_row_pct,
+                     base_calculator = base_row_total,
                      summary_row = "NET",
                      summary_col = "NET",
                      summary_row_calculator = calc_union,
@@ -132,7 +184,6 @@ change_from <- function(var, condition) {
                      format_fn = function(x) sprintf("%.1f%%", x),
                      requires_values = FALSE,
                      base_label = "Base (n)",
-                     base_orientation = "row",
                      vectorized_processor = stat_row_pct_vectorized
     )
 
@@ -150,6 +201,7 @@ change_from <- function(var, condition) {
       t(row_matrix * base_array) %*% col_matrix
     }
     create_statistic("count", stat_count,
+                     base_calculator = base_grand_total,
                      summary_row = "NET",
                      summary_col = "Total",
                      summary_row_calculator = calc_union,
@@ -183,6 +235,7 @@ change_from <- function(var, condition) {
       numerator / denominator
     }
     create_statistic("mean", stat_mean,
+                     base_calculator = base_cell_count_valid,
                      summary_row = "Avg",
                      summary_col = "Avg",
                      summary_row_calculator = calc_union,
@@ -215,6 +268,7 @@ change_from <- function(var, condition) {
       median(cell_values, na.rm = TRUE)
     }
     create_statistic("median", stat_median,
+                     base_calculator = base_cell_count_valid,
                      summary_row = "Total",
                      summary_col = "Total",
                      summary_row_calculator = calc_union,
@@ -247,6 +301,7 @@ change_from <- function(var, condition) {
       sd(cell_values, na.rm = TRUE)
     }
     create_statistic("sd", stat_sd,
+                     base_calculator = base_cell_count_valid,
                      summary_row = "Total",
                      summary_col = "Total",
                      summary_row_calculator = calc_union,
@@ -284,6 +339,7 @@ change_from <- function(var, condition) {
       (sd_val / abs(mean_val)) * 100
     }
     create_statistic("cv", stat_cv,
+                     base_calculator = base_cell_count_valid,
                      summary_row = "Total",
                      summary_col = "Total",
                      summary_row_calculator = calc_union,
@@ -322,6 +378,7 @@ change_from <- function(var, condition) {
       (cell_pct / total_pct) * 100
     }
     create_statistic("index", stat_index,
+                     base_calculator = base_column_total,
                      summary_row = "NET",
                      summary_col = "NET",
                      summary_row_calculator = calc_union,
@@ -355,6 +412,7 @@ change_from <- function(var, condition) {
     }
     # Create specific percentile statistics
     create_statistic("p25", function(...) stat_percentile(..., percentile = 25),
+                     base_calculator = base_cell_count_valid,
                      summary_row = "Total",
                      summary_col = "Total",
                      summary_row_calculator = calc_union,
@@ -364,8 +422,11 @@ change_from <- function(var, condition) {
                      base_label = "Base (n)"
     )
     create_statistic("p75", function(...) stat_percentile(..., percentile = 75),
-                     summary_row = NULL,
-                     summary_col = NULL,
+                     base_calculator = base_cell_count_valid,
+                     summary_row = "Total",
+                     summary_col = "Total",
+                     summary_row_calculator = calc_union,
+                     summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f", x),
                      requires_values = TRUE,
                      base_label = "Base (n)"
@@ -389,6 +450,7 @@ change_from <- function(var, condition) {
       cor(x, y, use = "complete.obs")
     }
     create_statistic("correlation", stat_correlation,
+                     base_calculator = base_cell_count,
                      summary_row = NULL,
                      summary_col = NULL,
                      format_fn = function(x) sprintf("%.3f", x),
@@ -399,7 +461,7 @@ change_from <- function(var, condition) {
     # HELPERS -----------------------------------------------------------
 
     # Top box helper
-    help_top_box <- function(formula_spec, data, ...) {
+    help_top_box <- function(formula_spec, data, dpdict = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       n <- formula_spec$components[[2]]
 
@@ -423,7 +485,7 @@ change_from <- function(var, condition) {
     create_helper("top_box", help_top_box)
 
     # Bottom box helper
-    help_bottom_box <- function(formula_spec, data, ...) {
+    help_bottom_box <- function(formula_spec, data, dpdict = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       n <- formula_spec$components[[2]]
 
@@ -447,11 +509,16 @@ change_from <- function(var, condition) {
     create_helper("bottom_box", help_bottom_box)
 
     # Value range helper
-    help_value_range <- function(formula_spec, data, ...) {
+    help_value_range <- function(formula_spec, data, dpdict = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       min_val <- formula_spec$components[[2]]
       max_val <- formula_spec$components[[3]]
-      inclusive <- if (length(formula_spec$components) >= 4) formula_spec$components[[4]]
+
+      inclusive <- if (length(formula_spec$components) >= 4) {
+        formula_spec$components[[4]]
+      } else {
+        TRUE  # Default to inclusive range when not specified
+      }
 
       if (!var_name %in% names(data)) {
         stop("Variable '", var_name, "' not found in data")
@@ -472,7 +539,7 @@ change_from <- function(var, condition) {
     create_helper("value_range", help_value_range)
 
     # Pattern match helper (for text variables)
-    help_pattern <- function(formula_spec, data, ...) {
+    help_pattern <- function(formula_spec, data, dpdict = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       pattern <- formula_spec$components[[2]]
       ignore_case <- if (length(formula_spec$components) >= 3) formula_spec$components[[3]] else FALSE
@@ -497,7 +564,7 @@ change_from <- function(var, condition) {
     create_helper("pattern", help_pattern)
 
     # Percentile selection helper
-    help_percentile <- function(formula_spec, data, ...) {
+    help_percentile <- function(formula_spec, data, dpdict = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       position <- formula_spec$components[[2]]
       percentile <- formula_spec$components[[3]]
@@ -524,22 +591,6 @@ change_from <- function(var, condition) {
       }
     }
     create_helper("percentile", help_percentile)
-
-    # Not helper (negation)
-    help_not <- function(formula_spec, data, ...) {
-      expr <- formula_spec$components[[1]]
-
-      # Evaluate the expression
-      result <- rlang::eval_tidy(expr, data)
-
-      if (!is.logical(result) && !is.numeric(result)) {
-        stop("not() requires an expression that evaluates to logical or numeric")
-      }
-
-      # Negate the result
-      as.numeric(!as.logical(result))
-    }
-    create_helper("not", help_not)
 
 
     # In .onLoad function, after registering statistics:

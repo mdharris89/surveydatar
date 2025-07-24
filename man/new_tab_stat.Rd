@@ -7,6 +7,7 @@
 new_tab_stat(
   id,
   processor,
+  base_calculator,
   summary_row = NULL,
   summary_col = NULL,
   summary_row_calculator = NULL,
@@ -14,7 +15,6 @@ new_tab_stat(
   format_fn = NULL,
   requires_values = FALSE,
   base_label = "Base (n)",
-  base_orientation = "column",
   vectorized_processor = NULL,
   ...
 )
@@ -24,13 +24,13 @@ new_tab_stat(
 
 \item{processor}{Function that processes the statistic}
 
+\item{base_calculator}{Function that calculates base for each cell}
+
 \item{format_fn}{Function to format values}
 
 \item{requires_values}{Whether 'values' parameter required}
 
 \item{base_label}{Label for Base row}
-
-\item{base_orientation}{Whether to add bases below columns or next to rows}
 
 \item{vectorized_processor}{Optionally use vectorised statistic computation}
 

@@ -16,7 +16,7 @@ add_sig(
 \arguments{
 \item{tab_result}{A tab_result object from tab()}
 
-\item{versus}{Column to compare against: "first_col", "last_col", "total",
+\item{versus}{Column to compare against: "first_col", "last_col",
 column name, or column index}
 
 \item{test}{Test to use: "auto", "z_test_proportions", "t_test", etc.}

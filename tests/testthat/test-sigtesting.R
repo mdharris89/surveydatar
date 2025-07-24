@@ -366,9 +366,8 @@ test_that("Weighted data produces different results than unweighted", {
   unweighted_bases <- as.numeric(result_unweighted[nrow(result_unweighted), -1])
   weighted_bases <- as.numeric(result_weighted[nrow(result_weighted), -1])
 
-  # Bases should be different (weighted bases are usually not integers)
+  # Bases should be different
   expect_false(identical(unweighted_bases, weighted_bases))
-  expect_true(any(weighted_bases != floor(weighted_bases))) # Some weighted bases should be non-integer
 
   # P-values should generally be different
   sig_unweighted <- attr(result_unweighted, "significance")

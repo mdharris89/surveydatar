@@ -8,7 +8,7 @@ expand_variables(
   var_spec,
   data,
   dpdict = NULL,
-  statistic_id = NULL,
+  statistic = NULL,
   values_var = NULL,
   label_mode = "smart"
 )
@@ -20,7 +20,7 @@ expand_variables(
 
 \item{dpdict}{Optional data dictionary}
 
-\item{statistic_id}{The ID of the statistic being calculated}
+\item{statistic$id}{The ID of the statistic being calculated}
 }
 \value{
 List of expanded variable specifications

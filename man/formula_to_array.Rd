@@ -5,12 +5,14 @@
 \title{Convert formula specification to numeric array
 Convert formula specification to numeric array}
 \usage{
-formula_to_array(formula_spec, data)
+formula_to_array(formula_spec, data, dpdict = NULL)
 }
 \arguments{
 \item{formula_spec}{Parsed formula specification}
 
 \item{data}{Data frame}
+
+\item{dpdict}{Optional data dictionary for context}
 }
 \value{
 Numeric vector of length nrow(data)
