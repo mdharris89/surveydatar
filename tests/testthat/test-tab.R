@@ -1,5 +1,6 @@
 # TO DO:
 # - Add base calculator tests
+# - Add gate function tests
 
 ##### Built in registrations #####
 # Clear and register built-ins
@@ -339,7 +340,7 @@ create_mini_test_data <- function(n = 5) {
 test_data <- create_tab_test_data()
 test_survey_data <- create_survey_data(test_data)
 
-mini_data <- create_mini_test_data(10)
+mini_data <- create_mini_test_data()
 mini_survey_data <- create_survey_data(mini_data)
 
 ##### Basic Tab Functionality Tests #####
@@ -626,7 +627,7 @@ test_that("formula_to_array correctly computes arrays", {
     components = list(expr = quote(age > 30))
   )
   array_expr <- formula_to_array(spec_expr, data)
-  expect_equal(array_expr, as.numeric(data$age > 30))
+  expect_equal(as.numeric(array_expr), as.numeric(data$age > 30))
 
   # Test multiplication (filter)
   spec_mult <- list(
@@ -637,7 +638,7 @@ test_that("formula_to_array correctly computes arrays", {
     )
   )
   array_mult <- formula_to_array(spec_mult, data)
-  expect_equal(array_mult, data$q1_1 * as.numeric(data$age > 30))
+  expect_equal(as.numeric(array_mult), data$q1_1 * as.numeric(data$age > 30))
 })
 
 test_that("compute_cell calculates statistics correctly", {
@@ -1299,63 +1300,6 @@ test_that("percentile helper filters correctly", {
   expect_equal(percentile_total, expected_pct, tolerance = 2)  # Higher tolerance for percentile edge cases
 })
 
-test_that("identity_arrays works with categorical array question groups", {
-
-  # Use explicit rows/cols as suggested in the example
-  result <- tab(test_survey_data,
-                rows = identity_arrays(c("Daily", "Weekly", "Monthly", "Never"), A2_a),
-                cols = identity_arrays(c("Docs", "Presentations", "Spreadsheets"), A2_a),
-                smart_collapse_row_labels = TRUE)
-
-  # Check structure
-  expect_s3_class(result, "tab_result")
-
-  # Should have 4 rows (Daily, Weekly, Monthly, Never) after smart collapse + NET and Base
-  expect_equal(nrow(result), 6)
-
-  # Should have 3 data columns (Docs, Presentations, Spreadsheets) + NET
-  expect_equal(ncol(result) - 1, 4)  # -1 for row_label column
-
-  # Check row labels match frequency bands
-  expect_equal(result$row_label, c("Daily", "Weekly", "Monthly", "Never", "NET", "Base (n)"))
-
-  # Check column names match document types
-  expect_equal(names(result)[-1], c("Docs", "Presentations", "Spreadsheets", "NET"))
-
-  # Verify the values make sense - each column should sum to ~100% (column_pct default)
-  for (col in names(result)[-1]) {
-    col_sum <- sum(result[[col]], na.rm = TRUE)
-    expect_true(abs(col_sum - 100) < 1,
-                info = paste("Column", col, "should sum to ~100%, got", col_sum))
-  }
-
-  # Also test the simpler form with just columns specified
-  result2 <- tab(test_survey_data,
-                 rows = A2_a,
-                 cols = identity_arrays(c("Docs", "Presentations", "Spreadsheets"), A2_a),
-                 smart_collapse_row_labels = TRUE)
-
-  # This should expand A2_a in rows, creating 12 initial rows (3 vars × 4 values)
-  # But after smart_collapse, should reduce back to 4 rows
-  expect_equal(nrow(result2), 4)
-
-  # Results should be identical
-  expect_equal(result$row_label, result2$row_label)
-  expect_equal(names(result), names(result2))
-
-  # Test that pattern matching works on variable labels
-  # "Docs" should match "How often do you create - Docs" in the variable label
-  arrays_attr <- attr(result, "arrays")
-  expect_true(!is.null(arrays_attr$col_arrays))
-  expect_equal(length(arrays_attr$col_arrays), 3)
-
-  # Each column array should have some non-zero values
-  for (col_array in arrays_attr$col_arrays) {
-    expect_true(sum(col_array) > 0,
-                info = "Column array should match some observations")
-  }
-})
-
 ##### EDGE CASES AND ERROR CONDITIONS #####
 
 test_that("helpers handle missing data correctly", {
@@ -1577,4 +1521,128 @@ test_that("statistical calculations remain stable with different data sizes", {
       expect_equal(sd_total, 10, tolerance = 1)
     }
   }
+})
+
+##### GATE FUNCTIONS AND response_match HELPER TESTS #####
+##### Identity Arrays with Gates Tests #####
+
+test_that("response_match without calc_if works", {
+  # Use existing mini test data
+  mini_data <- create_mini_test_data(100)
+  mini_survey_data <- create_survey_data(mini_data)
+
+  result <- tab(
+    mini_survey_data,
+    rows = response_match(c("Daily", "Weekly", "Monthly"), A2, mode = "value"),
+    statistic = "count",
+    show_base = FALSE,
+    show_row_nets = FALSE,
+    show_col_nets = FALSE
+  )
+
+  # Should have 3 rows, per the specification
+  expect_equal(nrow(result), 3)
+
+  # Without gates, all cells can have values (no orthogonal restriction)
+  data_col <- result[[2]] # First data column (Total)
+  # Some cells might be 0 if no respondents have that combination,
+  # but there's no systematic pattern of zeros like with gates
+  expect_true(sum(data_col) > 0) # At least some counts exist
+})
+
+test_that("gate registry functions work correctly", {
+  # Check that no_mismatch gate is registered
+  expect_true("no_mismatch" %in% list_tab_gates())
+
+  # Get the gate factory
+  gate_factory <- get_gate("no_mismatch")
+  expect_true(is.function(gate_factory))
+
+  # Create a gate instance
+  test_gate <- gate_factory("test_field")
+  expect_true(is.function(test_gate))
+
+  # Test the gate logic
+  row_meta <- list(test_field = "A", other = "X")
+  col_meta <- list(test_field = "A", other = "Y")
+  expect_true(test_gate(row_meta, col_meta))
+
+  col_meta$test_field <- "B"
+  expect_false(test_gate(row_meta, col_meta))
+
+  # Test with missing fields
+  expect_true(test_gate(list(), list(test_field = "A")))
+  expect_true(test_gate(list(test_field = "A"), list()))
+})
+
+
+# Additional tests for calc_if functionality and deprecation warnings
+# Add these tests to the existing test-tab.R file
+
+test_that("calc_if wrapper works with response_match", {
+  mini_data <- create_mini_test_data(100)
+  mini_survey_data <- create_survey_data(mini_data)
+
+  result <- tab(
+    mini_survey_data,
+    rows = calc_if(no_mismatch("ival"), response_match(c("Daily", "Weekly", "Monthly"), A2, mode = "value")),
+    cols = calc_if(no_mismatch("ivar"), response_match(c("Daily", "Weekly", "Monthly"), A2, mode = "value")),
+    statistic = "count",
+    show_base = FALSE,
+    show_row_nets = FALSE,
+    show_col_nets = FALSE
+  )
+
+  # Should have 3x3 orthogonal table
+  expect_equal(nrow(result), 3)
+  expect_equal(ncol(result), 4) # row_label + 3 data columns
+
+  # Check orthogonality - each row should have exactly one non-zero value
+  data_cols <- result[, -1]
+  for (i in 1:nrow(data_cols)) {
+    non_zero_count <- sum(data_cols[i, ] > 0, na.rm = TRUE)
+    expect_equal(non_zero_count, 1)
+  }
+})
+
+test_that("calc_if works with simple variables", {
+  test_data <- create_tab_test_data(200)
+  test_survey_data <- create_survey_data(test_data)
+
+  # Gate a simple variable
+  result <- tab(
+    test_survey_data,
+    rows = calc_if(no_mismatch("test_field"), gender),
+    cols = region,
+    statistic = "count"
+  )
+
+  # Should work without errors
+  expect_s3_class(result, "tab_result")
+})
+
+test_that("smart collapse works with gated arrays", {
+  mini_data <- create_mini_test_data(100)
+  mini_survey_data <- create_survey_data(mini_data)
+
+  # Create orthogonal table with smart collapse
+  result <- tab(
+    mini_survey_data,
+    rows = calc_if(no_mismatch("ival"), response_match(c("Daily", "Weekly", "Monthly"), A2, mode = "value")),
+    cols = response_match(c("Daily", "Weekly", "Monthly"), A2, mode = "value"),
+    statistic = "count",
+    collapse = "smart",
+    show_base = FALSE,
+    show_row_nets = FALSE,
+    show_col_nets = FALSE
+  )
+
+  # After smart collapse, rows should be collapsed by ival
+  expect_equal(nrow(result), 3)
+  expect_true(all(result$row_label %in% c("Daily", "Weekly", "Monthly")))
+
+  # Columns should be collapsed by ivar (variable names)
+  col_names <- setdiff(names(result), "row_label")
+  # Should have A2_usage, A2_satisfaction, A2_importance or similar
+  expect_true(length(col_names) == 3)
 })

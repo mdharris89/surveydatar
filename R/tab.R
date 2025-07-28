@@ -19,9 +19,22 @@
 #'     \item \code{"suffix"}: Show question suffixes when available, otherwise
 #'           extract from label
 #'   }
-#' @param smart_collapse_row_labels Logical. If TRUE, intelligently collapses rows
-#'   with common prefixes when each column has at most one non-zero value per group.
-#'   Useful for reshaping categorical array data. Default is FALSE.
+#' @param sum_by Controls intelligent collapsing of rows and columns.
+#'   Can be:
+#'   \itemize{
+#'     \item \code{FALSE} or \code{NULL}: No collapsing (default)
+#'     \item \code{TRUE}: Auto-detect and collapse both rows and columns based on
+#'           metadata patterns (backward compatible with smart_collapse_row_labels)
+#'     \item Character string: Collapse rows only by the specified metadata field.
+#'           Common values are "ival" (collapse by value) or "ivar" (collapse by variable).
+#'     \item List with \code{rows} and/or \code{cols} elements: Separate control for
+#'           rows and columns. Each element can be:
+#'           \itemize{
+#'             \item \code{FALSE} or \code{NULL}: No collapsing for that dimension
+#'             \item \code{TRUE}: Auto-detect collapsing for that dimension
+#'             \item Character string: Collapse by specified field ("ival" or "ivar")
+#'           }
+#'   }
 #' @param helpers List of custom tab_helper objects
 #' @param stats List of custom tab_stat objects
 #' @param resolve_report Whether to return variable resolution details
@@ -55,12 +68,14 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
                 low_base_threshold = 0,
                 label_mode = "full",
-                smart_collapse_row_labels = FALSE,
+                sum_by = FALSE,
                 helpers = NULL, stats = NULL, resolve_report = FALSE,
                 ...) {
 
   # Store original call for later use
   original_call <- match.call()
+
+  ensure_builtins_registered()
 
   ## Statistics validation and setup ------------------------------------------
 
@@ -257,8 +272,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       rlang::eval_tidy(rows_quo),
       error = function(e) NULL
     )
+
     # Check for tab_helper before checking is_list (since tab_helper inherits from list)
     if (inherits(rows_eval, "tab_helper")) {
+
       # It's a single helper function
       rows_parsed <- list(parse_table_formula(rows_eval, data, dpdict, all_helpers))
     } else if (rlang::is_list(rows_eval)) {
@@ -395,6 +412,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       # Multi-column helper - expand to multiple rows
       for (row_name in names(array_result)) {
         row_arrays <- append(row_arrays, list(array_result[[row_name]]))
+
         # Create a new spec for each row
         new_spec <- spec
         new_spec$label <- row_name
@@ -512,12 +530,6 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     values = values_array
   )
 
-  # Convert to data frame
-  result_df <- as.data.frame(row_label = row_labels,
-                             result_matrix,
-                             stringsAsFactors = FALSE)
-
-
   ## Add row and column labels ------------------------------------------------
   # Add row labels
   row_labels <- vapply(rows_expanded, function(x) {
@@ -528,6 +540,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
   }, character(1))
 
+  result_df <- as.data.frame(result_matrix, stringsAsFactors = FALSE)
   result_df <- cbind(
     data.frame(row_label = row_labels, stringsAsFactors = FALSE),
     result_df
@@ -544,44 +557,71 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   names(result_df)[-1] <- col_labels
 
-  ## Calculate bases and remove any low-base according to low_base_threshold ----
+  # Initial base matrix calculation with gates
+  base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
+                                  values_array, statistic)
 
-  base_matrix <- NULL
+  # smart collapse if requested
+  # Parse sum_by parameter
+  if (is.null(sum_by) || isFALSE(sum_by)) {
+    collapse_rows <- FALSE
+    collapse_cols <- FALSE
+    row_field <- NULL
+    col_field <- NULL
+  } else if (isTRUE(sum_by)) {
+    # Backward compatibility - auto-detect
+    collapse_rows <- TRUE
+    collapse_cols <- TRUE
+    row_field <- NULL  # Auto-detect
+    col_field <- NULL  # Auto-detect
+  } else if (is.character(sum_by)) {
+    # String means collapse rows only by that field
+    collapse_rows <- TRUE
+    collapse_cols <- FALSE
+    row_field <- sum_by
+    col_field <- NULL
+  } else if (is.list(sum_by)) {
+    # List gives full control
+    collapse_rows <- !is.null(sum_by$rows) && sum_by$rows != FALSE
+    collapse_cols <- !is.null(sum_by$cols) && sum_by$cols != FALSE
 
-  # Calculate base_matrix
-  if (length(col_arrays) > 0) {
-    base_matrix <- matrix(NA_real_, nrow = length(row_arrays), ncol = length(col_arrays))
-
-    for (i in seq_along(row_arrays)) {
-      for (j in seq_along(col_arrays)) {
-        base_matrix[i, j] <- statistic$base_calculator(
-          base_array = base_array,
-          row_array = row_arrays[[i]],
-          col_array = col_arrays[[j]],
-          values_array = values_array
-        )
-      }
-    }
-
+    # Extract field names or use auto-detect
+    row_field <- if (is.character(sum_by$rows)) sum_by$rows else NULL
+    col_field <- if (is.character(sum_by$cols)) sum_by$cols else NULL
   } else {
-    # No columns - create single column base calculations
-    base_matrix <- matrix(NA_real_, nrow = length(row_arrays), ncol = 1)
-    for (i in seq_along(row_arrays)) {
-      base_matrix[i, 1] <- statistic$base_calculator(
-        base_array = base_array,
-        row_array = row_arrays[[i]],
-        col_array = rep(1, length(base_array)),  # Dummy column array
-        values_array = values_array
-      )
-    }
+    stop("sum_by must be FALSE, TRUE, a character string, or a list")
   }
+
+  # Apply collapses
+  if (collapse_rows) {
+    collapse_result <- smart_collapse_rows(result_df, row_arrays,
+                                           field = row_field)
+    result_df <- collapse_result$df
+    row_arrays <- collapse_result$row_arrays
+
+    # Resync base matrix after row collapse
+    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
+                                    values_array, statistic)
+  }
+
+  if (collapse_cols) {
+    col_collapse <- smart_collapse_cols(result_df, col_arrays,
+                                        field = col_field)
+    result_df <- col_collapse$df
+    col_arrays <- col_collapse$col_arrays
+
+    # Resync base matrix after column collapse
+    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
+                                    values_array, statistic)
+  }
+
 
   ## Remove low-base rows/columns based on threshold ----
   kept_row_indices <- seq_len(nrow(result_df))
   kept_col_indices <- seq_len(ncol(result_df) - 1)  # Excluding row_label column
 
   if (!is.null(low_base_threshold) && !is.null(base_matrix)) {
-    # Note: Summary rows and columns are added AFTER this filtering step,
+    # Summary rows and columns are added AFTER this filtering step,
     # so they are automatically excluded from the low_base_threshold check
 
     # Apply threshold to each cell in the result matrix
@@ -620,15 +660,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       kept_row_indices <- which(rows_with_data)
       result_df <- result_df[kept_row_indices, , drop = FALSE]
       row_arrays <- row_arrays[kept_row_indices]
-      # Update base matrix
-      if (!is.null(base_matrix)) {
-        base_matrix <- base_matrix[kept_row_indices, , drop = FALSE]
-      }
     } else {
       # All rows have inadequate base
       result_df <- result_df[0, , drop = FALSE]
       row_arrays <- list()
-      base_matrix <- NULL
     }
 
     # Remove columns with all NA values
@@ -637,14 +672,17 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       result_df <- result_df[, cols_to_keep, drop = FALSE]
       kept_col_indices <- which(cols_with_data)
       col_arrays <- col_arrays[kept_col_indices]
-      # Update base matrix
-      if (!is.null(base_matrix)) {
-        base_matrix <- base_matrix[, kept_col_indices, drop = FALSE]
-      }
     } else if (length(col_arrays) > 0) {
       # All columns have inadequate base
       result_df <- result_df[, 1, drop = FALSE]
       col_arrays <- list()
+    }
+
+    # Final resync after low-base filtering
+    if (length(row_arrays) > 0 && length(col_arrays) > 0) {
+      base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
+                                      values_array, statistic)
+    } else {
       base_matrix <- NULL
     }
   }
@@ -664,10 +702,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   if (length(col_arrays) > 1 && !is.null(statistic$summary_col) && show_summary_col) {
     summary_col_label <- statistic$summary_col
-  }
 
-  if (!is.null(summary_col_label)) {
-    # Calculate summary column using the statistic's column calculator
     if (is.null(statistic$summary_col_calculator)) {
       stop("Statistic '", statistic$id, "' has summary_col='", summary_col_label,
            "' but no summary_col_calculator defined")
@@ -676,6 +711,23 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     summary_col_array <- statistic$summary_col_calculator(
       arrays = col_arrays,
       base_array = base_array
+    )
+
+    # Extract labels from the column arrays being summarized
+    col_labels <- sapply(col_arrays, function(arr) {
+      meta <- attr(arr, "meta")
+      if (!is.null(meta) && !is.null(meta$label)) {
+        meta$label
+      } else {
+        "unknown"
+      }
+    })
+
+    summary_col_array <- .ensure_meta(
+      summary_col_array,
+      ivar = "_SUMMARY",
+      ival = summary_col_label,  # "Total", "NET", etc.
+      label = paste0(summary_col_label, " (", paste(col_labels, collapse = " + "), ")")
     )
 
     # calculate the statistic for every row
@@ -695,19 +747,9 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     result_df[[summary_col_label]] <- summary_values
     col_arrays <- c(col_arrays, list(summary_col_array))
 
-    # Update base matrix to include summary column bases
-    if (!is.null(base_matrix) && nrow(base_matrix) > 0) {
-      summary_col_bases <- numeric(nrow(base_matrix))
-      for (i in seq_len(nrow(base_matrix))) {
-        summary_col_bases[i] <- statistic$base_calculator(
-          base_array = base_array,
-          row_array = row_arrays[[i]],
-          col_array = summary_col_array,
-          values_array = values_array
-        )
-      }
-      base_matrix <- cbind(base_matrix, summary_col_bases)
-    }
+    # Resync base matrix to include summary column
+    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
+                                    values_array, statistic)
   }
 
   if (!is.null(statistic$summary_row) && length(row_arrays) > 1 && show_summary_row) {
@@ -720,6 +762,24 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     summary_row_array <- statistic$summary_row_calculator(
       arrays = row_arrays,
       base_array = base_array
+    )
+
+    # Extract labels from the row arrays being summarized
+    row_labels <- sapply(row_arrays, function(arr) {
+      meta <- attr(arr, "meta")
+      if (!is.null(meta) && !is.null(meta$label)) {
+        meta$label
+      } else {
+        "unknown"
+      }
+    })
+
+    summary_row_label <- statistic$summary_row  # "NET", "Avg", etc.
+    summary_row_array <- .ensure_meta(
+      summary_row_array,
+      ivar = "_SUMMARY",
+      ival = summary_row_label,
+      label = paste0(summary_row_label, " (", paste(row_labels, collapse = " + "), ")")
     )
 
     # Calculate summary values for each column
@@ -746,30 +806,13 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     result_df <- rbind(result_df, summary_row_df)
     row_arrays <- c(row_arrays, list(summary_row_array))
 
-    # Update base matrix to include summary row bases
-    if (!is.null(base_matrix) && ncol(base_matrix) > 0) {
-      summary_row_bases <- numeric(ncol(base_matrix))
-      for (j in seq_len(ncol(base_matrix))) {
-        # Handle both regular columns and summary column
-        is_summary_column <- (!is.null(summary_col_array) && j == length(col_arrays))
-        col_array_to_use <- if (is_summary_column) {
-          summary_col_array
-        } else {
-          col_arrays[[j]]
-        }
-
-        summary_row_bases[j] <- statistic$base_calculator(
-          base_array = base_array,
-          row_array = summary_row_array,
-          col_array = col_array_to_use,
-          values_array = values_array
-        )
-      }
-      base_matrix <- rbind(base_matrix, matrix(summary_row_bases, nrow = 1))
-    }
+    # Final resync to include summary row
+    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
+                                    values_array, statistic)
   }
 
-  ## Add base (using pre-calculation base matrix) ------------------------------
+  ## Add visible base (using pre-calculated base matrix) ------------------------------
+  base_orientation <- NULL
   if (show_base && !is.null(base_matrix)) {
     # Determine orientation from the base_matrix structure
     display_as_row <- TRUE
@@ -811,9 +854,6 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       warning("Base values vary within both rows and columns. Displaying as row.", call. = FALSE)
     }
 
-    # Now add bases based on detected orientation
-    base_varies_warning <- FALSE
-
     if (base_orientation == "row") {
       # Display base as a column
       row_base_values <- numeric(nrow(result_df))
@@ -844,6 +884,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       for (j in seq_len(ncol(base_matrix))) {
         # Check if all rows have same base for this column
         col_bases_unique <- unique(base_matrix[, j])
+        col_bases_unique <- col_bases_unique[!is.na(col_bases_unique)]
         if (length(col_bases_unique) == 1) {
           col_base_values[j] <- as.integer(col_bases_unique)
         } else {
@@ -865,10 +906,6 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
       # Add base row
       result_df <- rbind(result_df, base_row)
-
-      if (base_varies_warning) {
-        warning("Base (n) differs by row; showing NA where base varies", call. = FALSE)
-      }
     }
   }
 
@@ -929,6 +966,1019 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   class(result_df) <- c("tab_result", "data.frame")
 
   return(result_df)
+}
+
+
+#' Sync base matrix with current row and column arrays
+#'
+#' This function recalculates the base matrix whenever the dimensions change,
+#' ensuring consistency between arrays and bases. It applies gates during
+#' base calculation to maintain orthogonal structure.
+#'
+#' @param row_arrays List of row arrays
+#' @param col_arrays List of column arrays
+#' @param base_array Base array for filtering
+#' @param values_array Optional values array for mean calculations
+#' @param statistic The statistic object containing base_calculator
+#' @return Matrix of base values with dimensions matching row/col arrays
+#' @keywords internal
+sync_base_matrix <- function(row_arrays, col_arrays, base_array,
+                             values_array, statistic) {
+
+  n_r <- length(row_arrays)
+  n_c <- length(col_arrays)
+
+  if (n_r == 0 || n_c == 0) {
+    return(NULL)
+  }
+
+  base_matrix <- matrix(NA_real_, n_r, n_c)
+
+  for (i in seq_len(n_r)) {
+    r_arr <- row_arrays[[i]]
+    r_gate <- attr(r_arr, "cell_gate")
+    r_meta <- attr(r_arr, "meta")
+
+    if (is.null(r_gate)) r_gate <- always_true_gate
+    if (is.null(r_meta)) r_meta <- list()
+
+    for (j in seq_len(n_c)) {
+      c_arr <- col_arrays[[j]]
+      c_gate <- attr(c_arr, "cell_gate")
+      c_meta <- attr(c_arr, "meta")
+
+      if (is.null(c_gate)) c_gate <- always_true_gate
+      if (is.null(c_meta)) c_meta <- list()
+
+      # Create cell context with all required information
+      cell_ctx <- list(
+        stat_id = statistic$id,
+        base_array = base_array,
+        values_array = values_array
+      )
+
+      # Apply gates: both row and column gates must pass
+      cell_ok <- r_gate(r_meta, c_meta, cell_ctx) && c_gate(r_meta, c_meta, cell_ctx)
+
+      if (!cell_ok) {
+        base_matrix[i, j] <- 0
+      } else {
+        base_matrix[i, j] <- statistic$base_calculator(
+          base_array = base_array,
+          row_array = r_arr,
+          col_array = c_arr,
+          values_array = values_array
+        )
+      }
+    }
+  }
+
+  base_matrix
+}
+
+
+#' Calculate base array applying filter and weights
+#'
+#' @param data Data frame
+#' @param filter_expr Filter expression
+#' @param weight_var Weight variable name
+#' @param parent_env Parent environment for filter evaluation
+#' @return Numeric array with 1s for included rows, 0s for excluded
+#' @keywords internal
+calculate_base_array <- function(data, filter_expr, weight_var, parent_env) {
+  n_rows <- nrow(data)
+  base_array <- rep(1, n_rows)
+
+  # Apply filter if specified
+  if (!is.null(filter_expr) && !is.symbol(filter_expr) ||
+      (is.symbol(filter_expr) && as.character(filter_expr) != "")) {
+    filter_result <- eval(filter_expr, data, parent_env)
+    if (!is.logical(filter_result) || length(filter_result) != n_rows) {
+      stop("Filter expression must return a logical vector of length nrow(data)")
+    }
+    filter_result[is.na(filter_result)] <- FALSE
+    base_array <- base_array * as.numeric(filter_result)
+  }
+
+  # Apply weights if specified
+  if (!is.null(weight_var)) {
+    if (!weight_var %in% names(data)) {
+      stop("Weight variable '", weight_var, "' not found in data")
+    }
+    weight_values <- data[[weight_var]]
+    if (!is.numeric(weight_values)) {
+      stop("Weight variable must be numeric")
+    }
+    if (any(weight_values < 0, na.rm = TRUE)) {
+      stop("Weight values must be non-negative")
+    }
+    # Replace NA weights with 0
+    weight_values[is.na(weight_values)] <- 0
+    base_array <- base_array * weight_values
+  }
+
+  base_array
+}
+
+.is_orthogonal <- function(mat, by = c("row","col")) {
+  by <- match.arg(by)
+  if (by == "row")  all(rowSums(mat != 0 & !is.na(mat)) <= 1)
+  else              all(colSums(mat != 0 & !is.na(mat)) <= 1)
+}
+
+#' Find groups of rows that can be collapsed based on meta attributes
+#'
+#' @param row_labels Character vector of row labels
+#' @param data_cols Data frame of numeric columns
+#' @param row_arrays List of row arrays with meta attributes
+#' @param common_separators Separators for fallback string matching
+#' @param field Optional field to collapse by (e.g., "ival", "ivar")
+#' @return List of collapsible groups
+#' @keywords internal
+find_collapsible_groups_meta <- function(row_labels, data_cols, row_arrays,
+                                         common_separators = c(" - ", ": ", " | ", " / "),
+                                         field = NULL) {
+  groups <- list()
+
+  # Skip if no arrays provided
+  if (is.null(row_arrays) || length(row_arrays) == 0) {
+    # Fallback to string-based grouping
+    return(find_collapsible_groups(row_labels, data_cols, common_separators))
+  }
+
+  # If field is specified, only do that pass
+  if (!is.null(field)) {
+    if (field == "ival") {
+      # Only group by ival
+      ivals <- vapply(row_arrays, function(arr) {
+        meta <- attr(arr, "meta")
+        if (!is.null(meta) && !is.null(meta$ival)) {
+          if (length(meta$ival) > 1) meta$ival[1] else meta$ival
+        } else {
+          NA_character_
+        }
+      }, character(1))
+
+      unique_ivals <- unique(ivals[!is.na(ivals)])
+
+      for (ival in unique_ivals) {
+        ival_indices <- which(ivals == ival)
+
+        if (length(ival_indices) >= 2) {
+          # Check if this group is orthogonal
+          group_data <- data_cols[ival_indices, , drop = FALSE]
+
+          # Check orthogonality: at most one non-zero per column
+          is_orthogonal <- TRUE
+          for (j in seq_len(ncol(group_data))) {
+            col_values <- group_data[, j]
+            non_zero_count <- sum(col_values != 0 & !is.na(col_values))
+            if (non_zero_count > 1) {
+              is_orthogonal <- FALSE
+              break
+            }
+          }
+
+          if (is_orthogonal) {
+            groups[[length(groups) + 1]] <- list(
+              indices = ival_indices,
+              common_prefix = ival,
+              separator = NA,
+              type = "ival"
+            )
+          }
+        }
+      }
+
+      # Return early when field is specified
+      return(groups)
+
+    } else if (field == "ivar") {
+      # Only group by ivar
+      ivars <- vapply(row_arrays, function(arr) {
+        meta <- attr(arr, "meta")
+        if (!is.null(meta) && !is.null(meta$ivar)) {
+          # For multiple ivars, create a key by sorting and pasting
+          if (length(meta$ivar) > 1) {
+            paste(sort(meta$ivar), collapse = "|")
+          } else {
+            meta$ivar
+          }
+        } else {
+          NA_character_
+        }
+      }, character(1))
+
+      unique_ivars <- unique(ivars[!is.na(ivars)])
+
+      for (ivar_key in unique_ivars) {
+        ivar_indices <- which(ivars == ivar_key)
+
+        if (length(ivar_indices) >= 2) {
+          # Check orthogonality
+          group_data <- data_cols[ivar_indices, , drop = FALSE]
+
+          is_orthogonal <- TRUE
+          for (j in seq_len(ncol(group_data))) {
+            col_values <- group_data[, j]
+            non_zero_count <- sum(col_values != 0 & !is.na(col_values))
+            if (non_zero_count > 1) {
+              is_orthogonal <- FALSE
+              break
+            }
+          }
+
+          if (is_orthogonal) {
+            # Extract a sensible label for the group
+            first_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
+
+            groups[[length(groups) + 1]] <- list(
+              indices = ivar_indices,
+              common_prefix = first_label,
+              separator = NA,
+              type = "ivar"
+            )
+          }
+        }
+      }
+
+      # Return early when field is specified
+      return(groups)
+
+    } else {
+      warning("Unknown field '", field, "' for collapsing. Using auto-detect.")
+      # Fall through to auto-detect
+    }
+  }
+
+  # AUTO-DETECT MODE (when field is NULL or unknown)
+
+  # PASS 1: Group by ival (for value-mode expansions like "Daily", "Weekly")
+  # Extract ival from each array's meta
+  ivals <- vapply(row_arrays, function(arr) {
+    meta <- attr(arr, "meta")
+    if (!is.null(meta) && !is.null(meta$ival)) {
+      # Return first ival if multiple (for merged arrays)
+      if (length(meta$ival) > 1) meta$ival[1] else meta$ival
+    } else {
+      NA_character_
+    }
+  }, character(1))
+
+  # Group by unique ival values (excluding NAs)
+  unique_ivals <- unique(ivals[!is.na(ivals)])
+
+  for (ival in unique_ivals) {
+    ival_indices <- which(ivals == ival)
+
+    if (length(ival_indices) >= 2) {
+      # Check if this group is orthogonal
+      group_data <- data_cols[ival_indices, , drop = FALSE]
+
+      # Check orthogonality: at most one non-zero per column
+      is_orthogonal <- TRUE
+      for (j in seq_len(ncol(group_data))) {
+        col_values <- group_data[, j]
+        non_zero_count <- sum(col_values != 0 & !is.na(col_values))
+        if (non_zero_count > 1) {
+          is_orthogonal <- FALSE
+          break
+        }
+      }
+
+      if (is_orthogonal) {
+        groups[[length(groups) + 1]] <- list(
+          indices = ival_indices,
+          common_prefix = ival,  # Use ival as the collapsed label
+          separator = NA,  # Not string-based
+          type = "ival"
+        )
+      }
+    }
+  }
+
+  # Track which rows have been grouped
+  grouped_indices <- unlist(lapply(groups, `[[`, "indices"))
+  remaining_indices <- setdiff(seq_along(row_arrays), grouped_indices)
+
+  # PASS 2: For ungrouped rows, try grouping by ivar
+  if (length(remaining_indices) > 0) {
+    remaining_ivars <- vapply(row_arrays[remaining_indices], function(arr) {
+      meta <- attr(arr, "meta")
+      if (!is.null(meta) && !is.null(meta$ivar)) {
+        # For multiple ivars, create a key by sorting and pasting
+        if (length(meta$ivar) > 1) {
+          paste(sort(meta$ivar), collapse = "|")
+        } else {
+          meta$ivar
+        }
+      } else {
+        NA_character_
+      }
+    }, character(1))
+
+    # Group remaining rows by ivar
+    unique_ivars <- unique(remaining_ivars[!is.na(remaining_ivars)])
+
+    for (ivar_key in unique_ivars) {
+      ivar_rel_indices <- which(remaining_ivars == ivar_key)
+      ivar_indices <- remaining_indices[ivar_rel_indices]
+
+      if (length(ivar_indices) >= 2) {
+        # Check orthogonality
+        group_data <- data_cols[ivar_indices, , drop = FALSE]
+
+        is_orthogonal <- TRUE
+        for (j in seq_len(ncol(group_data))) {
+          col_values <- group_data[, j]
+          non_zero_count <- sum(col_values != 0 & !is.na(col_values))
+          if (non_zero_count > 1) {
+            is_orthogonal <- FALSE
+            break
+          }
+        }
+
+        if (is_orthogonal) {
+          # For ivar groups, use a sensible label
+          # Extract the common part from the first label
+          first_label <- row_labels[ivar_indices[1]]
+          common_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
+
+          groups[[length(groups) + 1]] <- list(
+            indices = ivar_indices,
+            common_prefix = common_label,
+            separator = NA,
+            type = "ivar"
+          )
+        }
+      }
+    }
+  }
+
+  # Update remaining indices after second pass
+  grouped_indices <- unlist(lapply(groups, `[[`, "indices"))
+  final_remaining <- setdiff(seq_along(row_arrays), grouped_indices)
+
+  # PASS 3: Fallback to string prefix matching for remaining rows
+  if (length(final_remaining) > 0) {
+    remaining_labels <- row_labels[final_remaining]
+    remaining_data <- data_cols[final_remaining, , drop = FALSE]
+
+    # Use original string-based logic on remaining rows
+    string_groups <- find_collapsible_groups(remaining_labels, remaining_data, common_separators)
+
+    # Adjust indices to match original positions
+    for (sg in string_groups) {
+      adjusted_indices <- final_remaining[sg$indices]
+      groups[[length(groups) + 1]] <- list(
+        indices = adjusted_indices,
+        common_prefix = sg$common_prefix,
+        separator = sg$separator,
+        type = "string"
+      )
+    }
+  }
+
+  # Remove overlapping groups (keep the ones with most rows)
+  if (length(groups) > 1) {
+    groups <- remove_overlapping_groups(groups)
+  }
+
+  return(groups)
+}
+
+# Update the existing find_collapsible_groups to use meta when available
+find_collapsible_groups <- function(row_labels, data_cols, common_separators) {
+  # This is now just the string-based fallback logic
+  # (Keep the existing implementation for backward compatibility)
+  groups <- list()
+
+  # Try each separator
+  for (sep in common_separators) {
+    # Find labels containing this separator
+    has_sep <- grepl(sep, row_labels, fixed = TRUE)
+
+    if (sum(has_sep) < 2) next
+
+    # Extract prefixes for labels with this separator
+    labels_with_sep <- row_labels[has_sep]
+    indices_with_sep <- which(has_sep)
+
+    prefixes <- sapply(labels_with_sep, function(label) {
+      parts <- strsplit(label, sep, fixed = TRUE)[[1]]
+      if (length(parts) >= 2) {
+        trimws(parts[1])
+      } else {
+        NA_character_
+      }
+    })
+
+    # Group by prefix
+    unique_prefixes <- unique(na.omit(prefixes))
+
+    for (prefix in unique_prefixes) {
+      prefix_indices <- indices_with_sep[!is.na(prefixes) & prefixes == prefix]
+
+      if (length(prefix_indices) < 2) next
+
+      # Check if this group is collapsible
+      group_data <- data_cols[prefix_indices, , drop = FALSE]
+
+      # For each column, check if at most one row has non-zero
+      is_collapsible <- TRUE
+      for (j in seq_len(ncol(group_data))) {
+        col_values <- group_data[, j]
+        non_zero_count <- sum(col_values != 0 & !is.na(col_values))
+        if (non_zero_count > 1) {
+          is_collapsible <- FALSE
+          break
+        }
+      }
+
+      if (is_collapsible) {
+        groups[[length(groups) + 1]] <- list(
+          indices = prefix_indices,
+          common_prefix = prefix,
+          separator = sep
+        )
+      }
+    }
+  }
+
+  # Remove overlapping groups (keep the ones with most rows)
+  if (length(groups) > 1) {
+    groups <- remove_overlapping_groups(groups)
+  }
+
+  return(groups)
+}
+
+
+#' Smart collapse rows using meta attributes
+#'
+#' @param result_df The result data frame from tab
+#' @param row_arrays List of row arrays with meta attributes
+#' @param common_separators Character vector of separators for fallback
+#' @return List with collapsed data frame and updated row arrays
+#' @keywords internal
+smart_collapse_rows <- function(result_df, row_arrays = NULL,
+                                field = NULL,  # New parameter
+                                common_separators = c(" - ", ": ", " | ", " / ")) {
+
+  if (nrow(result_df) < 2) {
+    return(list(df = result_df, row_arrays = row_arrays))
+  }
+
+  # Get row labels and data columns
+  row_labels <- result_df$row_label
+  data_cols <- result_df[, -1, drop = FALSE]
+
+  # Find groups using meta-based logic with field hint
+  row_groups <- find_collapsible_groups_meta(row_labels, data_cols, row_arrays,
+                                             common_separators, field = field)
+
+  if (length(row_groups) == 0) {
+    return(list(df = result_df, row_arrays = row_arrays))
+  }
+
+  # Process each group
+  new_rows <- list()
+  new_row_arrays <- list()
+  processed_indices <- integer(0)
+
+  for (group in row_groups) {
+    group_indices <- group$indices
+    group_label <- group$common_prefix
+
+    # Sum values across rows in the group
+    group_data <- data_cols[group_indices, , drop = FALSE]
+    collapsed_values <- colSums(group_data, na.rm = TRUE)
+
+    # Create new row
+    new_row <- data.frame(
+      row_label = group_label,
+      t(collapsed_values),
+      stringsAsFactors = FALSE
+    )
+    names(new_row) <- names(result_df)
+
+    new_rows[[length(new_rows) + 1]] <- new_row
+
+    # Update row arrays if provided
+    if (!is.null(row_arrays)) {
+      # Combine arrays (OR logic)
+      collapsed_array <- Reduce(function(x, y) pmax(x, y, na.rm = TRUE),
+                                row_arrays[group_indices])
+
+      # Merge metadata
+      row_metas <- lapply(row_arrays[group_indices],
+                          \(a) attr(a, "meta") %||% list())
+
+      # Use .ensure_meta() to create merged meta
+      collapsed_array <- .ensure_meta(
+        collapsed_array,
+        ivar = unique(unlist(lapply(row_metas, `[[`, "ivar"))),
+        ival = unique(unlist(lapply(row_metas, `[[`, "ival"))),
+        label = group_label
+      )
+
+      # Copy the gate from the first row in the group
+      # If that row had no gate, attach the appropriate default gate
+      gate <- attr(row_arrays[[group_indices[1]]], "cell_gate")
+      if (is.null(gate)) {
+        gate_factory <- get_gate("no_mismatch")
+        if (!is.null(gate_factory)) {
+          # Determine gate type based on what was collapsed
+          if (group$type == "ival") {
+            gate <- gate_factory("ival")
+          } else if (group$type == "ivar") {
+            gate <- gate_factory("ivar")
+          }
+          # For string type, don't add a gate
+        }
+      }
+      if (!is.null(gate)) {
+        attr(collapsed_array, "cell_gate") <- gate
+      }
+
+      new_row_arrays[[length(new_row_arrays) + 1]] <- collapsed_array
+    }
+
+    processed_indices <- c(processed_indices, group_indices)
+  }
+
+  # Add uncollapsed rows
+  remaining_indices <- setdiff(seq_len(nrow(result_df)), processed_indices)
+
+  if (length(remaining_indices) > 0) {
+    remaining_rows <- result_df[remaining_indices, , drop = FALSE]
+    rownames(remaining_rows) <- NULL
+
+    if (!is.null(row_arrays)) {
+      remaining_arrays <- row_arrays[remaining_indices]
+      new_row_arrays <- c(new_row_arrays, remaining_arrays)
+    }
+
+    # Combine collapsed and remaining rows
+    collapsed_df <- rbind(do.call(rbind, new_rows), remaining_rows)
+  } else {
+    collapsed_df <- do.call(rbind, new_rows)
+  }
+
+  # Reset row names
+  rownames(collapsed_df) <- NULL
+
+  return(list(df = collapsed_df, row_arrays = new_row_arrays))
+}
+
+#' Find groups of rows that can be collapsed
+#'
+#' @param row_labels Character vector of row labels
+#' @param data_cols Data frame of numeric columns
+#' @param common_separators Separators to check
+#' @return List of collapsible groups
+#' @keywords internal
+find_collapsible_groups <- function(row_labels, data_cols, common_separators) {
+  groups <- list()
+
+  # Try each separator
+  for (sep in common_separators) {
+    # Find labels containing this separator
+    has_sep <- grepl(sep, row_labels, fixed = TRUE)
+
+    if (sum(has_sep) < 2) next
+
+    # Extract prefixes for labels with this separator
+    labels_with_sep <- row_labels[has_sep]
+    indices_with_sep <- which(has_sep)
+
+    prefixes <- sapply(labels_with_sep, function(label) {
+      parts <- strsplit(label, sep, fixed = TRUE)[[1]]
+      if (length(parts) >= 2) {
+        trimws(parts[1])
+      } else {
+        NA_character_
+      }
+    })
+
+    # Group by prefix
+    unique_prefixes <- unique(na.omit(prefixes))
+
+    for (prefix in unique_prefixes) {
+      prefix_indices <- indices_with_sep[!is.na(prefixes) & prefixes == prefix]
+
+      if (length(prefix_indices) < 2) next
+
+      # Check if this group is collapsible
+      group_data <- data_cols[prefix_indices, , drop = FALSE]
+
+      # For each column, check if at most one row has non-zero
+      is_collapsible <- TRUE
+      for (j in seq_len(ncol(group_data))) {
+        col_values <- group_data[, j]
+        non_zero_count <- sum(col_values != 0 & !is.na(col_values))
+        if (non_zero_count > 1) {
+          is_collapsible <- FALSE
+          break
+        }
+      }
+
+      if (is_collapsible) {
+        groups[[length(groups) + 1]] <- list(
+          indices = prefix_indices,
+          common_prefix = prefix,
+          separator = sep
+        )
+      }
+    }
+  }
+
+  # Remove overlapping groups (keep the ones with most rows)
+  if (length(groups) > 1) {
+    groups <- remove_overlapping_groups(groups)
+  }
+
+  return(groups)
+}
+
+#' Remove overlapping groups, keeping those with most rows
+#'
+#' @param groups List of groups
+#' @return List of non-overlapping groups
+#' @keywords internal
+remove_overlapping_groups <- function(groups) {
+  if (length(groups) <= 1) return(groups)
+
+  # Sort by number of indices (descending)
+  group_sizes <- sapply(groups, function(g) length(g$indices))
+  groups <- groups[order(group_sizes, decreasing = TRUE)]
+
+  # Keep track of used indices
+  used_indices <- integer(0)
+  kept_groups <- list()
+
+  for (group in groups) {
+    if (!any(group$indices %in% used_indices)) {
+      kept_groups[[length(kept_groups) + 1]] <- group
+      used_indices <- c(used_indices, group$indices)
+    }
+  }
+
+  return(kept_groups)
+}
+
+#' Find groups of columns that can be collapsed based on meta attributes
+#'
+#' @param col_labels Character vector of column labels
+#' @param data_matrix Matrix of data values
+#' @param col_arrays List of column arrays with meta attributes
+#' @param common_separators Separators for fallback string matching
+#' @param field Optional field to collapse by (e.g., "ival", "ivar")
+#' @return Named list of column groups
+#' @keywords internal
+find_collapsible_col_groups_meta <- function(col_labels, data_matrix, col_arrays,
+                                             common_separators = c(" - ", ": ", " | ", " / "),
+                                             field = NULL) {
+
+  if (is.null(col_arrays) || length(col_arrays) == 0) {
+    # Fallback to string-based grouping
+    return(find_collapsible_col_groups_string(col_labels, data_matrix, common_separators))
+  }
+
+  groups <- list()
+
+  # If field is specified, only do that pass
+  if (!is.null(field)) {
+    if (field == "ival") {
+      # Only group by ival
+      ivals <- vapply(col_arrays, function(arr) {
+        meta <- attr(arr, "meta")
+        if (!is.null(meta) && !is.null(meta$ival)) {
+          if (length(meta$ival) > 1) meta$ival[1] else meta$ival
+        } else {
+          NA_character_
+        }
+      }, character(1))
+
+      unique_ivals <- unique(ivals[!is.na(ivals)])
+
+      for (ival in unique_ivals) {
+        col_indices <- which(ivals == ival)
+
+        if (length(col_indices) >= 2) {
+          # Check orthogonality across rows
+          is_orthogonal <- TRUE
+          for (i in seq_len(nrow(data_matrix))) {
+            row_values <- data_matrix[i, col_indices]
+            non_zero_count <- sum(row_values != 0 & !is.na(row_values))
+            if (non_zero_count > 1) {
+              is_orthogonal <- FALSE
+              break
+            }
+          }
+
+          if (is_orthogonal) {
+            # Use ival as the group key
+            groups[[ival]] <- col_indices
+          }
+        }
+      }
+
+      # Return early when field is specified
+      return(groups)
+
+    } else if (field == "ivar") {
+      # Only group by ivar
+      ivars <- vapply(col_arrays, function(arr) {
+        meta <- attr(arr, "meta")
+        if (!is.null(meta) && !is.null(meta$ivar)) {
+          if (length(meta$ivar) > 1) {
+            paste(sort(meta$ivar), collapse = "|")
+          } else {
+            meta$ivar
+          }
+        } else {
+          NA_character_
+        }
+      }, character(1))
+
+      unique_ivars <- unique(ivars[!is.na(ivars)])
+
+      for (ivar_key in unique_ivars) {
+        ivar_indices <- which(ivars == ivar_key)
+
+        if (length(ivar_indices) >= 2) {
+          # Check orthogonality
+          is_orthogonal <- TRUE
+          for (i in seq_len(nrow(data_matrix))) {
+            row_values <- data_matrix[i, ivar_indices]
+            non_zero_count <- sum(row_values != 0 & !is.na(row_values))
+            if (non_zero_count > 1) {
+              is_orthogonal <- FALSE
+              break
+            }
+          }
+
+          if (is_orthogonal) {
+            # Extract a sensible label for the group
+            first_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
+            groups[[first_label]] <- ivar_indices
+          }
+        }
+      }
+
+      # Return early when field is specified
+      return(groups)
+
+    } else {
+      warning("Unknown field '", field, "' for collapsing. Using auto-detect.")
+      # Fall through to auto-detect
+    }
+  }
+
+  # AUTO-DETECT MODE (when field is NULL or unknown)
+
+  # PASS 1: Group by ival (for columns grouped by value)
+  ivals <- vapply(col_arrays, function(arr) {
+    meta <- attr(arr, "meta")
+    if (!is.null(meta) && !is.null(meta$ival)) {
+      if (length(meta$ival) > 1) meta$ival[1] else meta$ival
+    } else {
+      NA_character_
+    }
+  }, character(1))
+
+  unique_ivals <- unique(ivals[!is.na(ivals)])
+
+  for (ival in unique_ivals) {
+    col_indices <- which(ivals == ival)
+
+    if (length(col_indices) >= 2) {
+      # Check orthogonality across rows
+      is_orthogonal <- TRUE
+      for (i in seq_len(nrow(data_matrix))) {
+        row_values <- data_matrix[i, col_indices]
+        non_zero_count <- sum(row_values != 0 & !is.na(row_values))
+        if (non_zero_count > 1) {
+          is_orthogonal <- FALSE
+          break
+        }
+      }
+
+      if (is_orthogonal) {
+        # Use ival as the group key
+        groups[[ival]] <- col_indices
+      }
+    }
+  }
+
+  # Track which columns have been grouped
+  grouped_indices <- unlist(groups)
+  remaining_indices <- setdiff(seq_along(col_arrays), grouped_indices)
+
+  # PASS 2: For ungrouped columns, try grouping by ivar
+  if (length(remaining_indices) > 0) {
+    remaining_ivars <- vapply(col_arrays[remaining_indices], function(arr) {
+      meta <- attr(arr, "meta")
+      if (!is.null(meta) && !is.null(meta$ivar)) {
+        if (length(meta$ivar) > 1) {
+          paste(sort(meta$ivar), collapse = "|")
+        } else {
+          meta$ivar
+        }
+      } else {
+        NA_character_
+      }
+    }, character(1))
+
+    unique_ivars <- unique(remaining_ivars[!is.na(remaining_ivars)])
+
+    for (ivar_key in unique_ivars) {
+      ivar_rel_indices <- which(remaining_ivars == ivar_key)
+      ivar_indices <- remaining_indices[ivar_rel_indices]
+
+      if (length(ivar_indices) >= 2) {
+        # Check orthogonality
+        is_orthogonal <- TRUE
+        for (i in seq_len(nrow(data_matrix))) {
+          row_values <- data_matrix[i, ivar_indices]
+          non_zero_count <- sum(row_values != 0 & !is.na(row_values))
+          if (non_zero_count > 1) {
+            is_orthogonal <- FALSE
+            break
+          }
+        }
+
+        if (is_orthogonal) {
+          # Extract a sensible label for the group
+          first_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
+          groups[[first_label]] <- ivar_indices
+        }
+      }
+    }
+  }
+
+  # PASS 3: Fallback to string matching for remaining columns
+  final_grouped <- unlist(groups)
+  final_remaining <- setdiff(seq_along(col_arrays), final_grouped)
+
+  if (length(final_remaining) > 0) {
+    remaining_labels <- col_labels[final_remaining]
+    remaining_data <- data_matrix[, final_remaining, drop = FALSE]
+
+    # Use string-based grouping on remaining
+    string_groups <- find_collapsible_col_groups_string(
+      remaining_labels,
+      remaining_data,
+      common_separators
+    )
+
+    # Adjust indices and merge
+    for (prefix in names(string_groups)) {
+      adjusted_indices <- final_remaining[string_groups[[prefix]]]
+      # Don't overwrite if prefix already exists from meta grouping
+      if (!prefix %in% names(groups)) {
+        groups[[prefix]] <- adjusted_indices
+      }
+    }
+  }
+
+  return(groups)
+}
+
+#' Helper to do string-based column grouping (fallback)
+#' @keywords internal
+find_collapsible_col_groups_string <- function(col_labels, data_matrix, common_separators) {
+  split_prefix <- function(lbl) {
+    # Returns text before the *last* recognised separator
+    locs <- unlist(lapply(common_separators,
+                          function(sep) gregexpr(sep, lbl, fixed = TRUE)))
+    locs <- locs[locs > 0]
+    if (length(locs))
+      trimws(substr(lbl, 1, max(locs) - 1))
+    else
+      lbl
+  }
+
+  prefixes <- vapply(col_labels, split_prefix, character(1))
+  groups <- split(seq_along(col_labels), prefixes)
+
+  # Only keep groups that are orthogonal
+  collapsible_groups <- list()
+
+  for (pref in names(groups)) {
+    idx <- groups[[pref]]
+
+    if (length(idx) < 2) next
+
+    # Check orthogonality
+    is_orthogonal <- TRUE
+    for (i in seq_len(nrow(data_matrix))) {
+      row_values <- data_matrix[i, idx]
+      non_zero_count <- sum(row_values != 0 & !is.na(row_values))
+      if (non_zero_count > 1) {
+        is_orthogonal <- FALSE
+        break
+      }
+    }
+
+    if (is_orthogonal) {
+      collapsible_groups[[pref]] <- idx
+    }
+  }
+
+  return(collapsible_groups)
+}
+
+#' Smart collapse columns using meta attributes
+#'
+#' @param result_df The result data frame from tab
+#' @param col_arrays List of column arrays with meta attributes
+#' @param common_separators Character vector of separators for fallback
+#' @return List with collapsed data frame and updated column arrays
+#' @keywords internal
+smart_collapse_cols <- function(result_df, col_arrays = NULL,
+                                field = NULL,  # New parameter
+                                common_separators = c(" - ", ": ", " | ", " / ")) {
+
+  # Nothing to do if we have ≤ 1 data column
+  if (ncol(result_df) <= 2) {
+    return(list(df = result_df, col_arrays = col_arrays))
+  }
+
+  label_col <- names(result_df)[1]  # usually "row_label"
+  data_part <- result_df[, -1, drop = FALSE]
+  col_labels <- names(data_part)
+  data_matrix <- as.matrix(data_part)
+
+  # Find collapsible groups using meta with field hint
+  groups <- find_collapsible_col_groups_meta(col_labels, data_matrix, col_arrays,
+                                             common_separators, field = field)
+
+  # New containers
+  new_df <- result_df[label_col]  # Start with label column
+  new_col_arrays <- list()
+
+  # Process each group
+  for (group_label in names(groups)) {
+    idx <- groups[[group_label]]
+
+    if (length(idx) == 1) {
+      # Single column - keep as is
+      new_df[[col_labels[idx]]] <- data_part[[idx]]
+      if (!is.null(col_arrays)) {
+        new_col_arrays <- c(new_col_arrays, col_arrays[idx])
+      }
+    } else {
+      # Multiple columns - collapse
+      block <- as.matrix(data_part[, idx, drop = FALSE])
+      new_df[[group_label]] <- rowSums(block, na.rm = TRUE)
+
+      if (!is.null(col_arrays)) {
+        # Merge arrays
+        merged <- Reduce(function(x, y) pmax(x, y, na.rm = TRUE), col_arrays[idx])
+
+        # Merge metadata
+        col_metas <- lapply(col_arrays[idx],
+                            \(a) attr(a, "meta") %||% list())
+
+        merged <- .ensure_meta(
+          merged,
+          ivar = unique(unlist(lapply(col_metas, `[[`, "ivar"))),
+          ival = unique(unlist(lapply(col_metas, `[[`, "ival"))),
+          label = group_label
+        )
+
+        # Handle gate
+        gate <- attr(col_arrays[[idx[1]]], "cell_gate")
+        if (is.null(gate)) {
+          gate_factory <- get_gate("no_mismatch")
+          if (!is.null(gate_factory)) {
+            # Determine appropriate gate based on what was collapsed
+            # For columns, often we want to match on ivar
+            if (all(!is.na(sapply(col_metas, function(m) m$ivar)))) {
+              gate <- gate_factory("ivar")
+            } else if (all(!is.na(sapply(col_metas, function(m) m$ival)))) {
+              gate <- gate_factory("ival")
+            }
+          }
+        }
+        if (!is.null(gate)) {
+          attr(merged, "cell_gate") <- gate
+        }
+
+        new_col_arrays <- c(new_col_arrays, list(merged))
+      }
+    }
+  }
+
+  # Ensure column order is deterministic
+  new_df <- new_df[, c(label_col, setdiff(names(new_df), label_col)), drop = FALSE]
+
+  return(list(
+    df = new_df,
+    col_arrays = if (is.null(col_arrays)) NULL else new_col_arrays
+  ))
 }
 
 #' Validate Variable Types for Statistics
@@ -1053,7 +2103,7 @@ print.tab_result <- function(x, ...) {
       if (i %in% base_row_idx || is_base_column) {
         as.character(orig[i])
       } else if (is.numeric(orig[i]) && !is.na(orig[i])) {
-        formatted_val <- statistic$format_fn(orig[i]) # ERROR HERE?
+        formatted_val <- statistic$format_fn(orig[i])
 
         # Add significance indicators from all tests
         if (!is.null(all_sig)) {
@@ -1161,7 +2211,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
 
   # Check if it's a tab_helper object (evaluated helper function)
   if (inherits(actual_expr, "tab_helper")) {
-    helper_type <- attr(actual_expr, "helper_type")
+    helper_type <- attr(actual_expr, "id")
     label <- paste0(helper_type, "(...)")
 
     return(list(
@@ -1210,10 +2260,19 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
 
     # Check if it's a helper function
     if (fn_name %in% names(helpers)) {
+      # Get arguments with their names preserved
+      args <- rlang::call_args(actual_expr)
+      arg_names <- rlang::call_args_names(actual_expr)
+
+      # Set names on the args list
+      if (length(arg_names) > 0) {
+        names(args) <- arg_names
+      }
+
       return(list(
         type = "helper",
         helper_type = fn_name,
-        args = rlang::call_args(actual_expr),
+        args = args,
         label = expr_text
       ))
     }
@@ -1461,6 +2520,51 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
 
     # Helper functions should not be expanded
     if (var_spec$type == "helper") {
+      # Special handling for calc_if - expand the inner expression first
+      if (var_spec$helper_type == "calc_if") {
+        calc_if_obj <- var_spec$args
+
+        # Check if calc_if_obj is already properly structured
+        if (!is.list(calc_if_obj) || !all(c("expr", "gate") %in% names(calc_if_obj))) {
+          # It's raw arguments - need to construct the calc_if structure
+          if (length(calc_if_obj) != 2) {
+            stop("calc_if expects exactly 2 arguments: gate and expression")
+          }
+
+          # Evaluate the gate argument (first argument)
+          gate_arg <- calc_if_obj[[1]]
+          if (is.call(gate_arg)) {
+            gate_fn <- eval(gate_arg, envir = parent.frame())
+          } else {
+            gate_fn <- gate_arg
+          }
+
+          # The expression is the second argument - parse it
+          expr_arg <- calc_if_obj[[2]]
+          inner_spec <- parse_table_formula(rlang::enquo(expr_arg), data, dpdict)
+        } else {
+          gate_fn <- calc_if_obj$gate
+          inner_spec <- parse_table_formula(calc_if_obj$expr, data, dpdict)
+        }
+
+        # Recursively expand the inner expression
+        inner_expanded <- expand_variables(inner_spec, data, dpdict, statistic, values_var, label_mode)
+
+        # Wrap each expanded result with the gate
+        result <- list()
+        for (exp in inner_expanded) {
+          gated_spec <- list(
+            type = "gated",
+            inner_spec = exp,
+            gate = gate_fn,
+            label = exp$label  # Use the expanded label
+          )
+          result <- append(result, list(gated_spec))
+        }
+
+        return(result)
+      }
+      # Other helpers not expanded
       return(list(var_spec))
     }
 
@@ -1513,19 +2617,41 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
         labels <- attr(var_data, "labels")
         if (!is.null(labels) && length(labels) > 0) {
           return(lapply(seq_along(labels), function(i) {
-            list(
+            val <- labels[i]
+            val_label <- names(labels)[i]
+            formatted_label <- get_display_label(var_name, dpdict, label_mode, val_label, data)
+
+            child_spec <- list(
               type = "expression",
-              components = list(expr = call("==", as.name(var_name), labels[i])),
-              label = get_display_label(var_name, dpdict, label_mode, names(labels)[i], data)
+              components = list(expr = call("==", as.name(var_name), val)),
+              label = formatted_label,
+              # Add meta attributes where we have full context
+              meta = list(
+                ivar = get_var_label(var_name, dpdict),
+                ival = val_label,
+                label = formatted_label
+              )
             )
+            if (is.list(var_spec) && !is.null(var_spec$gate)) {
+              child_spec$gate <- var_spec$gate
+            }
+            child_spec
           }))
         } else if (is.factor(var_data)) {
           levs <- levels(var_data)
           return(lapply(seq_along(levs), function(i) {
+            lev <- levs[i]
+            formatted_label <- get_display_label(var_name, dpdict, label_mode, lev, data)
+
             list(
               type = "expression",
-              components = list(expr = call("==", as.name(var_name), labels[i])),
-              label = get_display_label(var_name, dpdict, label_mode, levs[i], data)
+              components = list(expr = call("==", as.name(var_name), i)),  # factors use numeric indices
+              label = formatted_label,
+              meta = list(
+                ivar = get_var_label(var_name, dpdict),
+                ival = lev,
+                label = formatted_label
+              )
             )
           }))
         } else {
@@ -1534,10 +2660,16 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
       } else if (questiontype %in% c("multiresponse", "numeric", "multinumeric")) {
         # Don't expand - return as single variable
         if (is.character(var_spec)) {
+          var_label <- get_display_label(var_spec, dpdict, label_mode, NULL, data)
           return(list(list(
             type = "simple",
             components = list(var = var_spec),
-            label = get_display_label(var_spec, dpdict, label_mode, NULL, data)
+            label = var_label,
+            meta = list(
+              ivar = get_var_label(var_spec, dpdict),
+              ival = NULL,  # No categorical value for these types
+              label = var_label
+            )
           )))
         } else {
           return(list(var_spec))
@@ -1552,10 +2684,19 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
     labels <- attr(var_data, "labels")
     if (!is.null(labels) && length(labels) > 0) {
       return(lapply(seq_along(labels), function(i) {
+        val <- labels[i]
+        val_label <- names(labels)[i]
+        formatted_label <- get_display_label(var_name, dpdict, label_mode, val_label, data)
+
         list(
           type = "expression",
-          components = list(expr = call("==", as.name(var_name), labels[i])),
-          label = get_display_label(var_name, dpdict, label_mode, names(labels)[i])
+          components = list(expr = call("==", as.name(var_name), val)),
+          label = formatted_label,
+          meta = list(
+            ivar = get_var_label(var_name, dpdict),
+            ival = val_label,
+            label = formatted_label
+          )
         )
       }))
     }
@@ -1564,10 +2705,17 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
     if (is.factor(var_data)) {
       levs <- levels(var_data)
       return(lapply(levs, function(lev) {
+        formatted_label <- get_display_label(var_name, dpdict, label_mode, lev, data)
+
         list(
           type = "expression",
           components = list(expr = call("==", as.name(var_name), lev)),
-          label = get_display_label(var_name, dpdict, label_mode, lev, data)
+          label = formatted_label,
+          meta = list(
+            ivar = get_var_label(var_name, dpdict),
+            ival = lev,
+            label = formatted_label
+          )
         )
       }))
     }
@@ -1681,7 +2829,65 @@ prepare_eval_data <- function(data) {
   data
 }
 
-#' Convert formula specification to numeric array
+# Specialized array creation functions with meta
+create_simple_array <- function(var_data, var_name, spec, dpdict) {
+  # Convert to appropriate array type
+  if (is.logical(var_data)) {
+    arr <- as.numeric(var_data)
+  } else if (is.numeric(var_data)) {
+    # Check if it's binary (0/1)
+    unique_vals <- unique(na.omit(var_data))
+    if (all(unique_vals %in% c(0, 1))) {
+      arr <- var_data
+    } else {
+      # For non-binary numeric, keep as is (for means)
+      arr <- var_data
+    }
+  } else {
+    stop("Unsupported variable type for '", var_name, "'")
+  }
+
+  # Add meta if not already present from spec
+  if (!is.null(spec$meta)) {
+    # Use meta from expand_variables
+    .ensure_meta(arr, spec$meta$ivar, spec$meta$ival, spec$meta$label)
+  } else {
+    # Add default meta for simple variables
+    .ensure_meta(
+      arr,
+      ivar = get_var_label(var_name, dpdict),
+      ival = NULL,
+      label = spec$label %||% get_var_label(var_name, dpdict)
+    )
+  }
+}
+
+create_expression_array <- function(expr_result, spec, expr_vars, dpdict) {
+  arr <- as.numeric(expr_result)
+
+  # Check if spec has meta from expand_variables
+  if (!is.null(spec$meta)) {
+    .ensure_meta(arr, spec$meta$ivar, spec$meta$ival, spec$meta$label)
+  } else {
+    # Add meta for general expressions
+    .ensure_meta(
+      arr,
+      ivar = if (length(expr_vars) > 0) expr_vars else "expression",
+      ival = NULL,
+      label = spec$label %||% deparse(spec$components$expr)
+    )
+  }
+}
+
+create_total_array <- function(n, spec) {
+  arr <- rep(1, n)
+  .ensure_meta(
+    arr,
+    ivar = "_SUMMARY",
+    ival = "Total",
+    label = spec$label %||% "Total"
+  )
+}
 
 #' Convert formula specification to numeric array
 #'
@@ -1699,30 +2905,11 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
   # Process based on type
   if (formula_spec$type == "simple") {
     var_name <- formula_spec$components$var
-    # if (!var_name %in% names(data)) {
-    #   stop("Variable '", var_name, "' not found in data")
-    # }
 
     check_variables_exist(var_name, data,
                           paste0("expression '", formula_spec$label, "'"))
 
-    var_data <- data[[var_name]]
-
-    # Convert to binary for categorical/logical
-    if (is.logical(var_data)) {
-      result <- result * as.numeric(var_data)
-    } else if (is.numeric(var_data)) {
-      # Check if it's binary (0/1)
-      unique_vals <- unique(na.omit(var_data))
-      if (all(unique_vals %in% c(0, 1))) {
-        result <- result * var_data
-      } else {
-        # For non-binary numeric, keep as is (for means)
-        result <- result * var_data
-      }
-    } else {
-      stop("Unsupported variable type for '", var_name, "'")
-    }
+    return(create_simple_array(data[[var_name]], var_name, formula_spec, dpdict))
 
   } else if (formula_spec$type == "multiplication") {
     # Apply each component multiplicatively
@@ -1730,6 +2917,21 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
       comp_array <- formula_to_array(comp, data)
       result <- result * comp_array
     }
+
+    # For multiplication, preserve meta from first component if available
+    if (length(formula_spec$components) > 0) {
+      first_array <- formula_to_array(formula_spec$components[[1]], data, dpdict)
+      first_meta <- attr(first_array, "meta")
+      if (!is.null(first_meta)) {
+        result <- .ensure_meta(
+          result,
+          ivar = first_meta$ivar,
+          ival = first_meta$ival,
+          label = formula_spec$label %||% first_meta$label
+        )
+      }
+    }
+    return(result)
 
   } else if (formula_spec$type == "expression") {
     # Extract variables referenced in the expression
@@ -1747,22 +2949,29 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
     if (!is.logical(expr_result) && !is.numeric(expr_result)) {
       stop("Expression must evaluate to logical or numeric")
     }
-    result <- result * as.numeric(expr_result)
+    return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
 
   } else if (formula_spec$type == "helper") {
-    # Process helper functions
-    helper_result <- process_helper(formula_spec, data, dpdict = dpdict)
+      helper_result <- process_helper(formula_spec, data, dpdict = dpdict)
 
-    # Check if it's a multi-column helper
-    if (is.list(helper_result) && isTRUE(attr(helper_result, "is_multi_column"))) {
-      # For multi-column helpers, return the list directly
-      # The calling code will handle the expansion
-      return(helper_result)
-    } else {
-      # Single array - multiply as normal
-      result <- result * helper_result
-    }
-
+      # Check if it's a multi-column helper
+      # Multi-column helpers should already have meta
+      if (is.list(helper_result) && isTRUE(attr(helper_result, "is_multi_column"))) {
+        # For multi-column helpers, return the list directly
+        # The calling code will handle the expansion
+        return(helper_result)
+      } else {
+        # Single array helper - ensure it has meta
+        if (is.null(attr(helper_result, "meta"))) {
+          helper_result <- .ensure_meta(
+            helper_result,
+            ivar = formula_spec$helper_type,
+            ival = NULL,
+            label = formula_spec$label %||% formula_spec$helper_type
+          )
+        }
+        return(helper_result)
+      }
   } else if (formula_spec$type == "numeric_expression") {
     # Evaluate numeric expressions in data context with numeric-only data
     tryCatch({
@@ -1783,7 +2992,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
       if (length(expr_result) != n) {
         stop("Expression must return vector of length ", n)
       }
-      result <- result * expr_result
+      return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
     }, error = function(e) {
       stop("Error evaluating expression '", formula_spec$label, "': ", e$message, call. = FALSE)
     })
@@ -1793,6 +3002,50 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
     comp1_array <- formula_to_array(formula_spec$components[[1]], data)
     comp2_array <- formula_to_array(formula_spec$components[[2]], data)
     result <- result * (comp1_array - comp2_array)
+
+    # For subtraction, preserve meta from first component if available
+    first_meta <- attr(comp1_array, "meta")
+    if (!is.null(first_meta)) {
+      result <- .ensure_meta(
+        result,
+        ivar = first_meta$ivar,
+        ival = first_meta$ival,
+        label = formula_spec$label %||% first_meta$label
+      )
+    }
+    return(result)
+  } else if (formula_spec$type == "gated") {
+    # Process the inner spec and attach the gate
+    inner_result <- formula_to_array(formula_spec$inner_spec, data, dpdict)
+
+    # Check if inner result is multi-column
+    if (is.list(inner_result) && isTRUE(attr(inner_result, "is_multi_column"))) {
+      # Multi-column result - attach gate to each array
+      for (arr_name in names(inner_result)) {
+        if (!is.null(inner_result[[arr_name]])) {
+          attr(inner_result[[arr_name]], "cell_gate") <- formula_spec$gate
+        }
+      }
+      return(inner_result)
+    } else {
+      # Single array result - attach gate and return
+      attr(inner_result, "cell_gate") <- formula_spec$gate
+      return(inner_result)
+    }
+
+  } else if (formula_spec$type == "total") {
+    # This represents "all data" - when no specific column is specified
+    # Not a summary, just an array of 1s representing the full dataset
+    arr <- rep(1, n)
+    .ensure_meta(
+      arr,
+      ivar = "ALL",  # More generic than "_SUMMARY"
+      ival = NULL,
+      label = formula_spec$label %||% "Total"
+    )
+
+  } else {
+    stop("Unknown formula type: ", formula_spec$type)
   }
 
   # Handle NAs
@@ -1816,6 +3069,7 @@ process_helper <- function(formula_spec, data, dpdict) {
 
   # Recursively evaluate arguments
   evaluated_args <- list()
+  arg_names <- names(formula_spec$args)
   for (i in seq_along(formula_spec$args)) {
     arg <- formula_spec$args[[i]]
 
@@ -1824,10 +3078,16 @@ process_helper <- function(formula_spec, data, dpdict) {
       fn_name <- as.character(arg[[1]])
       if (fn_name %in% names(.tab_registry$helpers)) {
         # It's a nested helper - parse and evaluate recursively
+        nested_args <- rlang::call_args(arg)
+        nested_arg_names <- rlang::call_args_names(arg)
+        if (length(nested_arg_names) > 0) {
+          names(nested_args) <- nested_arg_names
+        }
+
         nested_spec <- list(
           type = "helper",
           helper_type = fn_name,
-          args = rlang::call_args(arg),
+          args = nested_args,
           label = rlang::as_label(arg)
         )
         evaluated_args[[i]] <- process_helper(nested_spec, data, dpdict)  # Recursive call
@@ -1873,6 +3133,10 @@ process_helper <- function(formula_spec, data, dpdict) {
         stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
       })
     }
+  }
+  # Restore argument names after evaluation
+  if (!is.null(arg_names)) {
+    names(evaluated_args) <- arg_names
   }
 
   # Create formula_spec with evaluated components for the processor
@@ -2002,53 +3266,50 @@ compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
 
   n_rows <- length(row_arrays)
   n_cols <- length(col_arrays)
+  res    <- matrix(NA_real_, n_rows, n_cols)
 
-  # Handle empty data case
-  if (length(base_array) == 0 || n_rows == 0 || n_cols == 0) {
-    return(matrix(NA_real_, nrow = max(1, n_rows), ncol = max(1, n_cols)))
-  }
+  stat_fun <- statistic$processor
 
-  # Convert string statistic to object if needed
-  if (is.character(statistic)) {
-    statistic <- .tab_registry$stats[[statistic]]
-    if (is.null(statistic)) {
-      stop("Unknown statistic: '", statistic, "'. Available statistics: ",
-           paste(names(.tab_registry$stats), collapse = ", "))
-    }
-  } else {
-    statistic <- statistic
-  }
+  for (i in seq_len(n_rows)) {
+    r_arr   <- row_arrays[[i]]
+    r_gate  <- attr(r_arr, "cell_gate")
+    r_meta  <- attr(r_arr, "meta")
 
-  # Check if statistic has vectorized processor
-  if (!is.null(statistic$vectorized_processor)) {
-    # Use vectorized computation
-    row_matrix <- do.call(cbind, row_arrays)
-    col_matrix <- do.call(cbind, col_arrays)
+    if (is.null(r_gate)) r_gate <- always_true_gate
+    if (is.null(r_meta)) r_meta <- list()
 
-    result_matrix <- statistic$vectorized_processor(
-      base_array = base_array,
-      row_matrix = row_matrix,
-      col_matrix = col_matrix,
-      values = values
-    )
-  } else {
-    # Fall back to loop-based computation
-    result_matrix <- matrix(NA_real_, nrow = n_rows, ncol = n_cols)
+    for (j in seq_len(n_cols)) {
+      c_arr  <- col_arrays[[j]]
+      c_gate <- attr(c_arr, "cell_gate")
+      c_meta <- attr(c_arr, "meta")
 
-    for (i in seq_len(n_rows)) {
-      for (j in seq_len(n_cols)) {
-        result_matrix[i, j] <- compute_cell(
-          base_array = base_array,
-          row_array = row_arrays[[i]],
-          col_array = col_arrays[[j]],
-          statistic = statistic,
+      if (is.null(c_gate)) c_gate <- always_true_gate
+      if (is.null(c_meta)) c_meta <- list()
+
+      # Create cell context with all required information
+      cell_ctx <- list(
+        stat_id = statistic$id,
+        base_array = base_array,
+        values_array = values
+      )
+
+      # Apply gates: both row and column gates must pass
+      # This enables orthogonal filtering from both dimensions
+      cell_ok <- r_gate(r_meta, c_meta, cell_ctx) && c_gate(r_meta, c_meta, cell_ctx)
+
+      if (!cell_ok) {
+        res[i, j] <- 0            # or NA_real_ if you prefer blanks
+      } else {
+        res[i, j] <- stat_fun(
+          base_array   = base_array,
+          row_array    = r_arr,
+          col_array    = c_arr,
           values = values
         )
       }
     }
   }
-
-  return(result_matrix)
+  res
 }
 
 #' Copy tab results to clipboard for pasting into Sheets
@@ -2222,17 +3483,40 @@ calculate_summary <- function(type, arrays, base_array, col_array, statistic, va
   if (type == "NET") {
     # Union of all conditions
     combined_matrix <- do.call(cbind, arrays)
-    summary_array <- as.numeric(rowSums(combined_matrix) > 0)
+    summary_array <- as.numeric(rowSums(combined_matrix, na.rm = TRUE) > 0)
   } else if (type == "Avg") {
     # Union for averaging (same as NET but labeled differently)
     combined_matrix <- do.call(cbind, arrays)
-    summary_array <- as.numeric(rowSums(combined_matrix) > 0)
+    summary_array <- as.numeric(rowSums(combined_matrix, na.rm = TRUE) > 0)
   } else if (type == "Total") {
     # Simple sum
     summary_array <- rep(1, length(base_array))
   } else {
     stop("Unknown summary type: ", type)
   }
+
+  # Create label showing what was combined
+  array_labels <- names(arrays)
+  if (is.null(array_labels)) {
+    # Try to extract labels from array meta if no names
+    array_labels <- sapply(arrays, function(arr) {
+      meta <- attr(arr, "meta")
+      if (!is.null(meta) && !is.null(meta$label)) {
+        meta$label
+      } else {
+        "unknown"
+      }
+    })
+  }
+
+  combined_label <- paste0(type, " (", paste(array_labels, collapse = " + "), ")")
+
+  summary_array <- .ensure_meta(
+    summary_array,
+    ivar = "_SUMMARY",
+    ival = type,  # "NET", "Total", or "Avg"
+    label = combined_label
+  )
 
   return(summary_array)
 }
@@ -2460,7 +3744,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   all_rows <- seq_len(nrow(result_matrix))
   data_rows <- setdiff(all_rows, exclude_rows)
 
-  n_data_rows <- nrow(result_matrix) # n_cols already defined
+  n_data_rows <- length(data_rows)
 
   sig_matrix <- matrix("", nrow = n_data_rows, ncol = n_cols)
   p_matrix <- matrix(NA_real_, nrow = n_data_rows, ncol = n_cols)
@@ -2538,6 +3822,11 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
 
   # Perform pairwise tests
   base_col_array <- col_arrays[[base_col]]
+
+  # Remove base array from end of row_arrays if present
+  if (length(row_arrays) > n_data_rows) {
+    row_arrays <- row_arrays[seq_len(n_data_rows)]
+  }
 
   # Test each data row against the base column
   for (i in seq_len(n_data_rows)) {

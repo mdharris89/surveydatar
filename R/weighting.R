@@ -837,7 +837,7 @@ build_constraint_from_parsed_formula <- function(parsed_formula, data,
   values_array[is.na(values_array)] <- 0
 
   # Find non-zero entries for sparse matrix
-  non_zero_mask <- values_array != 0
+  non_zero_mask <- !is.na(values_array) & values_array != 0
   valid_rows <- which(non_zero_mask)
   values <- values_array[non_zero_mask]
 

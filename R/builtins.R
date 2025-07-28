@@ -47,6 +47,22 @@ get_value_label <- function(var, value, dpdict = NULL) {
   return(as.character(value))
 }
 
+#' Ensure array has meta attribute with standard structure
+#' @param arr Numeric array
+#' @param ivar Variable label(s)
+#' @param ival Value label(s)
+#' @param label Display label
+#' @return Array with meta attribute attached
+#' @keywords internal
+.ensure_meta <- function(arr, ivar = NULL, ival = NULL, label = NULL) {
+  attr(arr, "meta") <- list(
+    ivar  = ivar,
+    ival  = ival,
+    label = label
+  )
+  arr
+}
+
 #' Select top n response options
 #'
 #' @param var Variable name or expression
@@ -89,6 +105,62 @@ change_from <- function(var, condition) {
   match.call()
 }
 
+#' Create a gate that matches on a metadata field
+#'
+#' Creates a gate function that allows cells to be computed only when
+#' the row and column share at least one value for the specified metadata field.
+#'
+#' @param key_field The metadata field name to match on (e.g., "ival", "ivar")
+#' @return A gate function that can be used with calc_if
+#' @export
+#' @examples
+#' # Use with calc_if to create orthogonal tables
+#' tab(data,
+#'     calc_if(no_mismatch("ival"), response_match(...)),
+#'     statistic = "count")
+no_mismatch <- function(key_field) {
+  # Try to get the gate factory
+  gate_factory <- get_gate("no_mismatch")
+
+  # If not found, ensure builtins are registered and try again
+  if (is.null(gate_factory)) {
+    ensure_builtins_registered()
+    gate_factory <- get_gate("no_mismatch")
+
+    if (is.null(gate_factory)) {
+      stop("no_mismatch gate not found in registry. This is likely a package initialization issue.")
+    }
+  }
+
+  gate_factory(key_field)
+}
+
+#' Apply a gate to an expression
+#'
+#' Restricts which cells in a table are computed based on a gate function.
+#' The gate function determines whether a cell should be calculated based on
+#' the metadata of the row and column.
+#'
+#' @param gate A gate function (e.g., from no_mismatch())
+#' @param expr The expression to be gated
+#' @return A gated expression for use in tab()
+#' @export
+#' @examples
+#' # Create orthogonal table where cells only computed when row/col share ival
+#' tab(data,
+#'     rows = calc_if(no_mismatch("ival"), response_match(...)),
+#'     cols = another_var)
+calc_if <- function(gate, expr) {
+  structure(
+    list(
+      expr = rlang::enquo(expr),   # quosure holding the original expression
+      gate = gate                   # a *fully-constructed* gate function
+    ),
+    class = "tab_helper",
+    id = "calc_if"
+  )
+}
+
 #' Register built-in helpers and statistics
 #' @param libname Library name (unused)
 #' @param pkgname Package name (unused)
@@ -102,17 +174,17 @@ change_from <- function(var, condition) {
 
     calc_union <- function(arrays, base_array) {
       combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) > 0)
+      as.numeric(rowSums(combined_matrix) > 0, na.rm = TRUE)
     }
 
     calc_not_union <- function(arrays, base_array) {
       combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) == 0)
+      as.numeric(rowSums(combined_matrix) == 0, na.rm = TRUE)
     }
 
     calc_intersection <- function(arrays, base_array) {
       combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) == ncol(combined_matrix))
+      as.numeric(rowSums(combined_matrix) == ncol(combined_matrix), na.rm = TRUE)
     }
 
     # STATISTICS --------------------------------------------------------
@@ -128,13 +200,13 @@ change_from <- function(var, condition) {
       column_snapshot <- base_array * col_array
       final_array <- column_snapshot * row_array
 
-      column_total <- sum(column_snapshot)
-      if (column_total == 0) return(NA_real_)
-      sum(final_array) / column_total * 100
+      column_total <- sum(column_snapshot, na.rm = TRUE)
+      if (is.na(column_total) || column_total == 0) return(NA_real_)
+      sum(final_array, na.rm = TRUE) / column_total * 100
     }
 
     stat_column_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
-      col_totals <- colSums(base_array * col_matrix)
+      col_totals <- colSums(base_array * col_matrix, na.rm = TRUE)
       cell_counts <- t(row_matrix * base_array) %*% col_matrix
       result <- sweep(cell_counts, 2, col_totals, "/") * 100
       result[is.nan(result)] <- NA_real_
@@ -164,12 +236,12 @@ change_from <- function(var, condition) {
       row_snapshot <- base_array * row_array
       final_array <- row_snapshot * col_array
 
-      row_total <- sum(row_snapshot)
-      if (row_total == 0) return(NA_real_)
-      sum(final_array) / row_total * 100
+      row_total <- sum(row_snapshot, na.rm = TRUE)
+      if (is.na(row_total) || row_total == 0) return(NA_real_)
+      sum(final_array, na.rm = TRUE) / row_total * 100
     }
     stat_row_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
-      row_totals <- colSums(base_array * row_matrix)
+      row_totals <- colSums(base_array * row_matrix, na.rm = TRUE)
       cell_counts <- t(row_matrix * base_array) %*% col_matrix
       result <- sweep(cell_counts, 1, row_totals, "/") * 100
       result[is.nan(result)] <- NA_real_
@@ -195,7 +267,7 @@ change_from <- function(var, condition) {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      sum(base_array * row_array * col_array)
+      sum(base_array * row_array * col_array, na.rm = TRUE)
     }
     stat_count_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
       t(row_matrix * base_array) %*% col_matrix
@@ -230,8 +302,8 @@ change_from <- function(var, condition) {
       final_array_valid <- final_array * valid_mask
 
       numerator <- sum(final_array_valid * values, na.rm = TRUE)
-      denominator <- sum(final_array_valid)
-      if (denominator == 0) return(NA_real_)
+      denominator <- sum(final_array_valid, na.rm = TRUE)
+      if (is.na(denominator) || denominator == 0) return(NA_real_)
       numerator / denominator
     }
     create_statistic("mean", stat_mean,
@@ -335,7 +407,7 @@ change_from <- function(var, condition) {
       mean_val <- mean(cell_values, na.rm = TRUE)
       sd_val <- sd(cell_values, na.rm = TRUE)
 
-      if (mean_val == 0) return(NA_real_)
+      if (is.na(mean_val) || mean_val == 0) return(NA_real_)
       (sd_val / abs(mean_val)) * 100
     }
     create_statistic("cv", stat_cv,
@@ -361,20 +433,20 @@ change_from <- function(var, condition) {
       column_snapshot <- base_array * col_array
       final_array <- column_snapshot * row_array
 
-      column_total <- sum(column_snapshot)
-      if (column_total == 0) return(NA_real_)
-      cell_pct <- sum(final_array) / column_total * 100
+      column_total <- sum(column_snapshot, na.rm = TRUE)
+      if (is.na(column_total) || column_total == 0) return(NA_real_)
+      cell_pct <- sum(final_array, na.rm = TRUE) / column_total * 100
 
       # Calculate total percentage (all columns)
       total_snapshot <- base_array  # All data
       total_for_row <- total_snapshot * row_array
 
-      total_n <- sum(total_snapshot)
-      if (total_n == 0) return(NA_real_)
-      total_pct <- sum(total_for_row) / total_n * 100
+      total_n <- sum(total_snapshot, na.rm = TRUE)
+      if (is.na(column_total) || column_total == 0) return(NA_real_)
+      total_pct <- sum(total_for_row, na.rm = TRUE) / total_n * 100
 
       # Index = (cell % / total %) * 100
-      if (total_pct == 0) return(NA_real_)
+      if (is.na(total_pct) || total_pct == 0) return(NA_real_)
       (cell_pct / total_pct) * 100
     }
     create_statistic("index", stat_index,
@@ -441,7 +513,7 @@ change_from <- function(var, condition) {
       }
 
       # Filter both arrays by base_array
-      valid_mask <- base_array > 0
+      valid_mask <- !is.na(base_array) & base_array > 0
       x <- row_array[valid_mask]
       y <- col_array[valid_mask]
 
@@ -592,8 +664,240 @@ change_from <- function(var, condition) {
     }
     create_helper("percentile", help_percentile)
 
+    #' Match and aggregate responses across multiple variables
+    #'
+    #' Creates binary arrays by matching patterns against variable labels or value labels
+    #' within a group of variables. Each pattern produces one array indicating which
+    #' respondents have ANY positive response for items matching that pattern.
+    help_response_match <- function(formula_spec, data, dpdict = NULL, ...) {
 
-    # In .onLoad function, after registering statistics:
+      stopifnot(!is.null(dpdict))
+
+      # ── 0. unpack helper arguments --------------------------------------------
+      patterns      <- formula_spec$components[[1]]
+      group_name    <- formula_spec$components[[2]]
+      if (is.symbol(group_name)) group_name <- as.character(group_name)
+
+      # optional extras
+      mode          <- formula_spec$components$mode         %||% "auto"
+      pattern_type  <- formula_spec$components$pattern_type %||% "regex"
+      label_fn      <- formula_spec$components$label_fn
+      values_map    <- formula_spec$components$values       # may be NULL
+      drop_empty    <- isTRUE(formula_spec$components$drop_empty %||% TRUE)
+
+      # can't mix `patterns` and `values`
+      if (!is.null(values_map) && !is.null(patterns))
+        stop("response_match: supply either `patterns` or `values`, not both.")
+
+      # ── 1. resolve group variables -------------------------------------------
+      group_vars <- resolve_to_variables(group_name, data, dpdict,
+                                         allow_patterns = TRUE,
+                                         error_context  = "question-group")
+
+      # detect / build grepl wrapper
+      detect <- switch(pattern_type,
+                       regex = grepl,
+                       fixed = \(pat, x) grepl(pat, x, fixed = TRUE),
+                       glob  = \(pat, x) grepl(glob2rx(pat), x),
+                       stop("response_match: unknown pattern_type '", pattern_type, "'")
+      )
+
+      get_var_lab <- function(v) dpdict$variable_labels[dpdict$variable_names == v]
+
+      # ── 2. Build target list ---------------------------------------------------
+      if (!is.null(values_map)) {                # CODE-AGGREGATION MODE
+        if (is.null(names(values_map)))
+          names(values_map) <- as.character(seq_along(values_map))
+        targets       <- values_map
+        detected_mode <- "value"
+
+      } else {                                   # PATTERN MODE
+        # normalise patterns → named list
+        if (is.character(patterns))
+          patterns <- as.list(patterns)
+        if (is.null(names(patterns)))
+          names(patterns) <- as.character(patterns)
+
+        # mode auto-detection ----------------------------------------------------
+        hits_var <- hits_val <- logical(length(patterns))
+
+        for (i in seq_along(patterns)) {
+          pat <- patterns[[i]]
+
+          # variable labels
+          hits_var[i] <- any(vapply(group_vars,
+                                    \(v) detect(pat, get_var_lab(v)),
+                                    logical(1)))
+          # value labels
+          for (v in group_vars) {
+            codes <- sort(unique(na.omit(data[[v]])))
+            for (code in codes) {
+              lab <- get_value_label(v, code, dpdict)
+              if (detect(pat, lab)) hits_val[i] <- TRUE
+            }
+          }
+        }
+
+        if (mode == "auto") {
+          if (all(hits_var)  && !any(hits_val)) detected_mode <- "variable"
+          else if (all(hits_val) && !any(hits_var)) detected_mode <- "value"
+          else stop("response_match: mixed variable/value patterns – ",
+                    "specify `mode=\"variable\"` or `mode=\"value\"`.")
+        } else detected_mode <- match.arg(mode, c("variable","value"))
+
+        targets <- patterns
+      }
+
+      # ── 3. Generate arrays -----------------------------------------------------
+      out <- list()
+      n_generated <- 0
+
+      make_label <- function(var_lab, val_lab, bucket, mode) {
+        if (is.function(label_fn))
+          label_fn(var_lab, val_lab, bucket, mode)
+        else if (mode == "variable")            # Var first
+          paste0(var_lab, " - ", val_lab)
+        else                                    # Value first
+          paste0(val_lab, " - ", var_lab)
+      }
+
+      # Helper function to attach meta
+      attach_meta <- function(arr, meta) {
+        arr <- .ensure_meta(
+          arr,
+          ivar = meta$ivar,
+          ival = meta$ival,
+          label = meta$label
+        )
+        arr
+      }
+
+      if (detected_mode == "variable") {
+        for (bucket in names(targets)) {
+          pat <- targets[[bucket]]
+
+          # First, collect ALL variables that match this pattern
+          matching_vars <- character(0)
+          for (v in group_vars) {
+            if (detect(pat, get_var_lab(v))) {
+              matching_vars <- c(matching_vars, v)
+            }
+          }
+          if (length(matching_vars) == 0) next
+
+          # Create ONE aggregated array for this pattern
+          arr <- rep(0, nrow(data))
+          for (v in matching_vars) {
+            # Aggregate: set to 1 if ANY matching variable has a positive value
+            arr <- pmax(arr, as.numeric(!is.na(data[[v]]) & data[[v]] > 0))
+          }
+
+          # Simple label - just the bucket name
+          lbl <- bucket  # "Docs", "Presentations", or "Spreadsheets"
+
+          # Attach metadata
+          arr <- attach_meta(arr, list(
+            ivar = paste(vapply(matching_vars, get_var_lab, character(1)), collapse = "; "),
+            ival = NULL,
+            label = lbl))
+
+          out[[lbl]] <- arr
+          n_generated <- n_generated + 1
+        }
+
+      } else {  # value mode -----------------------------------------------------
+        if (!is.null(values_map)) {
+          for (bucket in names(values_map)) {
+            codes_vec <- unname(values_map[[bucket]])
+
+            # Create ONE aggregated array for this bucket
+            arr <- rep(0, nrow(data))
+            for (v in group_vars) {
+              # Aggregate: set to 1 if ANY variable has ANY of the specified codes
+              arr <- pmax(arr, as.numeric(data[[v]] %in% codes_vec & !is.na(data[[v]])))
+            }
+
+            lbl <- bucket  # Just "Top 2 Box", not variable-specific
+
+            arr <- attach_meta(arr, list(
+              ivar = NULL,
+              ival = bucket,
+              label = lbl))
+
+            attr(arr, "codes") <- codes_vec
+            out[[lbl]] <- arr
+            n_generated <- n_generated + 1
+          }
+        } else {                               # pattern matching on values
+          for (bucket in names(targets)) {
+            pat <- targets[[bucket]]
+
+            # Collect all variable-code pairs that match this value pattern
+            matching_pairs <- list()
+
+            for (v in group_vars) {
+              var_lab <- get_var_lab(v)
+              codes <- sort(unique(na.omit(data[[v]])))
+
+              for (code in codes) {
+                val_lab <- get_value_label(v, code, dpdict)
+                if (detect(pat, val_lab)) {
+                  matching_pairs <- append(matching_pairs,
+                                           list(list(var = v, code = code, var_lab = var_lab, val_lab = val_lab)))
+                }
+              }
+            }
+
+            if (length(matching_pairs) == 0) next
+
+            # Create ONE aggregated array for this value pattern
+            arr <- rep(0, nrow(data))
+            for (pair in matching_pairs) {
+              # Create a logical vector: TRUE where this variable equals this specific code
+              matches_this_pair <- (data[[pair$var]] == pair$code) & !is.na(data[[pair$var]])
+              # Using pmax ensures we get 1 if ANY pair matches (logical OR across all pairs)
+              arr <- pmax(arr, as.numeric(matches_this_pair))
+            }
+
+            # Simple label - just the bucket name
+            lbl <- if (!is.null(label_fn)) {
+              # If custom label function provided, use it
+              # Pass NULL for var_lab since we're aggregating across multiple variables
+              label_fn(NULL, bucket, bucket, "value")
+            } else {
+              # Default: just use the bucket name
+              bucket  # "Daily", "Weekly", or "Monthly"
+            }
+
+            # Attach metadata
+            arr <- attach_meta(arr, list(
+              ivar = NULL,  # Could aggregate variable names if needed
+              ival = bucket,
+              label = lbl))
+
+            out[[lbl]] <- arr
+            n_generated <- n_generated + 1
+          }
+        }
+      }
+
+      # ── 4. Empty-pattern handling --------------------------------------------
+      if (n_generated == 0) {
+        msg <- "response_match produced no matching arrays."
+        if (drop_empty) {
+          warning(msg, call. = FALSE)
+          attr(out, "is_multi_column") <- TRUE
+          return(out[0])
+        } else stop(msg)
+      }
+
+      attr(out, "is_multi_column") <- TRUE
+
+      out
+    }
+
+    # Register (or overwrite) helper in the global registry
+    create_helper("response_match", help_response_match)
 
     # SIGNIFICANCE TESTS ------------------------------------------------
 
@@ -604,10 +908,10 @@ change_from <- function(var, condition) {
       description = "Two-sample z-test for comparing proportions",
       processor = function(base_array, row_array, col_array_1, col_array_2, ...) {
         # Get counts and totals
-        n1 <- sum(base_array * row_array * col_array_1)
-        n2 <- sum(base_array * row_array * col_array_2)
-        N1 <- sum(base_array * col_array_1)
-        N2 <- sum(base_array * col_array_2)
+        n1 <- sum(base_array * row_array * col_array_1, na.rm = TRUE)
+        n2 <- sum(base_array * row_array * col_array_2, na.rm = TRUE)
+        N1 <- sum(base_array * col_array_1, na.rm = TRUE)
+        N2 <- sum(base_array * col_array_2, na.rm = TRUE)
 
         if (N1 == 0 || N2 == 0) {
           return(list(p_value = NA_real_, statistic = NA_real_))
@@ -647,12 +951,12 @@ change_from <- function(var, condition) {
       description = "Two-sample z-test for weighted proportions using effective sample sizes",
       processor = function(base_array, row_array, col_array_1, col_array_2, ...) {
         # Weighted counts (numerators)
-        n1 <- sum(base_array * row_array * col_array_1)
-        n2 <- sum(base_array * row_array * col_array_2)
+        n1 <- sum(base_array * row_array * col_array_1, na.rm = TRUE)
+        n2 <- sum(base_array * row_array * col_array_2, na.rm = TRUE)
 
         # Weighted totals (denominators)
-        N1 <- sum(base_array * col_array_1)
-        N2 <- sum(base_array * col_array_2)
+        N1 <- sum(base_array * col_array_1, na.rm = TRUE)
+        N2 <- sum(base_array * col_array_2, na.rm = TRUE)
 
         if (N1 == 0 || N2 == 0) {
           return(list(p_value = NA_real_, statistic = NA_real_))
@@ -678,8 +982,8 @@ change_from <- function(var, condition) {
         }
 
         # Calculate effective sample sizes: n_eff = (sum(w))^2 / sum(w^2)
-        n1_eff <- (sum(w1))^2 / sum(w1^2)
-        n2_eff <- (sum(w2))^2 / sum(w2^2)
+        n1_eff <- (sum(w1, na.rm = TRUE))^2 / sum(w1^2, na.rm = TRUE)
+        n2_eff <- (sum(w2, na.rm = TRUE))^2 / sum(w2^2, na.rm = TRUE)
 
         # Check minimum effective sample size
         if (n1_eff < 5 || n2_eff < 5) {
@@ -780,16 +1084,16 @@ change_from <- function(var, condition) {
         }
 
         # Weighted means
-        mean1 <- sum(weights1 * values1) / sum(weights1)
-        mean2 <- sum(weights2 * values2) / sum(weights2)
+        mean1 <- sum(weights1 * values1, na.rm = TRUE) / sum(weights1, na.rm = TRUE)
+        mean2 <- sum(weights2 * values2, na.rm = TRUE) / sum(weights2, na.rm = TRUE)
 
         # Weighted variances (using population formula, then correcting)
-        var1_pop <- sum(weights1 * (values1 - mean1)^2) / sum(weights1)
-        var2_pop <- sum(weights2 * (values2 - mean2)^2) / sum(weights2)
+        var1_pop <- sum(weights1 * (values1 - mean1)^2, na.rm = TRUE) / sum(weights1, na.rm = TRUE)
+        var2_pop <- sum(weights2 * (values2 - mean2)^2, na.rm = TRUE) / sum(weights2, na.rm = TRUE)
 
         # Effective sample sizes
-        n1_eff <- (sum(weights1))^2 / sum(weights1^2)
-        n2_eff <- (sum(weights2))^2 / sum(weights2^2)
+        n1_eff <- (sum(weights1, na.rm = TRUE))^2 / sum(weights1^2, na.rm = TRUE)
+        n2_eff <- (sum(weights2, na.rm = TRUE))^2 / sum(weights2^2, na.rm = TRUE)
 
         # Check minimum effective sample size
         if (n1_eff < 5 || n2_eff < 5) {
@@ -844,7 +1148,7 @@ change_from <- function(var, condition) {
       id = "chi_square",
       name = "Chi-square test",
       description = "Chi-square test of independence",
-      is_omnibus = TRUE,  # Add this line
+      is_omnibus = TRUE,
       processor = function(base_array, row_arrays, col_arrays, ...) {
         # Build contingency table
         n_rows <- length(row_arrays)
@@ -853,7 +1157,7 @@ change_from <- function(var, condition) {
         cont_table <- matrix(0, nrow = n_rows, ncol = n_cols)
         for (i in 1:n_rows) {
           for (j in 1:n_cols) {
-            cont_table[i, j] <- sum(base_array * row_arrays[[i]] * col_arrays[[j]])
+            cont_table[i, j] <- sum(base_array * row_arrays[[i]] * col_arrays[[j]], na.rm = TRUE)
           }
         }
 
@@ -903,6 +1207,37 @@ change_from <- function(var, condition) {
         ))
       }
     )
+    # GATE FUNCTIONS
+    create_gate(
+      "no_mismatch",
+      factory_fn = function(key_field) {
+        force(key_field)                    # capture the field name
+        function(row_meta, col_meta, ...) {   # gate takes row & col meta lists
+          rv <- row_meta[[key_field]]
+          cv <- col_meta[[key_field]]
+          if (is.null(rv) || is.null(cv)) return(TRUE)
+          # Treat meta fields as character vectors and look for any overlap
+          rv <- as.character(rv);  cv <- as.character(cv)
+          length(intersect(rv, cv)) > 0
+        }
+      }
+    )
+
+    # calc_if processor
+    help_calc_if <- function(formula_spec, data, dpdict = NULL, helpers = NULL, ...) {
+
+      inner_spec <- parse_table_formula(
+        formula_spec$expr,
+        data,
+        dpdict,
+        helpers
+      )
+
+      inner_spec$gate <- formula_spec$gate
+
+      inner_spec
+    }
+    create_helper("calc_if", help_calc_if)
   }
 }
 
@@ -917,3 +1252,5 @@ ensure_builtins_registered <- function() {
   # Call the same registration logic as .onLoad
   .onLoad(NULL, NULL)
 }
+
+

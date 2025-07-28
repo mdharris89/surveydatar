@@ -17,7 +17,7 @@ tab(
   show_base = TRUE,
   low_base_threshold = 0,
   label_mode = "full",
-  smart_collapse_row_labels = FALSE,
+  sum_by = FALSE,
   helpers = NULL,
   stats = NULL,
   resolve_report = FALSE,
@@ -54,9 +54,22 @@ for single items
 extract from label
 }}
 
-\item{smart_collapse_row_labels}{Logical. If TRUE, intelligently collapses rows
-with common prefixes when each column has at most one non-zero value per group.
-Useful for reshaping categorical array data. Default is FALSE.}
+\item{sum_by}{Controls intelligent collapsing of rows and columns.
+Can be:
+\itemize{
+\item \code{FALSE} or \code{NULL}: No collapsing (default)
+\item \code{TRUE}: Auto-detect and collapse both rows and columns based on
+metadata patterns (backward compatible with smart_collapse_row_labels)
+\item Character string: Collapse rows only by the specified metadata field.
+Common values are "ival" (collapse by value) or "ivar" (collapse by variable).
+\item List with \code{rows} and/or \code{cols} elements: Separate control for
+rows and columns. Each element can be:
+\itemize{
+\item \code{FALSE} or \code{NULL}: No collapsing for that dimension
+\item \code{TRUE}: Auto-detect collapsing for that dimension
+\item Character string: Collapse by specified field ("ival" or "ivar")
+}
+}}
 
 \item{helpers}{List of custom tab_helper objects}
 

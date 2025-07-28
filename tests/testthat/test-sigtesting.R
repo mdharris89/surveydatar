@@ -173,12 +173,12 @@ test_that("Custom significance test works correctly", {
     name = "Practical significance test",
     description = "Tests if absolute difference in proportions exceeds threshold",
     processor = function(base_array, row_array, col_array_1, col_array_2, threshold = 0.1, ...) {
-      n1 <- sum(base_array * row_array * col_array_1)
-      N1 <- sum(base_array * col_array_1)
-      n2 <- sum(base_array * row_array * col_array_2)
-      N2 <- sum(base_array * col_array_2)
+      n1 <- sum(base_array * row_array * col_array_1, na.rm = TRUE)
+      N1 <- sum(base_array * col_array_1, na.rm = TRUE)
+      n2 <- sum(base_array * row_array * col_array_2, na.rm = TRUE)
+      N2 <- sum(base_array * col_array_2, na.rm = TRUE)
 
-      if (N1 == 0 || N2 == 0) {
+      if (is.na(N1) || N1 == 0 || is.na(N2) || N2 == 0) {
         return(list(p_value = NA_real_, statistic = NA_real_))
       }
 
