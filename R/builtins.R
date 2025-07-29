@@ -47,6 +47,82 @@ get_value_label <- function(var, value, dpdict = NULL) {
   return(as.character(value))
 }
 
+# Helper function for getting variable labels
+get_variable_labels_improved <- function(var_name, values, data, dpdict) {
+  var_data <- data[[var_name]]
+
+  # Handle factors
+  if (is.factor(var_data)) {
+    result <- character(length(values))
+    for (i in seq_along(values)) {
+      val <- values[i]
+      if (!is.na(val) && val <= length(levels(var_data))) {
+        result[i] <- levels(var_data)[val]
+      } else {
+        result[i] <- as.character(val)
+      }
+    }
+    return(result)
+  }
+
+  # Handle haven_labelled specifically
+  if (inherits(var_data, "haven_labelled")) {
+    labels_attr <- attr(var_data, "labels")
+    if (!is.null(labels_attr)) {
+      result <- character(length(values))
+      for (i in seq_along(values)) {
+        val <- values[i]
+        # For haven_labelled, labels are stored as named vector
+        label_match <- names(labels_attr)[labels_attr == val]
+        if (length(label_match) > 0) {
+          result[i] <- label_match[1]
+        } else {
+          result[i] <- as.character(val)
+        }
+      }
+      return(result)
+    }
+  }
+
+  # Check general labels attribute
+  labels_attr <- attr(var_data, "labels")
+  if (!is.null(labels_attr) && length(labels_attr) > 0) {
+    result <- character(length(values))
+    for (i in seq_along(values)) {
+      val <- values[i]
+      label_match <- names(labels_attr)[labels_attr == val]
+      if (length(label_match) > 0) {
+        result[i] <- label_match[1]
+      } else {
+        result[i] <- as.character(val)
+      }
+    }
+    return(result)
+  }
+
+  # Check dpdict for value labels if available
+  if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
+    var_row <- dpdict[dpdict$variable_names == var_name, ]
+    if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
+      value_labels <- var_row$value_labels[[1]]
+      result <- character(length(values))
+      for (i in seq_along(values)) {
+        val <- values[i]
+        val_char <- as.character(val)
+        if (val_char %in% names(value_labels)) {
+          result[i] <- value_labels[[val_char]]
+        } else {
+          result[i] <- val_char
+        }
+      }
+      return(result)
+    }
+  }
+
+  # Fall back to values as labels
+  return(as.character(values))
+}
+
 #' Ensure array has meta attribute with standard structure
 #' @param arr Numeric array
 #' @param ivar Variable label(s)
@@ -159,6 +235,358 @@ calc_if <- function(gate, expr) {
     class = "tab_helper",
     id = "calc_if"
   )
+}
+
+banner_processor <- function(helper_spec, data, dpdict = NULL, all_helpers = NULL) {
+  # Use components, not args
+  args <- helper_spec$components
+
+  if (length(args) < 2) {
+    stop("Banner requires at least two arguments: outer variable and inner specification")
+  }
+
+  # Extract outer variable
+  outer_var <- args[[1]]
+  if (!is.character(outer_var) || length(outer_var) != 1) {
+    stop("First argument to banner must be a variable name")
+  }
+
+  # Extract inner specification
+  inner_spec <- args[[2]]
+
+  # Convert symbols to strings for simple variable references
+  if (rlang::is_symbol(inner_spec)) {
+    inner_spec <- as.character(inner_spec)
+  }
+
+  # Extract additional parameters with defaults
+  subtotals <- if ("subtotals" %in% names(args)) args$subtotals else FALSE
+  sep <- if ("sep" %in% names(args)) args$sep else ": "
+
+  # Validate outer variable exists
+  if (!outer_var %in% names(data)) {
+    stop("Outer variable '", outer_var, "' not found in data")
+  }
+
+  # Get unique values of outer variable (excluding NA)
+  outer_values <- unique(data[[outer_var]])
+  outer_values <- outer_values[!is.na(outer_values)]
+  outer_values <- sort(outer_values)
+
+  if (length(outer_values) == 0) {
+    stop("No valid values found for outer variable '", outer_var, "'")
+  }
+
+  # Get labels for outer variable
+  outer_labels <- get_variable_labels(outer_var, outer_values, data, dpdict)
+
+  result <- list()
+
+  # Process inner specification based on its type
+  if (is.character(inner_spec) && length(inner_spec) == 1) {
+    # Simple variable name - expand to all its values
+    if (!inner_spec %in% names(data)) {
+      stop("Inner variable '", inner_spec, "' not found in data")
+    }
+
+    # Get unique values of inner variable
+    inner_values <- unique(data[[inner_spec]])
+    inner_values <- inner_values[!is.na(inner_values)]
+    inner_values <- sort(inner_values)
+
+    if (length(inner_values) == 0) {
+      stop("No valid values found for inner variable '", inner_spec, "'")
+    }
+
+    # Get labels for inner variable
+    inner_labels <- get_variable_labels(inner_spec, inner_values, data, dpdict)
+
+    # Create columns for each combination
+    for (i in seq_along(outer_values)) {
+      outer_val <- outer_values[i]
+      outer_label <- outer_labels[i]
+
+      outer_filter <- data[[outer_var]] == outer_val & !is.na(data[[outer_var]])
+
+      if (!any(outer_filter, na.rm = TRUE)) {
+        next
+      }
+
+      for (j in seq_along(inner_values)) {
+        inner_val <- inner_values[j]
+        inner_label <- inner_labels[j]
+
+        # Create array: 1 where BOTH conditions are met
+        array <- as.numeric(outer_filter & data[[inner_spec]] == inner_val & !is.na(data[[inner_spec]]))
+
+        col_label <- paste0(outer_label, sep, inner_label)
+
+        array <- .ensure_meta(
+          array,
+          ivar = c(outer_var, inner_spec),
+          ival = c(as.character(outer_val), as.character(inner_val)),
+          label = col_label
+        )
+
+        result[[col_label]] <- array
+      }
+
+      if (subtotals) {
+        subtotal_array <- as.numeric(outer_filter)
+        subtotal_label <- paste0(outer_label, sep, "Total")
+
+        subtotal_array <- .ensure_meta(
+          subtotal_array,
+          ivar = outer_var,
+          ival = as.character(outer_val),
+          label = subtotal_label
+        )
+
+        result[[subtotal_label]] <- subtotal_array
+      }
+    }
+
+  } else if (rlang::is_call(inner_spec) || rlang::is_symbol(inner_spec)) {
+    # It's an unevaluated expression (like top_box(satisfaction, 2))
+    # We need to parse and evaluate it for each outer category
+
+    if (is.null(all_helpers)) {
+      stop("Cannot process nested helpers in banner without access to helper registry")
+    }
+
+    # Parse the inner specification once to get its structure
+    inner_parsed <- parse_table_formula(rlang::enquo(inner_spec), data, dpdict, all_helpers)
+
+    # For each outer category, apply the inner specification to filtered data
+    for (i in seq_along(outer_values)) {
+      outer_val <- outer_values[i]
+      outer_label <- outer_labels[i]
+
+      # Create filter for this outer category
+      outer_filter <- data[[outer_var]] == outer_val & !is.na(data[[outer_var]])
+
+      if (!any(outer_filter, na.rm = TRUE)) {
+        next
+      }
+
+      # Create filtered dataset for this outer category
+      filtered_data <- data
+      # Zero out values where filter is FALSE (this maintains array lengths)
+      for (col in names(filtered_data)) {
+        if (is.numeric(filtered_data[[col]])) {
+          filtered_data[[col]][!outer_filter] <- NA
+        }
+      }
+
+      # Evaluate the inner specification on filtered data
+      inner_result <- formula_to_array(inner_parsed, filtered_data, dpdict, all_helpers)
+
+      # Check if it's multi-column
+      if (is.list(inner_result) && isTRUE(attr(inner_result, "is_multi_column"))) {
+        # Multi-column helper - create a column for each
+        for (arr_name in names(inner_result)) {
+          # The inner result already has the filter applied via filtered_data
+          # But we need to ensure it's properly masked
+          filtered_array <- inner_result[[arr_name]] * as.numeric(outer_filter)
+
+          col_label <- paste0(outer_label, sep, arr_name)
+
+          array <- .ensure_meta(
+            filtered_array,
+            ivar = outer_var,
+            ival = as.character(outer_val),
+            label = col_label
+          )
+
+          result[[col_label]] <- array
+        }
+      } else {
+        # Single array result
+        # Apply the outer filter
+        filtered_array <- inner_result * as.numeric(outer_filter)
+
+        inner_label <- if (!is.null(attr(inner_result, "meta")) && !is.null(attr(inner_result, "meta")$label)) {
+          attr(inner_result, "meta")$label
+        } else if (inner_parsed$type == "helper") {
+          # Create a more readable label for helpers
+          helper_type <- inner_parsed$helper_type
+          if (helper_type == "top_box") {
+            n <- inner_parsed$args[[2]]  # The number of top categories
+            paste0("Top ", n, " Box")
+          } else if (helper_type == "bottom_box") {
+            n <- inner_parsed$args[[2]]  # The number of bottom categories
+            paste0("Bottom ", n, " Box")
+          } else if (helper_type == "value_range") {
+            min_val <- inner_parsed$args[[2]]
+            max_val <- inner_parsed$args[[3]]
+            paste0("Range ", min_val, "-", max_val)
+          } else if (helper_type == "pattern") {
+            # Just use the helper type with proper casing
+            "Pattern Match"
+          } else {
+            # Default: use the helper type with proper casing
+            tools::toTitleCase(gsub("_", " ", helper_type))
+          }
+        } else {
+          inner_parsed$label
+        }
+
+        col_label <- paste0(outer_label, sep, inner_label)
+
+        array <- .ensure_meta(
+          filtered_array,
+          ivar = outer_var,
+          ival = as.character(outer_val),
+          label = col_label
+        )
+
+        result[[col_label]] <- array
+      }
+
+      if (subtotals) {
+        subtotal_array <- as.numeric(outer_filter)
+        subtotal_label <- paste0(outer_label, sep, "Total")
+
+        subtotal_array <- .ensure_meta(
+          subtotal_array,
+          ivar = outer_var,
+          ival = as.character(outer_val),
+          label = subtotal_label
+        )
+
+        result[[subtotal_label]] <- subtotal_array
+      }
+    }
+
+  } else {
+    stop("Invalid inner specification for banner helper. ",
+         "Expected variable name or helper expression, got: ",
+         class(inner_spec))
+  }
+
+  # Set multi-column attribute
+  attr(result, "is_multi_column") <- TRUE
+  attr(result, "helper_type") <- "banner"
+
+  return(result)
+}
+
+# Also ensure get_variable_labels handles numeric values properly
+get_variable_labels <- function(var_name, values, data, dpdict) {
+  var_data <- data[[var_name]]
+
+  # Handle factors
+  if (is.factor(var_data)) {
+    result <- character(length(values))
+    for (i in seq_along(values)) {
+      val <- values[i]
+      if (!is.na(val) && val <= length(levels(var_data))) {
+        result[i] <- levels(var_data)[val]
+      } else {
+        result[i] <- as.character(val)
+      }
+    }
+    return(result)
+  }
+
+  # Check for labels attribute (haven_labelled or regular labelled)
+  labels_attr <- attr(var_data, "labels")
+  if (!is.null(labels_attr) && length(labels_attr) > 0) {
+    result <- character(length(values))
+    for (i in seq_along(values)) {
+      val <- values[i]
+      # Match numeric values
+      label_match <- names(labels_attr)[labels_attr == val]
+      if (length(label_match) > 0) {
+        result[i] <- label_match[1]
+      } else {
+        result[i] <- as.character(val)
+      }
+    }
+    return(result)
+  }
+
+  # Check dpdict for value labels if available
+  if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
+    var_row <- dpdict[dpdict$variable_names == var_name, ]
+    if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
+      value_labels <- var_row$value_labels[[1]]
+      result <- character(length(values))
+      for (i in seq_along(values)) {
+        val <- values[i]
+        val_char <- as.character(val)
+        if (val_char %in% names(value_labels)) {
+          result[i] <- value_labels[[val_char]]
+        } else {
+          result[i] <- val_char
+        }
+      }
+      return(result)
+    }
+  }
+
+  # Fall back to values as labels
+  return(as.character(values))
+}
+
+# Also update get_variable_labels to be more robust
+get_variable_labels <- function(var_name, values, data, dpdict) {
+  var_data <- data[[var_name]]
+
+  # Handle factors
+  if (is.factor(var_data)) {
+    result <- character(length(values))
+    for (i in seq_along(values)) {
+      val <- values[i]
+      if (!is.na(val) && val <= length(levels(var_data))) {
+        result[i] <- levels(var_data)[val]
+      } else {
+        result[i] <- as.character(val)
+      }
+    }
+    return(result)
+  }
+
+  # Handle haven_labelled objects
+  if (inherits(var_data, "haven_labelled") || !is.null(attr(var_data, "labels"))) {
+    labels_attr <- attr(var_data, "labels")
+    if (!is.null(labels_attr) && length(labels_attr) > 0) {
+      result <- character(length(values))
+      for (i in seq_along(values)) {
+        val <- values[i]
+        # For labelled objects, labels are stored as named vector
+        label_match <- names(labels_attr)[labels_attr == val]
+        if (length(label_match) > 0) {
+          result[i] <- label_match[1]
+        } else {
+          result[i] <- as.character(val)
+        }
+      }
+      return(result)
+    }
+  }
+
+  # Check dpdict for value labels if available
+  if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
+    var_row <- dpdict[dpdict$variable_names == var_name, ]
+    if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
+      value_labels <- var_row$value_labels[[1]]
+      result <- character(length(values))
+      for (i in seq_along(values)) {
+        val <- values[i]
+        val_char <- as.character(val)
+        if (val_char %in% names(value_labels)) {
+          result[i] <- value_labels[[val_char]]
+        } else {
+          result[i] <- val_char
+        }
+      }
+      return(result)
+    }
+  }
+
+  # Fall back to values as labels
+  return(as.character(values))
 }
 
 #' Register built-in helpers and statistics
@@ -532,8 +960,11 @@ calc_if <- function(gate, expr) {
 
     # HELPERS -----------------------------------------------------------
 
+    # Banner helper
+    create_helper("banner", banner_processor)
+
     # Top box helper
-    help_top_box <- function(formula_spec, data, dpdict = NULL, ...) {
+    help_top_box <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       n <- formula_spec$components[[2]]
 
@@ -557,7 +988,7 @@ calc_if <- function(gate, expr) {
     create_helper("top_box", help_top_box)
 
     # Bottom box helper
-    help_bottom_box <- function(formula_spec, data, dpdict = NULL, ...) {
+    help_bottom_box <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       n <- formula_spec$components[[2]]
 
@@ -581,7 +1012,7 @@ calc_if <- function(gate, expr) {
     create_helper("bottom_box", help_bottom_box)
 
     # Value range helper
-    help_value_range <- function(formula_spec, data, dpdict = NULL, ...) {
+    help_value_range <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       min_val <- formula_spec$components[[2]]
       max_val <- formula_spec$components[[3]]
@@ -611,7 +1042,7 @@ calc_if <- function(gate, expr) {
     create_helper("value_range", help_value_range)
 
     # Pattern match helper (for text variables)
-    help_pattern <- function(formula_spec, data, dpdict = NULL, ...) {
+    help_pattern <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       pattern <- formula_spec$components[[2]]
       ignore_case <- if (length(formula_spec$components) >= 3) formula_spec$components[[3]] else FALSE
@@ -636,7 +1067,7 @@ calc_if <- function(gate, expr) {
     create_helper("pattern", help_pattern)
 
     # Percentile selection helper
-    help_percentile <- function(formula_spec, data, dpdict = NULL, ...) {
+    help_percentile <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
       var_name <- as.character(formula_spec$components[[1]])
       position <- formula_spec$components[[2]]
       percentile <- formula_spec$components[[3]]
@@ -669,7 +1100,7 @@ calc_if <- function(gate, expr) {
     #' Creates binary arrays by matching patterns against variable labels or value labels
     #' within a group of variables. Each pattern produces one array indicating which
     #' respondents have ANY positive response for items matching that pattern.
-    help_response_match <- function(formula_spec, data, dpdict = NULL, ...) {
+    help_response_match <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
 
       stopifnot(!is.null(dpdict))
 

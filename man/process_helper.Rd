@@ -4,7 +4,7 @@
 \alias{process_helper}
 \title{Process helper functions}
 \usage{
-process_helper(formula_spec, data, dpdict)
+process_helper(formula_spec, data, dpdict, all_helpers = NULL)
 }
 \description{
 Process helper functions

@@ -254,7 +254,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   if (!missing(filter)) {
     filter_quo <- rlang::enquo(filter)
     filter_parsed <- parse_table_formula(filter_quo, data, dpdict, all_helpers)
-    filter_logic <- formula_to_array(filter_parsed, data)
+    filter_logic <- formula_to_array(filter_parsed, data, all_helpers)
     base_array <- base_array * filter_logic
   }
 
@@ -373,7 +373,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   rows_expanded <- list()
   for (row_spec in rows_parsed) {
     expanded <- expand_variables(row_spec, data, dpdict, statistic$id, values,
-                                 label_mode = label_mode)
+                                 label_mode = label_mode, all_helpers = all_helpers)
     for (exp in expanded) {
       if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
         exp$group_label <- row_spec$label
@@ -386,7 +386,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   if (!is.null(cols_parsed)) {
     cols_expanded <- list()
     for (col_spec in cols_parsed) {
-      expanded <- expand_variables(col_spec, data, dpdict, statistic$id, values_var = NULL, label_mode)
+      expanded <- expand_variables(col_spec, data, dpdict, statistic$id, values_var = NULL, label_mode = label_mode, all_helpers = all_helpers)
       cols_expanded <- append(cols_expanded, expanded)
     }
   } else {
@@ -405,7 +405,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   rows_expanded_final <- list()
 
   for (spec in rows_expanded) {
-    array_result <- formula_to_array(spec, data, dpdict)
+    array_result <- formula_to_array(spec, data, dpdict, all_helpers = all_helpers)
 
     # Check if helper returned multiple arrays
     if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
@@ -439,7 +439,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
         arrays_list <- append(arrays_list, list(array))
         expanded_specs <- append(expanded_specs, list(spec))
       } else {
-        array_result <- formula_to_array(spec, data, dpdict)
+        array_result <- formula_to_array(spec, data, dpdict, all_helpers = all_helpers)
 
         # Check if helper returned multiple arrays
         if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
@@ -2195,7 +2195,7 @@ print.tab_result <- function(x, ...) {
 #' @param dpdict Optional data dictionary for metadata
 #' @return A list with type, components, and label
 #' @keywords internal
-parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
+parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_helpers = NULL) {
 
   # If helpers not provided, use registry
   if (is.null(helpers)) {
@@ -2239,7 +2239,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
     args <- rlang::call_args(actual_expr)
     return(list(
       type = "multiplication",
-      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict)),
+      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict, all_helpers = all_helpers)),
       label = expr_text
     ))
   }
@@ -2249,7 +2249,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL) {
     args <- rlang::call_args(actual_expr)
     return(list(
       type = "subtraction",
-      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict)),
+      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict, all_helpers = all_helpers)),
       label = expr_text
     ))
   }
@@ -2514,7 +2514,7 @@ check_variables_exist <- function(vars, data, context = "expression") {
 #' @param statistic$id The ID of the statistic being calculated
 #' @return List of expanded variable specifications
 #' @keywords internal
-expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, values_var = NULL, label_mode = "smart") {
+expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, values_var = NULL, label_mode = "smart", all_helpers = NULL) {
   # Handle complex expressions by recursively expanding components
   if (is.list(var_spec) && !is.null(var_spec$type)) {
 
@@ -2541,10 +2541,10 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
 
           # The expression is the second argument - parse it
           expr_arg <- calc_if_obj[[2]]
-          inner_spec <- parse_table_formula(rlang::enquo(expr_arg), data, dpdict)
+          inner_spec <- parse_table_formula(rlang::enquo(expr_arg), data, dpdict, all_helpers = all_helpers)
         } else {
           gate_fn <- calc_if_obj$gate
-          inner_spec <- parse_table_formula(calc_if_obj$expr, data, dpdict)
+          inner_spec <- parse_table_formula(calc_if_obj$expr, data, dpdict, all_helpers = all_helpers)
         }
 
         # Recursively expand the inner expression
@@ -2896,7 +2896,7 @@ create_total_array <- function(n, spec) {
 #' @param dpdict Optional data dictionary for context
 #' @return Numeric vector of length nrow(data)
 #' @keywords internal
-formula_to_array <- function(formula_spec, data, dpdict = NULL) {
+formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL) {
   n <- nrow(data)
 
   # Start with identity array
@@ -2920,7 +2920,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
 
     # For multiplication, preserve meta from first component if available
     if (length(formula_spec$components) > 0) {
-      first_array <- formula_to_array(formula_spec$components[[1]], data, dpdict)
+      first_array <- formula_to_array(formula_spec$components[[1]], data, dpdict, all_helpers = all_helpers)
       first_meta <- attr(first_array, "meta")
       if (!is.null(first_meta)) {
         result <- .ensure_meta(
@@ -2952,7 +2952,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
     return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
 
   } else if (formula_spec$type == "helper") {
-      helper_result <- process_helper(formula_spec, data, dpdict = dpdict)
+      helper_result <- process_helper(formula_spec, data, dpdict, all_helpers)
 
       # Check if it's a multi-column helper
       # Multi-column helpers should already have meta
@@ -2999,8 +2999,8 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
 
   } else if (formula_spec$type == "subtraction") {
     # Handle subtraction
-    comp1_array <- formula_to_array(formula_spec$components[[1]], data)
-    comp2_array <- formula_to_array(formula_spec$components[[2]], data)
+    comp1_array <- formula_to_array(formula_spec$components[[1]], data, dpdict, all_helpers)
+    comp2_array <- formula_to_array(formula_spec$components[[2]], data, dpdict, all_helpers)
     result <- result * (comp1_array - comp2_array)
 
     # For subtraction, preserve meta from first component if available
@@ -3016,7 +3016,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
     return(result)
   } else if (formula_spec$type == "gated") {
     # Process the inner spec and attach the gate
-    inner_result <- formula_to_array(formula_spec$inner_spec, data, dpdict)
+    inner_result <- formula_to_array(formula_spec$inner_spec, data, dpdict, all_helpers)
 
     # Check if inner result is multi-column
     if (is.list(inner_result) && isTRUE(attr(inner_result, "is_multi_column"))) {
@@ -3056,7 +3056,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL) {
 
 #' Process helper functions
 #' @keywords internal
-process_helper <- function(formula_spec, data, dpdict) {
+process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
 
   helper_type <- formula_spec$helper_type
 
@@ -3067,40 +3067,112 @@ process_helper <- function(formula_spec, data, dpdict) {
          paste(names(.tab_registry$helpers), collapse = ", "))
   }
 
-  # Recursively evaluate arguments
-  evaluated_args <- list()
-  arg_names <- names(formula_spec$args)
-  for (i in seq_along(formula_spec$args)) {
-    arg <- formula_spec$args[[i]]
+  # Special handling for banner - keep inner spec unevaluated
+  if (helper_type == "banner") {
+    evaluated_args <- list()
+    arg_names <- names(formula_spec$args)
 
-    # If argument is itself a helper or complex expression, evaluate it recursively
-    if (rlang::is_call(arg)) {
-      fn_name <- as.character(arg[[1]])
-      if (fn_name %in% names(.tab_registry$helpers)) {
-        # It's a nested helper - parse and evaluate recursively
-        nested_args <- rlang::call_args(arg)
-        nested_arg_names <- rlang::call_args_names(arg)
-        if (length(nested_arg_names) > 0) {
-          names(nested_args) <- nested_arg_names
+    # Process each argument based on position and name
+    for (i in seq_along(formula_spec$args)) {
+      arg <- formula_spec$args[[i]]
+      arg_name <- if (!is.null(arg_names) && i <= length(arg_names)) arg_names[i] else ""
+
+      if (i == 1) {
+        # First argument: outer variable (must be a symbol)
+        # First argument: outer variable
+        if (rlang::is_symbol(arg)) {
+          # Unquoted variable name (e.g., banner(country, ...))
+          evaluated_args[[i]] <- as.character(arg)
+        } else if (is.character(arg) && length(arg) == 1) {
+          # Already a string (e.g., banner("country", ...))
+          evaluated_args[[i]] <- arg
+        } else {
+          stop("First argument to banner must be a variable name")
+        }
+      } else if (i == 2) {
+        # Second argument: inner specification (keep unevaluated)
+        evaluated_args[[i]] <- arg  # Keep as raw expression
+      } else {
+        # Additional arguments (usually named like subtotals, sep)
+        if (arg_name != "") {
+          # Named argument - evaluate it
+          tryCatch({
+            evaluated_args[[arg_name]] <- rlang::eval_tidy(arg, data)
+          }, error = function(e) {
+            # If evaluation fails, keep it as is
+            evaluated_args[[arg_name]] <- arg
+          })
+        } else {
+          # Positional argument beyond 2nd - evaluate it
+          evaluated_args[[i]] <- rlang::eval_tidy(arg, data)
+        }
+      }
+    }
+
+    # Ensure we have the minimum required arguments
+    if (length(evaluated_args) < 2) {
+      stop("Banner requires at least two arguments")
+    }
+
+  } else {
+    # Recursively evaluate arguments
+    evaluated_args <- list()
+    arg_names <- names(formula_spec$args)
+    for (i in seq_along(formula_spec$args)) {
+      arg <- formula_spec$args[[i]]
+
+      # If argument is itself a helper or complex expression, evaluate it recursively
+      if (rlang::is_call(arg)) {
+        fn_name <- as.character(arg[[1]])
+        if (fn_name %in% names(.tab_registry$helpers)) {
+          # It's a nested helper - parse and evaluate recursively
+          nested_args <- rlang::call_args(arg)
+          nested_arg_names <- rlang::call_args_names(arg)
+          if (length(nested_arg_names) > 0) {
+            names(nested_args) <- nested_arg_names
+          }
+
+          nested_spec <- list(
+            type = "helper",
+            helper_type = fn_name,
+            args = nested_args,
+            label = rlang::as_label(arg)
+          )
+          evaluated_args[[i]] <- process_helper(nested_spec, data, dpdict, all_helpers)  # Recursive call
+        } else {
+          # It's a regular expression - evaluate in data context
+          tryCatch({
+            # Extract variables referenced in the argument expression
+            expr_vars <- all.vars(arg)
+
+            # Check variables exist
+            check_variables_exist(expr_vars, data,
+                                  paste0("helper '", helper_type, "' argument ", i))
+
+            # Create subset with only needed variables
+            data_subset <- data[, expr_vars, drop = FALSE]
+            eval_data <- prepare_eval_data(data_subset)
+            evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
+          }, error = function(e) {
+            stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
+          })
+        }
+      } else if (rlang::is_symbol(arg)) {
+        # Variable name - convert to string instead of evaluating
+        evaluated_args[[i]] <- as.character(arg)
+      } else {
+        # Simple argument - evaluate directly
+
+        if (length(all.vars(arg)) > 0) {
+          # If it contains variables, check they exist
+          expr_vars <- all.vars(arg)
+          check_variables_exist(expr_vars, data,
+                                paste0("helper '", helper_type, "' argument ", i))
         }
 
-        nested_spec <- list(
-          type = "helper",
-          helper_type = fn_name,
-          args = nested_args,
-          label = rlang::as_label(arg)
-        )
-        evaluated_args[[i]] <- process_helper(nested_spec, data, dpdict)  # Recursive call
-      } else {
-        # It's a regular expression - evaluate in data context
         tryCatch({
           # Extract variables referenced in the argument expression
           expr_vars <- all.vars(arg)
-
-          # Check variables exist
-          check_variables_exist(expr_vars, data,
-                                paste0("helper '", helper_type, "' argument ", i))
-
           # Create subset with only needed variables
           data_subset <- data[, expr_vars, drop = FALSE]
           eval_data <- prepare_eval_data(data_subset)
@@ -3109,34 +3181,11 @@ process_helper <- function(formula_spec, data, dpdict) {
           stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
         })
       }
-    } else if (rlang::is_symbol(arg)) {
-      # Variable name - convert to string instead of evaluating
-      evaluated_args[[i]] <- as.character(arg)
-    } else {
-      # Simple argument - evaluate directly
-
-      if (length(all.vars(arg)) > 0) {
-        # If it contains variables, check they exist
-        expr_vars <- all.vars(arg)
-        check_variables_exist(expr_vars, data,
-                              paste0("helper '", helper_type, "' argument ", i))
-      }
-
-      tryCatch({
-        # Extract variables referenced in the argument expression
-        expr_vars <- all.vars(arg)
-        # Create subset with only needed variables
-        data_subset <- data[, expr_vars, drop = FALSE]
-        eval_data <- prepare_eval_data(data_subset)
-        evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
-      }, error = function(e) {
-        stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
-      })
     }
-  }
-  # Restore argument names after evaluation
-  if (!is.null(arg_names)) {
-    names(evaluated_args) <- arg_names
+    # Restore argument names after evaluation
+    if (!is.null(arg_names)) {
+      names(evaluated_args) <- arg_names
+    }
   }
 
   # Create formula_spec with evaluated components for the processor
@@ -3144,7 +3193,7 @@ process_helper <- function(formula_spec, data, dpdict) {
     type = "helper",
     helper_type = helper_type,
     components = evaluated_args,
-    label = formula_spec$label
+    label = formula_spec$label %||% helper_type
   )
 
   if (!is.null(formula_spec$row_labels)) {
@@ -3153,7 +3202,7 @@ process_helper <- function(formula_spec, data, dpdict) {
 
   # Dispatch to the helper's processor
   tryCatch({
-    result <- helper_obj$processor(processed_spec, data, dpdict = dpdict)
+    result <- helper_obj$processor(processed_spec, data, dpdict, all_helpers)
 
     if (is.list(result) && !is.numeric(result)) {
       # Helper returned a list of arrays (multi-column helper)
@@ -3942,4 +3991,101 @@ resolve_versus_to_column_name <- function(versus, tab_result) {
   }
 
   return(col_names[target_col_idx])
+}
+
+# Function to modify row and column labels in a tab_object using gsub
+# Supports multiple pattern/replacement pairs via named vectors
+# Preserves tab_result class and attributes when present
+
+#' Modify row and column labels using pattern matching
+#'
+#' Apply gsub pattern replacements to row labels and/or column names in a data frame.
+#' Particularly useful for formatting tab_result objects before visualization.
+#'
+#' @param x A data frame, typically a tab_result object
+#' @param row_labels Named character vector of pattern/replacement pairs for row labels.
+#'   Patterns are applied sequentially to the row_label column.
+#' @param col_labels Named character vector of pattern/replacement pairs for column names.
+#'   Patterns are applied sequentially to column names (excluding row_label).
+#'
+#' @return The modified data frame with updated labels, preserving original class and attributes
+#'
+#' @export
+#'
+#' @examples
+#' # Basic usage
+#' result <- modify_labels(
+#'   tab_result,
+#'   row_labels = c("Very satisfied" = "Very sat", "Somewhat satisfied" = "Somewhat sat"),
+#'   col_labels = c("Male 18-34" = "M 18-34", "Female 35+" = "F 35+")
+#' )
+#'
+#' # In a pipeline
+#' my_tab %>%
+#'   modify_labels(row_labels = c("\\s+" = " ")) %>%  # Remove extra spaces
+#'   tab_to_flourish()
+modify_labels <- function(x, row_labels = NULL, col_labels = NULL) {
+  # Input validation
+  if (!is.data.frame(x)) {
+    stop("x must be a data frame")
+  }
+
+  # Store all original attributes to preserve them
+  original_attrs <- attributes(x)
+  result <- x
+
+  # Modify row labels if specified
+  if (!is.null(row_labels)) {
+    if (!is.character(row_labels) || is.null(names(row_labels))) {
+      stop("row_labels must be a named character vector")
+    }
+
+    if (!"row_label" %in% names(result)) {
+      stop("Data frame must have a 'row_label' column to modify row labels")
+    }
+
+    # Apply each pattern sequentially
+    for (i in seq_along(row_labels)) {
+      pattern <- names(row_labels)[i]
+      replacement <- row_labels[i]
+      result$row_label <- gsub(pattern, replacement, result$row_label, perl = TRUE)
+    }
+  }
+
+  # Modify column labels if specified
+  if (!is.null(col_labels)) {
+    if (!is.character(col_labels) || is.null(names(col_labels))) {
+      stop("col_labels must be a named character vector")
+    }
+
+    # Get column names excluding row_label
+    col_names <- names(result)
+    data_col_indices <- which(col_names != "row_label")
+
+    if (length(data_col_indices) == 0) {
+      warning("No data columns found to modify (only row_label column present)")
+    } else {
+      # Apply each pattern sequentially to data column names
+      for (i in seq_along(col_labels)) {
+        pattern <- names(col_labels)[i]
+        replacement <- col_labels[i]
+        col_names[data_col_indices] <- gsub(pattern, replacement, col_names[data_col_indices], perl = TRUE)
+      }
+
+      # Update column names
+      names(result) <- col_names
+    }
+  }
+
+  # Store the modified names before restoring attributes
+  modified_names <- names(result)
+
+  # Restore all original attributes except names
+  original_attrs$names <- NULL
+  attributes(result) <- original_attrs
+
+  # Set the modified names
+  names(result) <- modified_names
+
+  result
 }

@@ -10,7 +10,8 @@ expand_variables(
   dpdict = NULL,
   statistic = NULL,
   values_var = NULL,
-  label_mode = "smart"
+  label_mode = "smart",
+  all_helpers = NULL
 )
 }
 \arguments{

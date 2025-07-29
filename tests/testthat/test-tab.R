@@ -1646,3 +1646,293 @@ test_that("smart collapse works with gated arrays", {
   # Should have A2_usage, A2_satisfaction, A2_importance or similar
   expect_true(length(col_names) == 3)
 })
+
+
+
+##### Unit tests for modify_labels function #####
+
+test_that("modify_labels works with row labels", {
+  # Create test data
+  df <- data.frame(
+    row_label = c("Very satisfied", "Somewhat satisfied", "Not satisfied"),
+    Male = c(25, 30, 10),
+    Female = c(20, 35, 15),
+    stringsAsFactors = FALSE
+  )
+
+  # Test single pattern replacement
+  result <- modify_labels(df, row_labels = c("Very satisfied" = "Very sat"))
+  expect_equal(result$row_label[1], "Very sat")
+  expect_equal(result$row_label[2], "Somewhat satisfied") # unchanged
+
+  # Test multiple patterns applied sequentially
+  result <- modify_labels(df, row_labels = c("Very" = "V", "satisfied" = "sat"))
+  expect_equal(result$row_label[1], "V sat")
+  expect_equal(result$row_label[2], "Somewhat sat")
+})
+
+test_that("modify_labels works with column labels", {
+  df <- data.frame(
+    row_label = c("Option 1", "Option 2"),
+    "Male 18-34" = c(25, 30),
+    "Female 35+" = c(20, 35),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+
+  # Test single pattern replacement
+  result <- modify_labels(df, col_labels = c("Male 18-34" = "M 18-34"))
+  expect_equal(names(result)[2], "M 18-34")
+  expect_equal(names(result)[3], "Female 35+") # unchanged
+
+  # Test multiple patterns
+  result <- modify_labels(df, col_labels = c("Male" = "M", "Female" = "F"))
+  expect_equal(names(result)[2], "M 18-34")
+  expect_equal(names(result)[3], "F 35+")
+})
+
+test_that("modify_labels works with both row and column labels", {
+  df <- data.frame(
+    row_label = c("Very satisfied", "Not satisfied"),
+    "Male respondents" = c(25, 10),
+    "Female respondents" = c(20, 15),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+
+  result <- modify_labels(
+    df,
+    row_labels = c("satisfied" = "sat"),
+    col_labels = c("respondents" = "resp")
+  )
+
+  expect_equal(result$row_label, c("Very sat", "Not sat"))
+  expect_equal(names(result)[2:3], c("Male resp", "Female resp"))
+})
+
+test_that("modify_labels preserves tab_result class and attributes", {
+  df <- data.frame(
+    row_label = c("Option 1", "Option 2"),
+    Male = c(25, 30),
+    Female = c(20, 35),
+    stringsAsFactors = FALSE
+  )
+
+  # Add tab_result class and some attributes
+  class(df) <- c("tab_result", "data.frame")
+  attr(df, "statistic") <- list(id = "count")
+  attr(df, "custom_attr") <- "test_value"
+
+  result <- modify_labels(df, row_labels = c("Option" = "Opt"))
+
+  # Check class is preserved
+  expect_s3_class(result, "tab_result")
+  expect_s3_class(result, "data.frame")
+
+  # Check attributes are preserved
+  expect_equal(attr(result, "statistic"), list(id = "count"))
+  expect_equal(attr(result, "custom_attr"), "test_value")
+})
+
+test_that("modify_labels error handling", {
+  df <- data.frame(
+    row_label = c("Option 1", "Option 2"),
+    Male = c(25, 30),
+    stringsAsFactors = FALSE
+  )
+
+  # Test invalid input types
+  expect_error(modify_labels("not a dataframe"), "x must be a data frame")
+  expect_error(modify_labels(df, row_labels = "unnamed vector"), "row_labels must be a named character vector")
+  expect_error(modify_labels(df, col_labels = c("pattern")), "col_labels must be a named character vector")
+
+  # Test missing row_label column
+  df_no_row_label <- data.frame(other_col = c(1, 2), Male = c(25, 30))
+  expect_error(
+    modify_labels(df_no_row_label, row_labels = c("test" = "replacement")),
+    "Data frame must have a 'row_label' column"
+  )
+})
+
+test_that("modify_labels handles edge cases", {
+  # Data frame with only row_label column
+  df_minimal <- data.frame(row_label = c("Option 1", "Option 2"), stringsAsFactors = FALSE)
+
+  expect_warning(
+    modify_labels(df_minimal, col_labels = c("test" = "replacement")),
+    "No data columns found to modify"
+  )
+
+  # Should still work for row labels
+  result <- modify_labels(df_minimal, row_labels = c("Option" = "Opt"))
+  expect_equal(result$row_label, c("Opt 1", "Opt 2"))
+})
+
+test_that("modify_labels supports regex patterns", {
+  df <- data.frame(
+    row_label = c("  Extra   spaces  ", "Normal text"),
+    Male = c(25, 30),
+    stringsAsFactors = FALSE
+  )
+
+  # Test regex pattern to clean up extra spaces
+  result <- modify_labels(df, row_labels = c("\\s+" = " ", "^\\s+|\\s+$" = ""))
+  expect_equal(result$row_label[1], "Extra spaces")
+  expect_equal(result$row_label[2], "Normal text")
+})
+
+##### Unit tests for banner helper ######
+
+test_that("banner helper function works correctly", {
+  test_data <- data.frame(
+    uid = 1:100,
+    q1 = sample(1:5, 100, replace = TRUE),
+    country = rep(c("UK", "US", "Germany"), length.out = 100),
+    satisfaction = sample(1:7, 100, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  test_data$q1 <- sjlabelled::set_labels(
+    test_data$q1,
+    labels = c("Strongly Disagree" = 1, "Disagree" = 2, "Neutral" = 3,
+               "Agree" = 4, "Strongly Agree" = 5)
+  )
+
+  test_data$satisfaction <- sjlabelled::set_labels(
+    test_data$satisfaction,
+    labels = c("Very Dissatisfied" = 1, "Dissatisfied" = 2,
+               "Somewhat Dissatisfied" = 3, "Neutral" = 4,
+               "Somewhat Satisfied" = 5, "Satisfied" = 6,
+               "Very Satisfied" = 7)
+  )
+
+  # Test 1: Banner with simple variable
+  result1 <- tab(test_data, q1, cols = banner("country", "satisfaction"))
+
+  # Check structure
+  expect_s3_class(result1, "tab_result")
+
+  # Check column names follow expected pattern
+  col_names <- names(result1)
+  expect_true("row_label" %in% col_names)
+  expect_true("NET" %in% col_names)
+
+  # Check that all country-satisfaction combinations are present
+  countries <- c("UK", "US", "Germany")
+  satisfaction_labels <- c("Very Dissatisfied", "Dissatisfied",
+                           "Somewhat Dissatisfied", "Neutral",
+                           "Somewhat Satisfied", "Satisfied",
+                           "Very Satisfied")
+
+  for (country in countries) {
+    for (label in satisfaction_labels) {
+      expected_col <- paste0(country, ": ", label)
+      expect_true(expected_col %in% col_names,
+                  info = paste("Missing column:", expected_col))
+    }
+  }
+
+  # Test 2: Banner with nested top_box helper
+  result2 <- tab(test_data, q1, cols = banner(country, top_box(satisfaction, 2)))
+
+  # Check structure
+  expect_s3_class(result2, "tab_result")
+
+  # Check column names for top box columns
+  col_names2 <- names(result2)
+  for (country in countries) {
+    expected_col <- paste0(country, ": top_box(satisfaction, 2)")
+    expect_true(expected_col %in% col_names2,
+                info = paste("Missing top box column:", expected_col))
+  }
+
+  # Test 3: Banner with subtotals
+  result3 <- tab(test_data, q1, cols = banner("country", "satisfaction", subtotals = TRUE))
+
+  # Check for subtotal columns
+  col_names3 <- names(result3)
+  for (country in countries) {
+    expected_subtotal <- paste0(country, ": Total")
+    expect_true(expected_subtotal %in% col_names3,
+                info = paste("Missing subtotal column:", expected_subtotal))
+  }
+
+  # Test 4: Verify values are correctly filtered
+  # Check that UK top box only includes UK respondents with satisfaction 6-7
+  uk_mask <- test_data$country == "UK"
+  uk_top_box_count <- sum(test_data$satisfaction[uk_mask] >= 6, na.rm = TRUE)
+
+  # Find the UK top box column and check the base count
+  uk_top_box_col <- grep("UK:.*[Tt]op", names(result2), value = TRUE)[1]
+  if (!is.na(uk_top_box_col)) {
+    # Get the base count from the Base (n) row
+    base_row <- result2[result2$row_label == "Base (n)", uk_top_box_col]
+    actual_base <- as.numeric(base_row)
+
+    expect_equal(actual_base, uk_top_box_count,
+                 info = paste("UK Top Box base count mismatch. Expected:", uk_top_box_count,
+                              "Actual:", actual_base))
+  }
+
+  # Test 5: Error handling for non-existent variable
+  expect_error(
+    tab(test_data, q1, cols = banner("nonexistent_var", "satisfaction")),
+    "not found",
+    info = "Should error when banner uses non-existent variable"
+  )
+})
+
+test_that("banner helper handles edge cases", {
+  # Create test data with edge cases
+  test_data <- data.frame(
+    uid = 1:50,
+    q1 = sample(1:3, 50, replace = TRUE),
+    category = rep(c("A", "B"), 25),
+    rating = sample(1:5, 50, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  # Add labels to make q1 categorical
+  test_data$q1 <- sjlabelled::set_labels(
+    test_data$q1,
+    labels = c("Option 1" = 1, "Option 2" = 2, "Option 3" = 3)
+  )
+
+  # Test with minimal data (2 categories, 5 ratings)
+  result <- tab(test_data, q1, cols = banner("category", "rating"))
+
+  # Should have 2*5 = 10 category-rating columns plus row_label and Total
+  expect_equal(ncol(result), 12)
+
+  # Test with single value in outer variable
+  single_cat_data <- test_data[test_data$category == "A", ]
+  result_single <- tab(single_cat_data, q1, cols = banner("category", "rating"))
+
+  # Should only have A columns (5) plus row_label and Total
+  expect_equal(ncol(result_single), 7)
+  expect_true(all(grepl("^(row_label|A:|Total|Base|NET)$", names(result_single)) |
+                    startsWith(names(result_single), "A:")))
+})
+
+test_that("banner helper works with different separators", {
+  test_data <- data.frame(
+    q1 = sample(1:3, 50, replace = TRUE),
+    group = rep(c("Group1", "Group2"), 25),
+    level = sample(1:3, 50, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  # Test with custom separator
+  result <- tab(test_data, q1, cols = banner("group", "level", sep = " - "))
+
+  # Check that column names use the custom separator
+  col_names <- names(result)
+  group_cols <- col_names[grepl("Group", col_names)]
+
+  expect_true(all(grepl(" - ", group_cols)),
+              info = "Custom separator should be used in column names")
+
+  # Verify exact format
+  expect_true("Group1 - 1" %in% col_names)
+  expect_true("Group2 - 3" %in% col_names)
+})

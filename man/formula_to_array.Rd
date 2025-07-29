@@ -4,7 +4,7 @@
 \alias{formula_to_array}
 \title{Convert formula specification to numeric array}
 \usage{
-formula_to_array(formula_spec, data, dpdict = NULL)
+formula_to_array(formula_spec, data, dpdict = NULL, all_helpers = NULL)
 }
 \arguments{
 \item{formula_spec}{Parsed formula specification}
