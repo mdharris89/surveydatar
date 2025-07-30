@@ -4089,3 +4089,751 @@ modify_labels <- function(x, row_labels = NULL, col_labels = NULL) {
 
   result
 }
+
+
+#' Glue two tab results together
+#'
+#' Combines two tab_result objects either side-by-side (columns) or
+#' stacked (rows). When gluing columns, rows are matched by row_label.
+#' When gluing rows, columns are matched by name.
+#'
+#' @param tab1 First tab_result object
+#' @param tab2 Second tab_result object to glue onto the first
+#' @param direction "cols" (side-by-side) or "rows" (stacked)
+#' @param sep Separator between prefix and original labels
+#' @param prefix Optional prefix for tab2's columns/rows. If NULL, uses existing labels
+#' @return Combined tab_result object
+#' @export
+#' @examples
+#' # Glue two country results side by side
+#' uk_tab <- tab(uk_data, gender, age)
+#' us_tab <- tab(us_data, gender, age)
+#' combined <- glue_tab(uk_tab, us_tab, prefix = "US")
+#'
+#' # Stack time periods vertically
+#' q1_tab <- tab(q1_data, satisfaction, product)
+#' q2_tab <- tab(q2_data, satisfaction, product)
+#' trend <- glue_tab(q1_tab, q2_tab, direction = "rows", prefix = "Q2")
+glue_tab <- function(tab1, tab2,
+                     direction = c("cols", "rows"),
+                     sep = ": ",
+                     prefix = NULL) {
+
+  direction <- match.arg(direction)
+
+  # Validate inputs
+  if (!inherits(tab1, "tab_result")) {
+    stop("tab1 must be a tab_result object")
+  }
+  if (!inherits(tab2, "tab_result")) {
+    stop("tab2 must be a tab_result object")
+  }
+
+  # Check compatibility
+  check_glue_compatibility(tab1, tab2, direction)
+
+  # Dispatch to appropriate gluing function
+  if (direction == "cols") {
+    result <- glue_tabs_cols(tab1, tab2, sep, prefix)
+  } else {
+    result <- glue_tabs_rows(tab1, tab2, sep, prefix)
+  }
+
+  return(result)
+}
+
+#' Check if two tabs can be glued together
+#' @keywords internal
+check_glue_compatibility <- function(tab1, tab2, direction) {
+  stat1 <- attr(tab1, "statistic")
+  stat2 <- attr(tab2, "statistic")
+
+  # Extract statistic ID properly
+  stat1_id <- if (is.character(stat1)) stat1 else stat1$id
+  stat2_id <- if (is.character(stat2)) stat2 else stat2$id
+
+  # Check statistic compatibility
+  if (stat1_id != stat2_id) {
+    warning("Gluing tabs with different statistics: ",
+            stat1_id, " and ", stat2_id)
+  }
+
+  if (direction == "cols") {
+    # For column gluing, check row compatibility
+    if (!identical(tab1$row_label, tab2$row_label)) {
+      common_rows <- intersect(tab1$row_label, tab2$row_label)
+      if (length(common_rows) == 0) {
+        stop("No common row labels found between tabs")
+      }
+      if (length(common_rows) < length(tab1$row_label)) {
+        warning("Only ", length(common_rows), " common rows found out of ",
+                length(tab1$row_label), " in tab1 and ",
+                length(tab2$row_label), " in tab2")
+      }
+    }
+  } else {
+    # For row gluing, column structures should be similar
+    cols1 <- setdiff(names(tab1), "row_label")
+    cols2 <- setdiff(names(tab2), "row_label")
+
+    if (!identical(sort(cols1), sort(cols2))) {
+      warning("Column structures differ. Missing columns will be filled with NA.")
+    }
+  }
+
+  invisible(TRUE)
+}
+
+#' Glue tabs side-by-side (columns)
+#' @keywords internal
+glue_tabs_cols <- function(tab1, tab2, sep, prefix) {
+  # Find common rows
+  common_rows <- intersect(tab1$row_label, tab2$row_label)
+
+  # Start with tab1, subset to common rows
+  result <- tab1[tab1$row_label %in% common_rows, , drop = FALSE]
+
+  # Reorder to match original row order
+  result <- result[match(common_rows, result$row_label), , drop = FALSE]
+
+  # Prepare tab2 columns
+  tab2_subset <- tab2[match(common_rows, tab2$row_label), , drop = FALSE]
+
+  # Track new column mappings for arrays
+  new_col_names <- character()
+
+  # Add tab2 columns (skip row_label)
+  for (i in 2:ncol(tab2_subset)) {
+    old_name <- names(tab2_subset)[i]
+
+    # Create new column name
+    if (!is.null(prefix)) {
+      new_name <- paste0(prefix, sep, old_name)
+    } else {
+      # Avoid name collision
+      new_name <- old_name
+      j <- 1
+      while (new_name %in% names(result)) {
+        new_name <- paste0(old_name, "_", j)
+        j <- j + 1
+      }
+    }
+
+    result[[new_name]] <- tab2_subset[[old_name]]
+    new_col_names <- c(new_col_names, new_name)
+  }
+
+  # Merge metadata
+  result <- merge_tab_metadata(result, tab1, tab2,
+                               direction = "cols",
+                               prefix = prefix,
+                               new_col_names = new_col_names)
+
+  return(result)
+}
+
+#' Glue tabs vertically (rows)
+#' @keywords internal
+glue_tabs_rows <- function(tab1, tab2, sep, prefix) {
+  # Get all unique columns
+  all_cols <- union(names(tab1), names(tab2))
+
+  # Prepare both tabs with all columns
+  tab1_full <- tab1
+  tab2_full <- tab2
+
+  # Add missing columns to tab1
+  for (col in setdiff(all_cols, names(tab1))) {
+    tab1_full[[col]] <- NA
+  }
+
+  # Add missing columns to tab2
+  for (col in setdiff(all_cols, names(tab2))) {
+    tab2_full[[col]] <- NA
+  }
+
+  # Reorder columns to match
+  tab1_full <- tab1_full[, all_cols, drop = FALSE]
+  tab2_full <- tab2_full[, all_cols, drop = FALSE]
+
+  # Create result based on prefix
+  if (!is.null(prefix)) {
+    # Add section header
+    section_header <- data.frame(
+      row_label = paste0("--- ", prefix, " ---"),
+      stringsAsFactors = FALSE
+    )
+    for (col in all_cols[-1]) {
+      section_header[[col]] <- NA
+    }
+
+    # Add blank row between sections
+    blank_row <- section_header
+    blank_row$row_label <- ""
+
+    # Combine with section headers
+    result <- rbind(tab1_full, blank_row, section_header, tab2_full)
+  } else {
+    # Just stack them
+    result <- rbind(tab1_full, tab2_full)
+  }
+
+  # Merge metadata
+  result <- merge_tab_metadata(result, tab1, tab2,
+                               direction = "rows",
+                               prefix = prefix,
+                               new_col_names = NULL)
+
+  return(result)
+}
+
+#' Merge metadata from two tabs
+#' @keywords internal
+merge_tab_metadata <- function(result, tab1, tab2, direction, prefix, new_col_names = NULL) {
+  # Preserve class
+  class(result) <- c("tab_result", "data.frame")
+
+  # Use statistic from first tab
+  attr(result, "statistic") <- attr(tab1, "statistic")
+
+  # Merge base arrays - for now use tab1's
+  attr(result, "base_array") <- attr(tab1, "base_array")
+
+  # Handle row and column arrays based on direction
+  if (direction == "cols") {
+    # Row arrays from tab1 (subset to common rows)
+    row_arrays1 <- attr(tab1, "row_arrays")
+    if (!is.null(row_arrays1)) {
+      # This assumes arrays are in same order as rows
+      common_row_indices <- which(tab1$row_label %in% result$row_label)
+      attr(result, "row_arrays") <- row_arrays1[common_row_indices]
+    }
+
+    # Combine column arrays
+    col_arrays1 <- attr(tab1, "col_arrays")
+    col_arrays2 <- attr(tab2, "col_arrays")
+
+    if (!is.null(col_arrays1) || !is.null(col_arrays2)) {
+      combined_col_arrays <- list()
+
+      # Add tab1's arrays (excluding row_label)
+      if (!is.null(col_arrays1)) {
+        for (i in seq_along(col_arrays1)) {
+          combined_col_arrays[[names(tab1)[i + 1]]] <- col_arrays1[[i]]
+        }
+      }
+
+      # Add tab2's arrays with new names
+      if (!is.null(col_arrays2) && length(new_col_names) > 0) {
+        for (i in seq_along(col_arrays2)) {
+          if (i <= length(new_col_names)) {
+            combined_col_arrays[[new_col_names[i]]] <- col_arrays2[[i]]
+          }
+        }
+      }
+
+      attr(result, "col_arrays") <- combined_col_arrays
+    }
+
+  } else {  # direction == "rows"
+    # Column arrays stay the same (from tab1)
+    attr(result, "col_arrays") <- attr(tab1, "col_arrays")
+
+    # Combine row arrays
+    row_arrays1 <- attr(tab1, "row_arrays")
+    row_arrays2 <- attr(tab2, "row_arrays")
+
+    if (!is.null(row_arrays1) || !is.null(row_arrays2)) {
+      combined_row_arrays <- list()
+
+      # Add all arrays, including NAs for separator rows
+      if (!is.null(row_arrays1)) {
+        combined_row_arrays <- c(combined_row_arrays, row_arrays1)
+      }
+
+      # Add NAs for blank row and section header if prefix used
+      if (!is.null(prefix)) {
+        combined_row_arrays <- c(combined_row_arrays, list(NA, NA))
+      }
+
+      if (!is.null(row_arrays2)) {
+        combined_row_arrays <- c(combined_row_arrays, row_arrays2)
+      }
+
+      attr(result, "row_arrays") <- combined_row_arrays
+    }
+  }
+
+  # Track gluing history
+  glue_history <- attr(tab1, "glue_history")
+  if (is.null(glue_history)) glue_history <- list()
+
+  glue_history <- c(glue_history, list(list(
+    action = "glue_tab",
+    direction = direction,
+    prefix = prefix,
+    timestamp = Sys.time()
+  )))
+
+  attr(result, "glue_history") <- glue_history
+
+  # Preserve other important attributes from tab1
+  if (!is.null(attr(tab1, "values_variable"))) {
+    attr(result, "values_variable") <- attr(tab1, "values_variable")
+  }
+
+  return(result)
+}
+
+#' Create multiple tabs and glue them together
+#'
+#' Runs tab() on subsets of data defined by the 'by' parameter and combines
+#' the results using glue_tab(). This is a convenience function for the common
+#' pattern of creating similar tables for different groups.
+#'
+#' @param data Data frame or survey_data object
+#' @param rows Row specification (same as tab())
+#' @param cols Column specification (same as tab())
+#' @param by Variable or specification for splitting data:
+#'   - Variable name: splits by all unique values
+#'   - Subsetting: country[c("UK", "US")]
+#'   - Named list: list("Europe" = country %in% c("UK", "FR"), "Asia" = country == "JP")
+#' @param direction "cols" (side-by-side) or "rows" (stacked)
+#' @param include_total Include a total group with all data?
+#' @param total_name Name for the total group
+#' @param sep Separator between group name and column labels
+#' @param statistic Statistic to compute (passed to tab())
+#' @param ... Additional arguments passed to tab()
+#' @return Combined tab_result object
+#' @export
+#' @examples
+#' # Split by all countries
+#' multi_tab(data, gender, age, by = country)
+#'
+#' # Specific countries only
+#' multi_tab(data, gender, age, by = country[c("UK", "US")])
+#'
+#' # Custom groups
+#' multi_tab(data, brand, rating, by = list(
+#'   "Satisfied" = satisfaction >= 4,
+#'   "Dissatisfied" = satisfaction < 4
+#' ))
+multi_tab <- function(data,
+                      rows,
+                      cols,
+                      by,
+                      direction = c("cols", "rows"),
+                      include_total = TRUE,
+                      total_name = "Total",
+                      sep = ": ",
+                      statistic = "column_pct",
+                      ...) {
+
+  direction <- match.arg(direction)
+
+  # Extract data frame and dpdict
+  if (inherits(data, "survey_data")) {
+    df <- data$dat
+    dpdict <- data$dpdict
+  } else {
+    df <- data
+    dpdict <- NULL
+  }
+
+  # Capture the by argument as a quosure
+  by_quo <- rlang::enquo(by)
+
+  # Parse by to get groups
+  groups <- parse_by_parameter(by_quo, df, dpdict)
+
+  if (length(groups) == 0) {
+    stop("No groups found from 'by' specification")
+  }
+
+  # Initialize result with first group
+  result <- NULL
+  successful_groups <- character()
+
+  for (group_name in names(groups)) {
+    # Get filtered data for this group
+    group_filter <- groups[[group_name]]
+
+    # Validate filter expression
+    tryCatch({
+      validate_filter_expression(group_filter, df)
+    }, error = function(e) {
+      stop("Invalid filter for group '", group_name, "': ", e$message)
+    })
+
+    # Apply filter
+    group_mask <- eval(group_filter, df, parent.frame())
+    if (!is.logical(group_mask) || length(group_mask) != nrow(df)) {
+      stop("Filter for group '", group_name, "' must return a logical vector of length nrow(data)")
+    }
+    group_mask[is.na(group_mask)] <- FALSE
+
+    group_df <- df[group_mask, , drop = FALSE]
+
+    if (nrow(group_df) == 0) {
+      warning("Group '", group_name, "' has no data, skipping")
+      next
+    }
+
+    # Reconstruct survey_data if needed
+    if (!is.null(dpdict)) {
+      group_data <- structure(
+        list(dat = group_df, dpdict = dpdict),
+        class = "survey_data"
+      )
+    } else {
+      group_data <- group_df
+    }
+
+    # Run tab for this group
+    # Handle missing cols argument
+    if (missing(cols)) {
+      group_tab <- tab(
+        group_data,
+        rows = {{ rows }},
+        statistic = statistic,
+        ...
+      )
+    } else {
+      group_tab <- tab(
+        group_data,
+        rows = {{ rows }},
+        cols = {{ cols }},
+        statistic = statistic,
+        ...
+      )
+    }
+
+    # Store successful group
+    successful_groups <- c(successful_groups, group_name)
+
+    # First group becomes the base
+    if (is.null(result)) {
+      result <- group_tab
+
+      # Add prefix to first group's columns if gluing by cols
+      if (direction == "cols" && length(names(groups)) > 1) {
+        # Only add prefix if there will be multiple groups
+        for (i in 2:ncol(result)) {
+          old_name <- names(result)[i]
+          names(result)[i] <- paste0(group_name, sep, old_name)
+        }
+      }
+
+      # Add section header for first group if gluing by rows
+      if (direction == "rows" && length(names(groups)) > 1) {
+
+        # Create section header row
+        section_header <- data.frame(
+          row_label = paste0("--- ", group_name, " ---"),
+          stringsAsFactors = FALSE
+        )
+        # Add NA values for all other columns
+        for (col in names(result)[-1]) {
+          section_header[[col]] <- NA
+        }
+
+        # Combine header with result
+        result <- rbind(section_header, result)
+
+        # Preserve the tab_result class
+        class(result) <- c("tab_result", "data.frame")
+
+        # Update row arrays to account for the new header row
+        row_arrays <- attr(group_tab, "row_arrays")
+        if (!is.null(row_arrays)) {
+          # Add NA at the beginning for the header row
+          attr(result, "row_arrays") <- c(list(NA), row_arrays)
+        }
+
+        # Preserve other essential attributes from group_tab
+        attr(result, "statistic") <- attr(group_tab, "statistic")
+        attr(result, "base_array") <- attr(group_tab, "base_array")
+        attr(result, "col_arrays") <- attr(group_tab, "col_arrays")
+        if (!is.null(attr(group_tab, "values_variable"))) {
+          attr(result, "values_variable") <- attr(group_tab, "values_variable")
+        }
+      }
+    } else {
+      # Glue subsequent groups
+      result <- glue_tab(result, group_tab,
+                         direction = direction,
+                         sep = sep,
+                         prefix = group_name)
+    }
+  }
+
+  # Check if we got any results
+  if (is.null(result)) {
+    stop("No groups produced valid results")
+  }
+
+  # Add total if requested
+  if (include_total) {
+    # Use full data for total
+    if (!is.null(dpdict)) {
+      total_data <- structure(
+        list(dat = df, dpdict = dpdict),
+        class = "survey_data"
+      )
+    } else {
+      total_data <- df
+    }
+
+    # Handle missing cols argument
+    if (missing(cols)) {
+      total_tab <- tab(
+        total_data,
+        rows = {{ rows }},
+        statistic = statistic,
+        ...
+      )
+    } else {
+      total_tab <- tab(
+        total_data,
+        rows = {{ rows }},
+        cols = {{ cols }},
+        statistic = statistic,
+        ...
+      )
+    }
+
+    result <- glue_tab(result, total_tab,
+                       direction = direction,
+                       sep = sep,
+                       prefix = total_name)
+  }
+
+  # Add metadata about how it was created
+  attr(result, "multi_tab_by") <- rlang::as_label(by_quo)
+  attr(result, "multi_tab_groups") <- successful_groups
+  attr(result, "multi_tab_direction") <- direction
+
+  return(result)
+}
+
+# Include the parse_by_parameter function from earlier implementation
+# (This is already defined in the tab_glue_flexible_by artifact)
+
+# Also include validate_filter_expression
+validate_filter_expression <- function(expr, data) {
+  # Check that all variables referenced in the expression exist in data
+  vars_in_expr <- all.vars(expr)
+  missing_vars <- setdiff(vars_in_expr, names(data))
+
+  if (length(missing_vars) > 0) {
+    stop("Variables not found in data: ", paste(missing_vars, collapse = ", "))
+  }
+
+  invisible(TRUE)
+}
+
+# Convenience wrappers
+#' @rdname multi_tab
+#' @export
+multi_tab_cols <- function(data, rows, cols = NULL, by, ...) {
+  if (missing(cols)) {
+    multi_tab(data, rows = {{ rows }},
+              by = {{ by }}, direction = "cols", ...)
+  } else {
+    multi_tab(data, rows = {{ rows }}, cols = {{ cols }},
+              by = {{ by }}, direction = "cols", ...)
+  }
+}
+
+#' @rdname multi_tab
+#' @export
+multi_tab_rows <- function(data, rows, cols = NULL, by, ...) {
+  if (missing(cols)) {
+    multi_tab(data, rows = {{ rows }},
+              by = {{ by }}, direction = "rows", ...)
+  } else {
+    multi_tab(data, rows = {{ rows }}, cols = {{ cols }},
+              by = {{ by }}, direction = "rows", ...)
+  }
+}
+
+# Helper functions for multi_tab
+
+#' Parse the flexible 'by' parameter into named filter expressions
+#'
+#' @param by_quo The by parameter as a quosure from multi_tab
+#' @param data The data frame
+#' @param dpdict Optional data dictionary
+#' @return Named list of filter expressions
+#' @keywords internal
+parse_by_parameter <- function(by_quo, data, dpdict = NULL) {
+  # Get the expression from the quosure
+  by_expr <- rlang::quo_get_expr(by_quo)
+
+  # Case 1: Simple variable name (splits by all unique values)
+  # Examples: by = country, by = region
+  if (rlang::is_symbol(by_expr)) {
+    var_name <- as.character(by_expr)
+    return(create_groups_from_variable(var_name, data, dpdict))
+  }
+
+  # Case 2: String variable name
+  # Example: by = "country"
+  if (rlang::is_string(by_expr)) {
+    return(create_groups_from_variable(by_expr, data, dpdict))
+  }
+
+  # Case 3: Subsetting expression (e.g., country[c("UK", "US")])
+  if (rlang::is_call(by_expr, "[") || rlang::is_call(by_expr, "[[")) {
+    var_name <- as.character(by_expr[[2]])
+
+    # Get the values from the subsetting
+    values_expr <- by_expr[[3]]
+    if (rlang::is_call(values_expr, "c")) {
+      # Extract values from c() call
+      values <- sapply(rlang::call_args(values_expr), rlang::eval_tidy)
+    } else {
+      values <- rlang::eval_tidy(values_expr)
+    }
+
+    return(create_groups_from_values(var_name, values, data, dpdict))
+  }
+
+  # Case 4: %in% expression (e.g., country %in% c("UK", "US"))
+  if (rlang::is_call(by_expr, "%in%")) {
+    var_name <- as.character(by_expr[[2]])
+    values <- rlang::eval_tidy(by_expr[[3]])
+    return(create_groups_from_values(var_name, values, data, dpdict))
+  }
+
+  # Case 5: Named list of expressions
+  # Example: by = list(europe = country %in% c("UK", "DE"), high_income = income > 50000)
+  # First try to evaluate the quosure to see if it's a list
+  by_eval <- tryCatch(
+    rlang::eval_tidy(by_quo),
+    error = function(e) NULL
+  )
+
+  if (is.list(by_eval) && !is.null(names(by_eval))) {
+    if (any(names(by_eval) == "")) {
+      stop("When 'by' is a list, all elements must be named")
+    }
+
+    # Convert each expression to proper filter
+    groups <- list()
+    for (name in names(by_eval)) {
+      # The list elements are already expressions
+      groups[[name]] <- by_eval[[name]]
+    }
+
+    return(groups)
+  }
+
+  # Case 6: Direct evaluation (for backward compatibility)
+  # Try to evaluate the expression - might return a list
+  result <- tryCatch(
+    rlang::eval_tidy(by_quo, data),
+    error = function(e) NULL
+  )
+
+  if (is.list(result) && !is.null(names(result))) {
+    return(result)
+  }
+
+  stop("Invalid 'by' specification. Use a variable name, named list of expressions, ",
+       "or a subsetting expression like country[c('UK', 'US')]")
+}
+
+#' Create groups from all unique values of a variable
+#' @keywords internal
+create_groups_from_variable <- function(var_name, data, dpdict = NULL) {
+  if (!var_name %in% names(data)) {
+    stop("Variable '", var_name, "' not found in data")
+  }
+
+  # Get unique values
+  values <- unique(data[[var_name]])
+  values <- values[!is.na(values)]
+  values <- sort(values)
+
+  if (length(values) == 0) {
+    stop("No valid values found in '", var_name, "'")
+  }
+
+  # Get labels using the existing function from builtins.R
+  labels <- get_variable_labels(var_name, values, data, dpdict)
+
+  # Create filter expressions
+  groups <- list()
+  for (i in seq_along(values)) {
+    val <- values[i]
+    label <- labels[i]
+
+    # Create filter expression
+    if (is.character(val)) {
+      filter_expr <- bquote(.(as.name(var_name)) == .(val))
+    } else {
+      filter_expr <- bquote(.(as.name(var_name)) == .(val))
+    }
+
+    groups[[label]] <- filter_expr
+  }
+
+  return(groups)
+}
+
+#' Create groups from specific values of a variable
+#' @keywords internal
+create_groups_from_values <- function(var_name, values, data, dpdict = NULL) {
+  if (!var_name %in% names(data)) {
+    stop("Variable '", var_name, "' not found in data")
+  }
+
+  # Validate values exist
+  actual_values <- unique(data[[var_name]])
+  actual_values <- actual_values[!is.na(actual_values)]
+  invalid <- setdiff(values, actual_values)
+  if (length(invalid) > 0) {
+    warning("Values not found in data: ", paste(invalid, collapse = ", "))
+    values <- intersect(values, actual_values)
+  }
+
+  if (length(values) == 0) {
+    stop("No valid values specified")
+  }
+
+  # Get labels
+  labels <- get_variable_labels(var_name, values, data, dpdict)
+
+  # Create filter expressions
+  groups <- list()
+  for (i in seq_along(values)) {
+    val <- values[i]
+    label <- labels[i]
+
+    # Create filter expression
+    if (is.character(val)) {
+      filter_expr <- bquote(.(as.name(var_name)) == .(val))
+    } else {
+      filter_expr <- bquote(.(as.name(var_name)) == .(val))
+    }
+
+    groups[[label]] <- filter_expr
+  }
+
+  return(groups)
+}
+
+#' Validate that filter expression references valid variables
+#' @keywords internal
+validate_filter_expression <- function(expr, data) {
+  # Check that all variables referenced in the expression exist in data
+  vars_in_expr <- all.vars(expr)
+  missing_vars <- setdiff(vars_in_expr, names(data))
+
+  if (length(missing_vars) > 0) {
+    stop("Variables not found in data: ", paste(missing_vars, collapse = ", "))
+  }
+
+  invisible(TRUE)
+}

@@ -1116,9 +1116,14 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       values_map    <- formula_spec$components$values       # may be NULL
       drop_empty    <- isTRUE(formula_spec$components$drop_empty %||% TRUE)
 
-      # can't mix `patterns` and `values`
-      if (!is.null(values_map) && !is.null(patterns))
-        stop("response_match: supply either `patterns` or `values`, not both.")
+      get_variable_labels <- formula_spec$components$get_variable_labels
+      get_value_labels    <- formula_spec$components$get_value_labels
+
+      pattern_sources <- c(!is.null(patterns), !is.null(values_map),
+                           !is.null(get_variable_labels), !is.null(get_value_labels))
+      if (sum(pattern_sources) > 1) {
+        stop("response_match: supply only one of `patterns`, `values`, `get_variable_labels`, or `get_value_labels`.")
+      }
 
       # ── 1. resolve group variables -------------------------------------------
       group_vars <- resolve_to_variables(group_name, data, dpdict,
@@ -1134,6 +1139,102 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       )
 
       get_var_lab <- function(v) dpdict$variable_labels[dpdict$variable_names == v]
+
+      #  ── 1.5: Extract labels if requested ---------------------------------
+      if (!is.null(get_variable_labels)) {
+        # Extract variable labels
+        if (is.character(get_variable_labels) && length(get_variable_labels) == 1) {
+          # It's a question group name
+          if (!get_variable_labels %in% dpdict$question_group) {
+            stop("response_match: Question group '", get_variable_labels, "' not found in dpdict")
+          }
+          # Get all variable labels for this question group
+          group_indices <- which(dpdict$question_group == get_variable_labels)
+          extracted_labels <- dpdict$variable_labels[group_indices]
+          var_names <- dpdict$variable_names[group_indices]
+        } else {
+          # It's a vector of variable names
+          var_indices <- match(get_variable_labels, dpdict$variable_names)
+          missing_vars <- get_variable_labels[is.na(var_indices)]
+          if (length(missing_vars) > 0) {
+            warning("response_match: Variables not found in dpdict: ",
+                    paste(missing_vars, collapse = ", "))
+          }
+          valid_indices <- var_indices[!is.na(var_indices)]
+          extracted_labels <- dpdict$variable_labels[valid_indices]
+          var_names <- dpdict$variable_names[valid_indices]
+        }
+
+        # Use variable names as fallback for empty/NA labels
+        extracted_labels[is.na(extracted_labels) | extracted_labels == ""] <-
+          var_names[is.na(extracted_labels) | extracted_labels == ""]
+
+        # Convert to named list (maintaining order and duplicates)
+        patterns <- as.list(extracted_labels)
+        names(patterns) <- extracted_labels
+
+        # Force variable mode
+        mode <- "variable"
+
+      } else if (!is.null(get_value_labels)) {
+        # Extract value labels
+        all_value_labels <- character()
+
+        if (is.character(get_value_labels) && length(get_value_labels) == 1) {
+          # It's a question group name
+          if (!get_value_labels %in% dpdict$question_group) {
+            stop("response_match: Question group '", get_value_labels, "' not found in dpdict")
+          }
+          # Get all variables in this question group
+          group_vars_to_extract <- dpdict$variable_names[dpdict$question_group == get_value_labels]
+        } else {
+          # It's a vector of variable names
+          group_vars_to_extract <- get_value_labels
+          missing_vars <- group_vars_to_extract[!group_vars_to_extract %in% dpdict$variable_names]
+          if (length(missing_vars) > 0) {
+            warning("response_match: Variables not found in dpdict: ",
+                    paste(missing_vars, collapse = ", "))
+          }
+          group_vars_to_extract <- group_vars_to_extract[group_vars_to_extract %in% dpdict$variable_names]
+        }
+
+        # Extract value labels for each variable
+        for (var in group_vars_to_extract) {
+          var_idx <- which(dpdict$variable_names == var)
+          if (length(var_idx) > 0) {
+            val_labels <- dpdict$value_labels[[var_idx]]
+            if (!is.null(val_labels) && !all(is.na(val_labels))) {
+              # Handle different value label formats
+              if (is.character(val_labels) && is.null(names(val_labels))) {
+                # Simple character vector - use as is
+                all_value_labels <- c(all_value_labels, val_labels)
+              } else if (!is.null(names(val_labels))) {
+                # Named vector where names are values and vector elements are labels
+                # Extract the labels (the values of the named vector)
+                all_value_labels <- c(all_value_labels, as.character(val_labels))
+              }
+            } else {
+              # No value labels - try to get from data using existing function
+              var_data <- data[[var]]
+              unique_vals <- sort(unique(na.omit(var_data)))
+              for (val in unique_vals) {
+                label <- get_value_label(var, val, dpdict)
+                # Only add if it's not just the string representation of the value
+                if (label != as.character(val)) {
+                  all_value_labels <- c(all_value_labels, label)
+                }
+              }
+            }
+          }
+        }
+
+        # Convert to named list
+        patterns <- as.list(all_value_labels)
+        names(patterns) <- all_value_labels
+
+        # Force value mode
+        mode <- "value"
+      }
 
       # ── 2. Build target list ---------------------------------------------------
       if (!is.null(values_map)) {                # CODE-AGGREGATION MODE

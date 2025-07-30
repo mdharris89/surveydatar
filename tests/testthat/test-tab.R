@@ -1,7 +1,3 @@
-# TO DO:
-# - Add base calculator tests
-# - Add gate function tests
-
 ##### Built in registrations #####
 # Clear and register built-ins
 ensure_builtins_registered()
@@ -1550,6 +1546,83 @@ test_that("response_match without calc_if works", {
   expect_true(sum(data_col) > 0) # At least some counts exist
 })
 
+test_that("response_match automatic label extraction works", {
+  # Use mini test data which has A2_1, A2_2, A2_3 variables
+  mini_data <- create_mini_test_data(50)
+  mini_survey_data <- create_survey_data(mini_data)
+
+  # Test 1: get_variable_labels with question group
+  # Need to pass NULL for patterns argument, then group_name, then named parameter
+  result <- tab(
+    mini_survey_data,
+    rows = response_match(NULL, "A2_a", get_variable_labels = "A2_a"),
+    statistic = "count",
+    show_base = FALSE
+  )
+
+  # Should extract variable labels and force variable mode
+  expect_s3_class(result, "tab_result")
+  # Should have 3 rows for the 3 A2 variables
+  expect_equal(nrow(result) - 1, 3) # Excluding NET row
+  # Check that labels contain document types
+  expect_true(any(grepl("Docs", result$row_label)))
+  expect_true(any(grepl("Presentations", result$row_label)))
+  expect_true(any(grepl("Spreadsheets", result$row_label)))
+
+  # Test 2: get_value_labels with question group
+  result2 <- tab(
+    mini_survey_data,
+    rows = response_match(NULL, "A2_a", get_value_labels = "A2_a"),
+    statistic = "count",
+    show_base = FALSE
+  )
+
+  # Should extract value labels and force value mode
+  expect_s3_class(result2, "tab_result")
+  # Should have 3 rows for Daily, Weekly, Monthly
+  expect_equal(nrow(result2) - 1, 3) # Excluding NET row
+  expect_true(all(result2$row_label[-nrow(result2)] %in% c("Daily", "Weekly", "Monthly")))
+
+  # Test 3: get_variable_labels with specific variables
+  result3 <- tab(
+    mini_survey_data,
+    rows = response_match(NULL, "A2_a", get_variable_labels = c("A2_1", "A2_3")),
+    statistic = "count",
+    show_base = FALSE
+  )
+
+  # Should only extract labels for specified variables
+  expect_equal(nrow(result3) - 1, 2) # Only 2 variables selected
+  expect_true(any(grepl("Docs", result3$row_label)))
+  expect_true(any(grepl("Spreadsheets", result3$row_label)))
+  expect_false(any(grepl("Presentations", result3$row_label))) # A2_2 not selected
+
+  # Test 4: Error handling - non-existent question group
+  expect_error(
+    tab(mini_survey_data,
+        rows = response_match(NULL, "A2_a", get_variable_labels = "NonExistentGroup"),
+        statistic = "count"),
+    "Question group 'NonExistentGroup' not found in dpdict"
+  )
+
+  # Test 5: Warning for missing variables
+  expect_warning(
+    tab(mini_survey_data,
+        rows = response_match(NULL, "A2_a", get_variable_labels = c("A2_1", "NonExistent")),
+        statistic = "count",
+        show_base = FALSE),
+    "Variables not found in dpdict: NonExistent"
+  )
+
+  # Test 6: Mutual exclusivity validation
+  expect_error(
+    tab(mini_survey_data,
+        rows = response_match(c("Daily", "Weekly"), "A2_a", get_variable_labels = "A2_a"),
+        statistic = "count"),
+    "supply only one of"
+  )
+})
+
 test_that("gate registry functions work correctly", {
   # Check that no_mismatch gate is registered
   expect_true("no_mismatch" %in% list_tab_gates())
@@ -1575,9 +1648,6 @@ test_that("gate registry functions work correctly", {
   expect_true(test_gate(list(test_field = "A"), list()))
 })
 
-
-# Additional tests for calc_if functionality and deprecation warnings
-# Add these tests to the existing test-tab.R file
 
 test_that("calc_if wrapper works with response_match", {
   mini_data <- create_mini_test_data(100)
@@ -1646,8 +1716,6 @@ test_that("smart collapse works with gated arrays", {
   # Should have A2_usage, A2_satisfaction, A2_importance or similar
   expect_true(length(col_names) == 3)
 })
-
-
 
 ##### Unit tests for modify_labels function #####
 
@@ -1935,4 +2003,70 @@ test_that("banner helper works with different separators", {
   # Verify exact format
   expect_true("Group1 - 1" %in% col_names)
   expect_true("Group2 - 3" %in% col_names)
+})
+
+##### Unit tests for glue #####
+
+test_that("multi_tab works with standard test data", {
+  # Create standard test data
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+
+  # Split by region
+  result <- multi_tab(test_survey_data, gender, satisfaction, by = region)
+
+  expect_s3_class(result, "tab_result")
+  expect_true("North: Overall Satisfaction: Very dissatisfied" %in% names(result))
+  expect_true("South: Overall Satisfaction: Satisfied" %in% names(result))
+  expect_true("Total: Overall Satisfaction: Neutral" %in% names(result))
+
+  # Check that variable labels are used
+  expect_true(any(grepl("Respondent Gender", result$row_label)))
+})
+
+test_that("glue_tab combines tabs with different bases", {
+  test_survey_data <- create_survey_data(create_tab_test_data(300))
+
+  # Create two tabs with different age filters
+  young_tab <- test_survey_data %>%
+    filter(age < 35) %>%
+    tab(satisfaction, gender)
+
+  older_tab <- test_survey_data %>%
+    filter(age >= 35) %>%
+    tab(satisfaction, gender)
+
+  # Combine them
+  result <- glue_tab(young_tab, older_tab, prefix = "Age 35+")
+
+  expect_s3_class(result, "tab_result")
+  expect_true("Age 35+: Respondent Gender: Male" %in% names(result))
+  expect_true("Age 35+: Respondent Gender: Female" %in% names(result))
+
+  # Base sizes should be different
+  base_row <- which(result$row_label == "Base (n)")
+  expect_true(result[base_row, "Respondent Gender: Male"] != result[base_row, "Age 35+: Respondent Gender: Male"])
+})
+
+test_that("multi_tab handles custom groups and preserves labels", {
+  test_survey_data <- create_survey_data(create_tab_test_data(150))
+
+  # Use custom satisfaction groups
+  result <- multi_tab(
+    test_survey_data,
+    brand,  # Has 17 labelled categories
+    by = list(
+      "High Satisfaction" = satisfaction >= 4,
+      "Low Satisfaction" = satisfaction <= 2
+    ),
+    direction = "rows",
+    statistic = "count"
+  )
+
+  # Check structure
+  expect_true(any(grepl("--- High Satisfaction ---", result$row_label)))
+  expect_true(any(grepl("Brand_A", result$row_label)))
+  expect_true(any(grepl("Brand_Q", result$row_label)))  # 17th brand
+
+  # Check metadata preserved
+  expect_equal(attr(result, "multi_tab_groups"), c("High Satisfaction", "Low Satisfaction"))
 })
