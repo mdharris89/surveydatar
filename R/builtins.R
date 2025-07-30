@@ -1119,6 +1119,14 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       get_variable_labels <- formula_spec$components$get_variable_labels
       get_value_labels    <- formula_spec$components$get_value_labels
 
+      if (!is.null(patterns) && (!is.null(get_variable_labels) || !is.null(get_value_labels))) {
+        if ((identical(patterns, get_variable_labels)) || (identical(patterns, get_value_labels))) {
+          group_name <- patterns
+          patterns <- NULL
+          if (is.symbol(group_name)) group_name <- as.character(group_name)
+        }
+      }
+
       pattern_sources <- c(!is.null(patterns), !is.null(values_map),
                            !is.null(get_variable_labels), !is.null(get_value_labels))
       if (sum(pattern_sources) > 1) {
@@ -1129,6 +1137,11 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       group_vars <- resolve_to_variables(group_name, data, dpdict,
                                          allow_patterns = TRUE,
                                          error_context  = "question-group")
+
+      # Force fixed=TRUE when using get_variable_labels or get_value_labels
+      if (!is.null(get_variable_labels) || !is.null(get_value_labels)) {
+        pattern_type <- "fixed"
+      }
 
       # detect / build grepl wrapper
       detect <- switch(pattern_type,

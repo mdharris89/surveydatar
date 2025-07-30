@@ -1621,6 +1621,14 @@ test_that("response_match automatic label extraction works", {
         statistic = "count"),
     "supply only one of"
   )
+
+  # Test 7: Improved syntax
+  result <- tab(
+    mini_survey_data,
+    rows = response_match(get_variable_labels = "A2_a", "A2_a"),
+    statistic = "count",
+    show_base = FALSE
+  )
 })
 
 test_that("gate registry functions work correctly", {
