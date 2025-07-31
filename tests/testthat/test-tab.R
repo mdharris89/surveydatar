@@ -2136,3 +2136,61 @@ test_that("filters support helpers with same expressiveness as rows", {
   expect_true(total_base < nrow(data$dat))  # But not all
 })
 
+##### Unit tests for sort_tab #####
+
+tb <- tab(test_survey_data, satisfaction, gender)
+
+test_that("row sort by Total (desc) works and keeps specials", {
+  res <- sort_tab(tb, rows = "NET")
+
+  # NET (summary row) must stay last
+  expect_identical(tail(res$row_label, 2)[1], "NET")
+
+  # Base row must stay last-1 (because it's appended after summary)
+  expect_identical(tail(res$row_label, 1),
+                   attr(tb, "statistic")$base_label)
+
+  # remaining rows should be ordered descending by NET col
+  net_vals <- suppressWarnings(
+    as.numeric(gsub("%", "", res$`NET`[1:(nrow(res)-2)]))
+  )
+  expect_false(is.unsorted(-net_vals, strictly = FALSE))
+})
+
+test_that("alphabetical + natural row sort (asc) works", {
+  res <- sort_tab(tb, rows = list(by = "label", natural = TRUE))
+
+  # Extract sortable part
+  sortable <- res$row_label[-c(tail(seq_len(nrow(res)), 2))]
+  expect_true(is.unsorted(sortable, strictly = FALSE) == FALSE)
+})
+
+test_that("column sort by label desc works", {
+  res <- sort_tab(tb, rows = list(by = "label", order = "desc"))
+
+  labels <- names(res)[-1]   # drop row_label
+  # ensure labels are in strictly descending lexicographic order
+  expect_false(is.unsorted(labels, strictly = TRUE) == FALSE)
+})
+
+test_that("original order can be restored", {
+  mixed <- sort_tab(tb, rows = "NET")
+  back  <- sort_tab(mixed, rows = "original", cols = "original")
+
+  expect_identical(tb$row_label, back$row_label)
+  expect_identical(names(tb),   names(back))
+})
+
+test_that("`which =` sub-selection restricts the sort scope", {
+
+  # choose first two sortable rows
+  chosen <- tb$row_label[1:2]
+  res    <- sort_tab(tb,
+                     rows = list(by = "label",
+                                 which = chosen))
+
+  # The *positions* of chosen rows should now be alphabetical between them,
+  # others unchanged.
+  expect_equal(sort(chosen, decreasing = TRUE),
+               res$row_label[match(chosen, res$row_label)])
+})

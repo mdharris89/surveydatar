@@ -981,6 +981,9 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
 
   class(result_df) <- c("tab_result", "data.frame")
 
+  # Store original order for potential restoration via sort_tab
+  result_df <- store_original_order(result_df)
+
   return(result_df)
 }
 
@@ -4863,4 +4866,561 @@ validate_filter_expression <- function(expr, data) {
   }
 
   invisible(TRUE)
+}
+
+#' Sort rows and/or columns of a tab result
+#'
+#' Re-orders the rows and/or columns of a **`tab_result`** produced by
+#' [tab()], while always keeping the automatically-generated **Base** and
+#' summary (**NET / Total / Avg**) rows / columns in their original
+#' positions.
+#'
+#' @param tab_result A **`tab_result`** object (the output of [tab()]).
+#' @param rows, cols  **Sorting instructions** for rows or columns.  Either
+#'   *`NULL`*   – leave the dimension unchanged – or **one** of the
+#'   following:
+#'
+#'   * **Character scalar / vector**
+#'     * `"label"` or `"row_label"` / `"col_label"` – alphabetical
+#'       (natural sort if `natural = TRUE` is later supplied).
+#'     * `"original"` – restore the order in which [tab()] created the
+#*       table.
+#'     * One or several *data-column names* – value-based sorting (ties are
+#'       broken by the subsequent names in the vector).
+#'
+#'   * **List of control fields** – full syntax for advanced options.
+#'     \describe{
+#'       \item{`by`}{(character) What to sort by. Same values as above.}
+#'       \item{`order`}{`"asc"` or `"desc"` (default is `"asc"` for
+#'         `by = "label"` / `"original"`, `"desc"` otherwise).}
+#'       \item{`custom_order`}{Character vector giving an explicit order
+#'         for labels.  Anything not listed drops to the end.}
+#'       \item{`natural`}{Logical; if `TRUE` use natural / “human”
+#'         ordering for labels (e.g. “Q2” < “Q10”). Default `FALSE`.}
+#'       \item{`na.last`}{Logical; keep `NA` values at the end (`TRUE`,
+#'         the default) or the front (`FALSE`).}
+#'       \item{`which`}{Subset of rows/columns to participate in the sort.
+#'         Can be numeric indices or labels/names.  All other
+#'         rows/columns keep their current relative order.}
+#'     }
+#'
+#' @param ...  (reserved for future use; currently ignored).
+#'
+#' @return A **`tab_result`** with the specified dimension(s) re-ordered.
+#'   All original attributes (arrays, base matrix, statistic descriptor,
+#'   etc.) are preserved so that subsequent calls to [sort_tab()],
+#'   significance tests, and printing continue to work.
+#'
+#' @examples
+#' tb <- tab(mydata, satisfaction, gender)
+#'
+#' # 1.  Simple value-based: largest NET first
+#' sort_tab(tb, rows = "NET")
+#'
+#' # 2.  Alphabetical (natural) on rows; reverse-alphabetical on cols
+#' sort_tab(tb,
+#'          rows = list(by = "label", natural = TRUE),
+#'          cols = list(by = "label", order = "desc"))
+#'
+#' # 3.  Custom label order
+#' sort_tab(tb,
+#'          rows = list(
+#'            by = "label",
+#'            custom_order = c("Very satisfied", "Satisfied", "Neutral",
+#'                             "Dissatisfied", "Very dissatisfied")))
+#'
+#' # 4.  Sort only the first three data rows, leave the rest untouched
+#' sort_tab(tb,
+#'          rows = list(by = "label",
+#'                      which = 1:3))
+#'
+#' # 5.  Undo all sorting
+#' sort_tab(tb, rows = "original", cols = "original")
+#'
+#' @export
+sort_tab <- function(tab_result, rows = NULL, cols = NULL, ...) {
+  if (!inherits(tab_result, "tab_result")) {
+    stop("Input must be a tab_result object")
+  }
+
+  # Sort rows if specified
+  if (!is.null(rows)) {
+    tab_result <- sort_tab_dimension(tab_result, rows, dimension = "rows")
+  }
+
+  # Sort columns if specified
+  if (!is.null(cols)) {
+    tab_result <- sort_tab_dimension(tab_result, cols, dimension = "cols")
+  }
+
+  return(tab_result)
+}
+
+#' Internal function to sort a single dimension (rows or cols)
+#' @keywords internal
+sort_tab_dimension <- function(tab_result, sort_spec, dimension = c("rows", "cols")) {
+  dimension <- match.arg(dimension)
+
+  # Parse the sorting specification
+  sort_config <- parse_sort_spec(sort_spec, tab_result, dimension)
+
+  if (dimension == "rows") {
+    # Get row information
+    n_rows <- nrow(tab_result)
+    all_indices <- seq_len(n_rows)
+
+    # Identify special rows to exclude from sorting
+    special_rows <- identify_special_rows(tab_result)
+    sortable_indices <- setdiff(all_indices, special_rows)
+
+    # Apply 'which' filter if specified
+      if (!is.null(sort_config$which)) {
+        if (is.character(sort_config$which)) {
+          hit <- match(sort_config$which, tab_result$row_label)
+          if (anyNA(hit)) {
+            stop("Unknown row label(s) in `which`: ",
+                 paste(sort_config$which[is.na(hit)], collapse = ", "))
+            }
+          sort_config$which <- hit
+          }
+        sortable_indices <- intersect(sortable_indices, sort_config$which)
+    }
+
+    # Handle different sorting methods
+    if (sort_config$by == "original") {
+      # Restore original order
+      original_order <- attr(tab_result, "original_row_order")
+      if (is.null(original_order)) {
+        warning("No original row order stored. Returning unchanged.")
+        return(tab_result)
+      }
+      if (is.character(original_order)) {
+        # Map original labels → current positions
+        new_order <- match(original_order, tab_result$row_label)
+        # drop any rows that no longer exist (just in case)
+        new_order <- new_order[!is.na(new_order)]
+        } else {
+          new_order <- original_order
+        }
+    } else if (sort_config$by == "label") {
+      # Sort by row labels
+      labels_to_sort <- tab_result$row_label[sortable_indices]
+
+      if (!is.null(sort_config$custom_order)) {
+        # Custom ordering
+        new_order_within <- match(labels_to_sort, sort_config$custom_order)
+        # Put unmatched items at the end
+        new_order_within[is.na(new_order_within)] <- length(sort_config$custom_order) +
+          seq_len(sum(is.na(new_order_within)))
+      } else if (sort_config$natural) {
+        # Natural sorting
+        new_order_within <- natural_order(labels_to_sort,
+                                          decreasing = sort_config$order == "desc",
+                                          na.last = sort_config$na.last)
+      } else {
+        # Standard alphabetical sorting
+        new_order_within <- order(labels_to_sort,
+                                  decreasing = sort_config$order == "desc",
+                                  na.last = sort_config$na.last)
+      }
+
+      # Construct full order preserving special rows
+      new_order <- all_indices
+      new_order[sortable_indices] <- sortable_indices[new_order_within]
+    } else {
+      # Sort by column values
+      sort_values <- extract_sort_values_rows(tab_result, sort_config$by, sortable_indices)
+
+      # Get sort order
+      new_order_within <- do.call(order, c(
+        sort_values,
+        list(decreasing = sort_config$order == "desc", na.last = sort_config$na.last)
+      ))
+
+      # Construct full order preserving special rows
+      new_order <- all_indices
+      new_order[sortable_indices] <- sortable_indices[new_order_within]
+    }
+
+    # Apply the reordering
+    tab_result <- reorder_rows(tab_result, new_order)
+
+  } else {  # dimension == "cols"
+    # Get column information
+    col_names <- names(tab_result)[-1]  # Exclude row_label column
+    n_cols <- length(col_names)
+    all_indices <- seq_len(n_cols)
+
+    # Identify special columns to exclude from sorting
+    special_cols <- identify_special_cols(tab_result, col_names)
+    sortable_indices <- setdiff(all_indices, special_cols)
+
+    # Apply 'which' filter if specified
+    if (!is.null(sort_config$which)) {
+      if (!is.null(sort_config$which)) {
+        if (is.character(sort_config$which)) {
+          hit <- match(sort_config$which, tab_result$row_label)
+          if (anyNA(hit)) {
+            stop("Unknown row label(s) in `which`: ",
+                 paste(sort_config$which[is.na(hit)], collapse = ", "))
+          }
+          sort_config$which <- hit
+        }
+        sortable_indices <- intersect(sortable_indices, sort_config$which)
+      }
+    }
+
+    # Handle different sorting methods
+    if (sort_config$by == "original") {
+      # Restore original order
+      original_order <- attr(tab_result, "original_col_order")
+      if (is.null(original_order)) {
+        warning("No original column order stored. Returning unchanged.")
+        return(tab_result)
+      }
+      if (is.character(original_order)) {
+        new_order <- match(original_order, col_names)
+        new_order <- new_order[!is.na(new_order)]
+      } else {
+        new_order <- original_order
+      }
+    } else if (sort_config$by == "label") {
+      # Sort by column names
+      labels_to_sort <- col_names[sortable_indices]
+
+      if (!is.null(sort_config$custom_order)) {
+        # Custom ordering
+        new_order_within <- match(labels_to_sort, sort_config$custom_order)
+        # Put unmatched items at the end
+        new_order_within[is.na(new_order_within)] <- length(sort_config$custom_order) +
+          seq_len(sum(is.na(new_order_within)))
+      } else if (sort_config$natural) {
+        # Natural sorting
+        new_order_within <- natural_order(labels_to_sort,
+                                          decreasing = sort_config$order == "desc",
+                                          na.last = sort_config$na.last)
+      } else {
+        # Standard alphabetical sorting
+        new_order_within <- order(labels_to_sort,
+                                  decreasing = sort_config$order == "desc",
+                                  na.last = sort_config$na.last)
+      }
+
+      # Construct full order preserving special columns
+      new_order <- all_indices
+      new_order[sortable_indices] <- sortable_indices[new_order_within]
+    } else {
+      # Sort by row values
+      sort_values <- extract_sort_values_cols(tab_result, sort_config$by,
+                                              sortable_indices, col_names)
+
+      # Get sort order
+      new_order_within <- do.call(order, c(
+        sort_values,
+        list(decreasing = sort_config$order == "desc", na.last = sort_config$na.last)
+      ))
+
+      # Construct full order preserving special columns
+      new_order <- all_indices
+      new_order[sortable_indices] <- sortable_indices[new_order_within]
+    }
+
+    # Apply the reordering
+    tab_result <- reorder_cols(tab_result, new_order, col_names)
+  }
+
+  return(tab_result)
+}
+
+#' Parse sort specification into standardized format
+#' @keywords internal
+parse_sort_spec <- function(sort_spec, tab_result, dimension) {
+  # Default configuration
+  config <- list(
+    by = NULL,
+    order = NULL,
+    custom_order = NULL,
+    natural = FALSE,
+    na.last = TRUE,
+    which = NULL
+  )
+
+  if (is.list(sort_spec)) {
+    # Merge user config with defaults
+    config <- modifyList(config, sort_spec)
+  } else if (is.character(sort_spec)) {
+    config$by <- sort_spec
+  } else {
+    stop("Sort specification must be a character vector or list")
+  }
+
+  # Validate and set defaults
+  if (is.null(config$by) || length(config$by) == 0) {
+    stop("Must specify 'by' for sorting")
+  }
+
+  # Set default order based on what we're sorting by
+  if (is.null(config$order)) {
+    if (config$by[1] == "label" || config$by[1] == "original") {
+      config$order <- "asc"
+    } else {
+      config$order <- "desc"  # Default to descending for values
+    }
+  }
+
+  # Validate order
+  if (!config$order %in% c("asc", "desc")) {
+    stop("Order must be 'asc' or 'desc'")
+  }
+
+  # Validate column/row names if sorting by values
+  if (!config$by[1] %in% c("label", "original")) {
+    if (dimension == "rows") {
+      valid_cols <- names(tab_result)[-1]
+      invalid <- setdiff(config$by, valid_cols)
+      if (length(invalid) > 0) {
+        stop("Invalid column names for sorting: ", paste(invalid, collapse = ", "))
+      }
+    } else {
+      # For column sorting, we use row labels or indices
+      # This validation happens in extract_sort_values_cols
+    }
+  }
+
+  return(config)
+}
+
+#' Identify special rows (Base and summary rows)
+#' @keywords internal
+identify_special_rows <- function(tab_result) {
+  special <- integer(0)
+
+  # Get statistic info
+  stat <- attr(tab_result, "statistic")
+  if (is.character(stat)) {
+    stat_obj <- .tab_registry$stats[[stat]]
+  } else {
+    stat_obj <- stat
+  }
+
+  # Find Base row
+  base_label <- stat_obj$base_label
+  base_idx <- which(tab_result$row_label == base_label)
+  if (length(base_idx) > 0) special <- c(special, base_idx)
+
+  # Find summary row
+  summary_label <- attr(tab_result, "summary_row_label")
+  if (!is.null(summary_label)) {
+    summary_idx <- which(tab_result$row_label == summary_label)
+    if (length(summary_idx) > 0) special <- c(special, summary_idx)
+  }
+
+  return(unique(special))
+}
+
+#' Identify special columns (summary columns)
+#' @keywords internal
+identify_special_cols <- function(tab_result, col_names) {
+  special <- integer(0)
+
+  # Find summary column
+  summary_label <- attr(tab_result, "summary_col_label")
+  if (!is.null(summary_label)) {
+    summary_idx <- which(col_names == summary_label)
+    if (length(summary_idx) > 0) special <- c(special, summary_idx)
+  }
+
+  # Check for base column (if base_orientation is "row")
+  if (identical(attr(tab_result, "base_orientation"), "row")) {
+    stat <- attr(tab_result, "statistic")
+    if (is.character(stat)) {
+      base_label <- .tab_registry$stats[[stat]]$base_label
+    } else {
+      base_label <- stat$base_label
+    }
+    # Remove "(n)" suffix to match column name
+    base_col_name <- gsub(" \\(n\\)$", "", base_label)
+    base_idx <- which(col_names == base_col_name)
+    if (length(base_idx) > 0) special <- c(special, base_idx)
+  }
+
+  return(unique(special))
+}
+
+#' Extract values for sorting rows
+#' @keywords internal
+extract_sort_values_rows <- function(tab_result, by_cols, row_indices) {
+  sort_values <- list()
+
+  for (col in by_cols) {
+    vals <- tab_result[[col]][row_indices]
+    # Convert to numeric if possible (handles percent strings)
+    if (is.character(vals)) {
+      numeric_vals <- suppressWarnings(as.numeric(gsub("%", "", vals)))
+      if (!all(is.na(numeric_vals))) {
+        vals <- numeric_vals
+      }
+    }
+    sort_values[[length(sort_values) + 1]] <- vals
+  }
+
+  return(sort_values)
+}
+
+#' Extract values for sorting columns
+#' @keywords internal
+extract_sort_values_cols <- function(tab_result, by_rows, col_indices, col_names) {
+  sort_values <- list()
+
+  for (row_spec in by_rows) {
+    # Handle numeric row index or row label
+    if (is.numeric(row_spec)) {
+      row_idx <- row_spec
+    } else {
+      row_idx <- which(tab_result$row_label == row_spec)
+      if (length(row_idx) == 0) {
+        stop("Row '", row_spec, "' not found for column sorting")
+      }
+    }
+
+    # Extract values for this row across specified columns
+    vals <- unlist(tab_result[row_idx, col_names[col_indices] , drop = TRUE])
+
+    # Convert to numeric if possible
+    if (is.character(vals)) {
+      numeric_vals <- suppressWarnings(as.numeric(gsub("%", "", vals)))
+      if (!all(is.na(numeric_vals))) {
+        vals <- numeric_vals
+      }
+    }
+
+    sort_values[[length(sort_values) + 1]] <- vals
+  }
+
+  return(sort_values)
+}
+
+#' Natural ordering of character vectors
+#' @keywords internal
+natural_order <- function(x, decreasing = FALSE, na.last = TRUE) {
+  # Split strings into numeric and non-numeric parts
+  # This is a simplified version - could be enhanced with more sophisticated parsing
+
+  if (length(x) == 0) return(integer())
+
+  # Extract all numbers from each string
+  numbers <- lapply(x, function(s) {
+    if (is.na(s)) return(NA)
+    # Find all numeric sequences
+    nums <- regmatches(s, gregexpr("[0-9]+", s))[[1]]
+    if (length(nums) == 0) return(0)
+    as.numeric(nums)
+  })
+
+  # Extract non-numeric parts
+  text_parts <- lapply(x, function(s) {
+    if (is.na(s)) return(NA)
+    gsub("[0-9]+", "", s)
+  })
+
+  # Create sort matrix
+  # First sort by text part, then by first number, then second number, etc.
+  max_numbers <- max(sapply(numbers, length))
+
+  sort_mat <- matrix(NA, nrow = length(x), ncol = 1 + max_numbers)
+
+  # Text parts as first column (converted to factor for sorting)
+  sort_mat[, 1] <- as.numeric(factor(unlist(text_parts)))
+
+  # Numbers in subsequent columns
+  for (i in seq_along(x)) {
+    if (!is.na(numbers[[i]][1]) && length(numbers[[i]]) > 0) {
+      sort_mat[i, 2:(1 + length(numbers[[i]]))] <- numbers[[i]]
+    }
+  }
+
+  # Apply order
+  if (decreasing) {
+    ord <- do.call(order, c(as.data.frame(-sort_mat), list(na.last = na.last)))
+  } else {
+    ord <- do.call(order, c(as.data.frame(sort_mat), list(na.last = na.last)))
+  }
+
+  return(ord)
+}
+
+#' Reorder rows of tab_result
+#' @keywords internal
+reorder_rows <- function(tab_result, new_order) {
+
+  ## keep a copy of ALL attributes before sub-setting -------------
+  old_attr <- attributes(tab_result)
+
+  ## reorder the data.frame itself --------------------------------
+  tab_result <- tab_result[new_order, , drop = FALSE]
+  rownames(tab_result) <- NULL          # reset row names
+
+  ## restore attributes -------------------------------------------
+  keep <- setdiff(names(old_attr), c("names", "row.names", "class"))
+  for (nm in keep) attr(tab_result, nm) <- old_attr[[nm]]
+
+  ## update the few attributes whose dimensions changed -----------
+  # arrays
+  if (!is.null(old_attr$arrays) && !is.null(old_attr$arrays$row_arrays)) {
+    old_attr$arrays$row_arrays <- old_attr$arrays$row_arrays[new_order]
+    attr(tab_result, "arrays") <- old_attr$arrays
+  }
+
+  # base_matrix
+  bm <- old_attr$base_matrix
+  if (!is.null(bm) && nrow(bm) == length(new_order)) {
+    attr(tab_result, "base_matrix") <- bm[new_order, , drop = FALSE]
+  }
+
+  return(tab_result)
+}
+
+#' Reorder columns of tab_result
+#' @keywords internal
+reorder_cols <- function(tab_result, new_order, col_names) {
+
+  ## snapshot attributes first ------------------------------------
+  old_attr <- attributes(tab_result)
+
+  ## build new column order (row_label must stay first) -----------
+  tab_result <- tab_result[, c("row_label", col_names[new_order]), drop = FALSE]
+
+  ## restore attributes -------------------------------------------
+  keep <- setdiff(names(old_attr), c("names", "row.names", "class"))
+  for (nm in keep) attr(tab_result, nm) <- old_attr[[nm]]
+
+  ## update changed attributes ------------------------------------
+  # arrays
+  if (!is.null(old_attr$arrays) && !is.null(old_attr$arrays$col_arrays)) {
+    old_attr$arrays$col_arrays <- old_attr$arrays$col_arrays[new_order]
+    attr(tab_result, "arrays") <- old_attr$arrays
+  }
+
+  # base_matrix
+  bm <- old_attr$base_matrix
+  if (!is.null(bm) && ncol(bm) == length(new_order)) {
+    attr(tab_result, "base_matrix") <- bm[, new_order, drop = FALSE]
+  }
+
+  return(tab_result)
+}
+
+#' Store original order in tab_result
+#' @keywords internal
+store_original_order <- function(tab_result) {
+
+  # Only create these attributes once
+  if (is.null(attr(tab_result, "original_row_order"))) {
+    attr(tab_result, "original_row_order") <- tab_result$row_label
+  }
+  if (is.null(attr(tab_result, "original_col_order"))) {
+    # names() minus the first column ("row_label")
+    attr(tab_result, "original_col_order") <- names(tab_result)[-1]
+  }
+  tab_result
 }
