@@ -4,10 +4,10 @@
 \alias{parse_by_parameter}
 \title{Parse the flexible 'by' parameter into named filter expressions}
 \usage{
-parse_by_parameter(by, data, dpdict = NULL)
+parse_by_parameter(by_quo, data, dpdict = NULL)
 }
 \arguments{
-\item{by}{The by parameter from multi_tab}
+\item{by_quo}{The by parameter as a quosure from multi_tab}
 
 \item{data}{The data frame}
 

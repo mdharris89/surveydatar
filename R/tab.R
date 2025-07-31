@@ -253,8 +253,24 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Apply whole-table filter
   if (!missing(filter)) {
     filter_quo <- rlang::enquo(filter)
-    filter_parsed <- parse_table_formula(filter_quo, data, dpdict, all_helpers)
-    filter_logic <- formula_to_array(filter_parsed, data, all_helpers)
+
+    # Try to evaluate first (like we do for rows) to allow helpers to execute
+    filter_eval <- tryCatch(
+      rlang::eval_tidy(filter_quo, data),
+      error = function(e) NULL
+    )
+
+    if (inherits(filter_eval, "tab_helper")) {
+      # Successfully evaluated to a helper
+      filter_to_parse <- filter_eval
+    } else {
+      # Evaluation failed (e.g., undefined symbols) or returned non-helper
+      # Parse the original quosure
+      filter_to_parse <- filter_quo
+    }
+
+    filter_parsed <- parse_table_formula(filter_to_parse, data, dpdict, all_helpers)
+    filter_logic <- formula_to_array(filter_parsed, data, dpdict, all_helpers)
     base_array <- base_array * filter_logic
   }
 
@@ -2914,9 +2930,11 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
   } else if (formula_spec$type == "multiplication") {
     # Apply each component multiplicatively
     for (comp in formula_spec$components) {
-      comp_array <- formula_to_array(comp, data)
+      comp_array <- formula_to_array(comp, data, dpdict, all_helpers)
+      comp_array[is.na(comp_array)] <- 0
       result <- result * comp_array
     }
+    result[is.na(result)] <- 0
 
     # For multiplication, preserve meta from first component if available
     if (length(formula_spec$components) > 0) {
@@ -3079,7 +3097,6 @@ process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
 
       if (i == 1) {
         # First argument: outer variable (must be a symbol)
-        # First argument: outer variable
         if (rlang::is_symbol(arg)) {
           # Unquoted variable name (e.g., banner(country, ...))
           evaluated_args[[i]] <- as.character(arg)
@@ -3120,6 +3137,16 @@ process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
     arg_names <- names(formula_spec$args)
     for (i in seq_along(formula_spec$args)) {
       arg <- formula_spec$args[[i]]
+
+      if (rlang::is_call(arg) && identical(arg[[1]], quote(c))) {
+        arg_list <- as.list(arg)[-1]
+        converted <- vapply(arg_list, function(x) {
+          if (rlang::is_symbol(x)) as.character(x)
+          else x
+        }, FUN.VALUE = character(1))
+        evaluated_args[[i]] <- converted
+        next
+      }
 
       # If argument is itself a helper or complex expression, evaluate it recursively
       if (rlang::is_call(arg)) {

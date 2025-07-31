@@ -19,9 +19,9 @@ multi_tab(
   ...
 )
 
-multi_tab_cols(data, rows, cols, by, ...)
+multi_tab_cols(data, rows, cols = NULL, by, ...)
 
-multi_tab_rows(data, rows, cols, by, ...)
+multi_tab_rows(data, rows, cols = NULL, by, ...)
 }
 \arguments{
 \item{data}{Data frame or survey_data object}

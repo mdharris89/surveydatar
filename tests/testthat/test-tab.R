@@ -2078,3 +2078,61 @@ test_that("multi_tab handles custom groups and preserves labels", {
   # Check metadata preserved
   expect_equal(attr(result, "multi_tab_groups"), c("High Satisfaction", "Low Satisfaction"))
 })
+
+##### Unit tests for more expressive filters #####
+test_that("filters support helpers with same expressiveness as rows", {
+  # Use the standard test data
+  data <- test_survey_data
+
+  # Test 1: Helper with quoted variable name (already worked)
+  result1 <- tab(data, q1, gender, filter = any_positive("q1_1"))
+  expect_s3_class(result1, "tab_result")
+  expect_true(nrow(result1) > 0)
+
+  # Test 2: Helper with unquoted variable name (previously failed)
+  result2 <- tab(data, q1, gender, filter = any_positive(q1_1))
+  expect_s3_class(result2, "tab_result")
+  expect_equal(dim(result1), dim(result2))  # Should give same result
+
+  # Test 3: Helper with c() and unquoted names (previously failed)
+  result3 <- tab(data, satisfaction, gender, filter = any_positive(c(q1_1, q1_2)))
+  expect_s3_class(result3, "tab_result")
+  # Should have filtered to only respondents with q1_1 OR q1_2 positive
+  base_row <- result3[result3$row_label == "Base (n)", ]
+  total_n <- as.numeric(base_row$NET)
+  expect_true(total_n < nrow(data$dat))  # Filter should reduce sample size
+
+  # Test 4: Complex expression with helper and multiplication (filter combination)
+  result4 <- tab(data, satisfaction, gender,
+                 filter = any_positive(q1_a) * (age > 30))
+  expect_s3_class(result4, "tab_result")
+  # Should be smaller than just any_positive(q1) filter
+  base_row4 <- result4[result4$row_label == "Base (n)", ]
+  expect_true(as.numeric(base_row4$NET) < total_n)
+
+  # Test 5: Verify filter and rows give same result when using same helper
+  # Using in rows
+  result_rows <- tab(data, any_positive(q1), gender)
+  any_positive_row <- result_rows[grep("any_positive", result_rows$row_label), ]
+
+  # Using as filter
+  result_filter <- tab(data, total(), gender, filter = any_positive(q1_a))
+  base_row_filter <- result_filter[result_filter$row_label == "Base (n)", ]
+
+  # The percentage in rows should match the base count with filter
+  expect_equal(
+    as.numeric(result_filter$NET[2]),  # Percentage who have any_positive q1
+    (as.numeric(base_row_filter$NET) / nrow(data$dat)) * 100,
+    tolerance = 0.1
+  )
+
+  # Test 6: Multiple helpers in filter
+  result6 <- tab(data, region, gender,
+                 filter = any_positive(q1_a) * top_box(satisfaction, 2))
+  expect_s3_class(result6, "tab_result")
+  base_row <- result6[result6$row_label == "Base (n)", ]
+  total_base <- as.numeric(base_row$NET)
+  expect_true(total_base > 0)  # Some respondents match
+  expect_true(total_base < nrow(data$dat))  # But not all
+})
+

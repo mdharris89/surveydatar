@@ -1440,9 +1440,83 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
       out
     }
-
-    # Register (or overwrite) helper in the global registry
     create_helper("response_match", help_response_match)
+
+    # Any of helper - checks if any variable in a group/list is positive
+    help_any_positive <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
+      # Get the input - could be a single string (question group) or vector of strings (variable names)
+      vars_input <- formula_spec$components[[1]]
+
+      # Determine if input is a question group or variable list
+      if (length(vars_input) == 1 && !is.null(dpdict) && "question_group" %in% names(dpdict)) {
+        # Check if it's a question group
+        if (vars_input %in% unique(dpdict$question_group)) {
+          # It's a question group - get all variables in that group
+          vars_to_check <- dpdict$variable_names[dpdict$question_group == vars_input]
+          label <- paste0("Any of ", vars_input)
+        } else if (vars_input %in% names(data)) {
+          # It's a single variable
+          vars_to_check <- vars_input
+          label <- "Any of 1 variable"
+        } else {
+          # Assume it's a question group that will be expanded later
+          vars_to_check <- vars_input
+          label <- paste0("Any of ", vars_input)
+        }
+      } else {
+        # It's a vector of variable names
+        vars_to_check <- vars_input
+        label <- paste0("Any of ", length(vars_to_check), " variables")
+      }
+
+      # Filter to variables that exist in data
+      existing_vars <- vars_to_check[vars_to_check %in% names(data)]
+
+      # If no variables exist, return all zeros
+      if (length(existing_vars) == 0) {
+        result <- rep(0, nrow(data))
+        attr(result, "label") <- label
+        return(result)
+      }
+
+      # Extract the data for these variables
+      vars_data <- data[, existing_vars, drop = FALSE]
+
+      # Check for negative values and warn
+      has_negatives <- any(vars_data < 0, na.rm = TRUE)
+      if (has_negatives) {
+        warning("Negative values found in variables for any_positive() helper. Only positive values will be treated as TRUE.")
+      }
+
+      # Calculate result: 1 if any variable is positive (>0) and non-NA, 0 otherwise
+      result <- apply(vars_data, 1, function(row) {
+        # Check if any value in the row is positive (greater than 0)
+        any_positive <- any(row > 0, na.rm = TRUE)
+        # Return 1 if true, 0 if false or all NA
+        as.numeric(any_positive)
+      })
+
+      # Ensure NAs become 0
+      result[is.na(result)] <- 0
+
+      # Add label attribute
+      attr(result, "label") <- label
+
+      return(result)
+    }
+    create_helper("any_positive", help_any_positive)
+
+    help_total <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
+      # Return an array of 1s for all respondents
+      result <- rep(1, nrow(data))
+
+      # Add label attribute
+      attr(result, "label") <- "Total"
+
+      return(result)
+    }
+    create_helper("total", help_total)
+
 
     # SIGNIFICANCE TESTS ------------------------------------------------
 
