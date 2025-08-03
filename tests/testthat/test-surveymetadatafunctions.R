@@ -1159,3 +1159,61 @@ test_that("mutate updates dpdict when transforming existing labeled variables", 
   expect_true(survey_obj$dpdict$has_value_labels[copy_idx])
 })
 
+
+test_that("left_join works for survey_data objects", {
+  # Create base survey_data object
+  base_data <- get_minimal_labelled_test_dat()
+  survey1 <- create_survey_data(base_data)
+
+  # Test 1: Join with another survey_data object
+  survey2_dat <- data.frame(
+    uid = c(1, 3, 5),
+    new_var = c("a", "b", "c"),
+    stringsAsFactors = FALSE
+  )
+  attr(survey2_dat$new_var, "label") <- "New Variable"
+  survey2 <- create_survey_data(survey2_dat)
+
+  result1 <- left_join(survey1, survey2, by = "uid")
+
+  expect_s3_class(result1, "survey_data")
+  expect_true("new_var" %in% names(result1$dat))
+  expect_equal(nrow(result1$dat), nrow(survey1$dat))
+  expect_equal(attr(result1$dat$new_var, "label"), "New Variable")
+  expect_true("new_var" %in% result1$dpdict$variable_names)
+
+  # Test 2: Join with regular data frame
+  df2 <- data.frame(
+    uid = 1:10,
+    score = rnorm(10)
+  )
+
+  result2 <- left_join(survey1, df2, by = "uid")
+
+  expect_s3_class(result2, "survey_data")
+  expect_true("score" %in% names(result2$dat))
+  expect_true("score" %in% result2$dpdict$variable_names)
+  expect_equal(result2$dpdict$variable_labels[result2$dpdict$variable_names == "score"], "score")
+
+  # Test 3: Handle column conflicts
+  survey3_dat <- data.frame(
+    uid = 1:5,
+    csat = 5:1  # Conflicts with existing csat
+  )
+  attr(survey3_dat$csat, "label") <- "Customer Satisfaction (New)"
+  survey3 <- create_survey_data(survey3_dat)
+
+  expect_message(
+    result3 <- left_join(survey1, survey3, by = "uid"),
+    "naming conflicts"
+  )
+
+  expect_true("csat.x" %in% names(result3$dat))
+  expect_true("csat.y" %in% names(result3$dat))
+  expect_true(all(c("csat.x", "csat.y") %in% result3$dpdict$variable_names))
+  expect_false("csat" %in% result3$dpdict$variable_names)
+
+  # Check that the suffixed versions have appropriate labels
+  expect_true(grepl("\\(x\\)", result3$dpdict$variable_labels[result3$dpdict$variable_names == "csat.x"]))
+  expect_true(grepl("\\(y\\)", result3$dpdict$variable_labels[result3$dpdict$variable_names == "csat.y"]))
+})

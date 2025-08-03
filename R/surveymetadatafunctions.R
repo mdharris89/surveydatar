@@ -3848,3 +3848,303 @@ update_dict <- function(temp_dat, temp_dpdict) {
 
   return(temp_dpdict)
 }
+
+
+#' Left join for survey_data objects
+#'
+#' Performs a left join on survey_data objects while preserving and updating metadata.
+#' Accepts both survey_data objects and regular data frames as the right-hand side.
+#' When joining with another survey_data object, metadata is merged with new metadata
+#' taking precedence. When joining with a data frame, metadata is automatically
+#' generated for new columns.
+#'
+#' @param x A survey_data object (left side of join)
+#' @param y A survey_data object or data frame (right side of join)
+#' @param by A character vector of variables to join by. If NULL, will use common variables.
+#' @param copy,suffix,keep,na_matches,multiple,unmatched,relationship Parameters passed to dplyr::left_join
+#' @importFrom dplyr left_join
+#' @return A new survey_data object with joined data and updated metadata
+#' @exportS3Method dplyr::left_join survey_data
+#' @examples
+#' # Join two survey_data objects
+#' survey1 <- create_survey_data(get_minimal_labelled_test_dat())
+#' survey2 <- create_survey_data(data.frame(uid = 1:5, new_var = letters[1:5]))
+#' joined <- dplyr::left_join(survey1, survey2, by = "uid")
+#'
+#' # Join survey_data with regular data frame
+#' df2 <- data.frame(uid = 1:5, score = rnorm(5))
+#' joined2 <- dplyr::left_join(survey1, df2, by = "uid")
+left_join.survey_data <- function(x, y, by = NULL, copy = FALSE,
+                                  suffix = c(".x", ".y"), keep = NULL,
+                                  na_matches = c("na", "never"),
+                                  multiple = "all",
+                                  unmatched = "drop",
+                                  relationship = NULL,
+                                  ...) {
+
+  # Validate inputs
+  if (!is.survey_data(x)) {
+    stop("'x' must be a survey_data object")
+  }
+
+  # Extract data and metadata from x
+  x_dat <- x$dat
+  x_dpdict <- x$dpdict
+
+  # Handle y based on its type
+  if (is.survey_data(y)) {
+    y_dat <- y$dat
+    y_dpdict <- y$dpdict
+    y_is_survey <- TRUE
+  } else if (is.data.frame(y)) {
+    y_dat <- y
+    y_dpdict <- NULL
+    y_is_survey <- FALSE
+  } else {
+    stop("'y' must be either a survey_data object or a data frame")
+  }
+
+  # Store original info for comparison
+  original_names <- names(x_dat)
+
+  # Validate join keys if specified
+  if (!is.null(by)) {
+    # Check that join keys exist in both datasets
+    if (is.character(by)) {
+      x_keys <- by
+      y_keys <- by
+    } else if (is.list(by) || (is.character(by) && !is.null(names(by)))) {
+      # Named vector case
+      x_keys <- names(by)
+      y_keys <- unname(by)
+    } else {
+      stop("'by' must be a character vector or named character vector")
+    }
+
+    # Validate keys exist
+    missing_x <- x_keys[!x_keys %in% names(x_dat)]
+    missing_y <- y_keys[!y_keys %in% names(y_dat)]
+
+    if (length(missing_x) > 0) {
+      stop("Join keys not found in x: ", paste(missing_x, collapse = ", "))
+    }
+    if (length(missing_y) > 0) {
+      stop("Join keys not found in y: ", paste(missing_y, collapse = ", "))
+    }
+
+    # Check type compatibility
+    for (i in seq_along(x_keys)) {
+      x_type <- class(x_dat[[x_keys[i]]])
+      y_type <- class(y_dat[[y_keys[i]]])
+
+      # Check if types are compatible (numeric types can join)
+      x_numeric <- any(c("numeric", "integer") %in% x_type)
+      y_numeric <- any(c("numeric", "integer") %in% y_type)
+
+      if (!(identical(x_type, y_type) || (x_numeric && y_numeric))) {
+        warning(sprintf("Join key '%s' has different types: %s in x, %s in y",
+                        x_keys[i], paste(x_type, collapse="/"), paste(y_type, collapse="/")))
+      }
+
+      # Check value labels compatibility for labelled variables
+      x_labels <- attr(x_dat[[x_keys[i]]], "labels")
+      y_labels <- attr(y_dat[[y_keys[i]]], "labels")
+
+      if (!is.null(x_labels) && !is.null(y_labels)) {
+        # Check if the same values have different labels
+        common_values <- intersect(x_labels, y_labels)
+        if (length(common_values) > 0) {
+          for (val in common_values) {
+            x_label <- names(x_labels)[x_labels == val]
+            y_label <- names(y_labels)[y_labels == val]
+            if (!identical(x_label, y_label)) {
+              warning(sprintf("Join key '%s' has different labels for value %s: '%s' vs '%s'",
+                              x_keys[i], val, x_label[1], y_label[1]))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Perform the join
+  joined_dat <- dplyr::left_join(x_dat, y_dat, by = by, copy = copy,
+                                 suffix = suffix, keep = keep,
+                                 na_matches = na_matches,
+                                 multiple = multiple,
+                                 unmatched = unmatched,
+                                 relationship = relationship,
+                                 ...)
+
+  # Identify what changed
+  new_names <- names(joined_dat)
+
+  # New variables (not in original x, and not .x/.y suffixed versions)
+  new_vars <- setdiff(new_names, original_names)
+  new_vars <- new_vars[!grepl("\\.x$|\\.y$", new_vars)]
+
+  # Variables with suffixes (conflicts)
+  x_suffix_vars <- grep("\\.x$", new_names, value = TRUE)
+  y_suffix_vars <- grep("\\.y$", new_names, value = TRUE)
+  base_conflict_vars <- unique(sub("\\.x$", "", x_suffix_vars))
+
+  # Start with x's dpdict
+  temp_dpdict <- x_dpdict
+
+  # If y is survey_data, merge its metadata
+  if (y_is_survey && !is.null(y_dpdict)) {
+    # Add metadata for new variables from y
+    for (var in new_vars) {
+      if (var %in% y_dpdict$variable_names) {
+        y_row <- y_dpdict[y_dpdict$variable_names == var, ]
+
+        # Check for label conflicts with existing variables
+        new_label <- y_row$variable_labels[1]
+        if (new_label %in% temp_dpdict$variable_labels) {
+          # Generate unique label
+          base_label <- new_label
+          counter <- 1
+          repeat {
+            new_label <- paste0(base_label, " (", counter, ")")
+            if (!new_label %in% temp_dpdict$variable_labels) break
+            counter <- counter + 1
+          }
+          y_row$variable_labels[1] <- new_label
+          # Update the label in the joined data too
+          if (!is.null(attr(joined_dat[[var]], "label"))) {
+            attr(joined_dat[[var]], "label") <- new_label
+          }
+        }
+
+        temp_dpdict <- rbind(temp_dpdict, y_row)
+      }
+    }
+
+    # Handle conflicted variables (.x and .y suffixes)
+    for (base_var in base_conflict_vars) {
+      x_var <- paste0(base_var, ".x")
+      y_var <- paste0(base_var, ".y")
+
+      # Add .x version (from original x)
+      if (x_var %in% new_names && base_var %in% x_dpdict$variable_names) {
+        x_row <- temp_dpdict[temp_dpdict$variable_names == base_var, ]
+        x_row$variable_names <- x_var
+        x_row$variable_labels <- paste0(x_row$variable_labels, " (x)")
+        temp_dpdict <- rbind(temp_dpdict, x_row)
+
+        # Update label in data
+        attr(joined_dat[[x_var]], "label") <- x_row$variable_labels[1]
+      }
+
+      # Add .y version (from y, takes precedence for base name)
+      if (y_var %in% new_names && base_var %in% y_dpdict$variable_names) {
+        y_row <- y_dpdict[y_dpdict$variable_names == base_var, ]
+        y_row_copy <- y_row
+        y_row_copy$variable_names <- y_var
+        y_row_copy$variable_labels <- paste0(y_row_copy$variable_labels, " (y)")
+        temp_dpdict <- rbind(temp_dpdict, y_row_copy)
+
+        # Update label in data
+        attr(joined_dat[[y_var]], "label") <- y_row_copy$variable_labels[1]
+      }
+
+      # Remove the original base variable row if it's no longer in the data
+      if (!base_var %in% new_names) {
+        temp_dpdict <- temp_dpdict[temp_dpdict$variable_names != base_var, ]
+      }
+    }
+  }
+
+  # For regular data frames or missing variables, generate metadata
+  vars_needing_metadata <- new_vars[!new_vars %in% temp_dpdict$variable_names]
+  if (length(vars_needing_metadata) > 0) {
+    # Create temporary data frame with just new variables
+    new_vars_dat <- joined_dat[, vars_needing_metadata, drop = FALSE]
+
+    # Generate basic metadata
+    new_rows <- data.frame(
+      variable_names = vars_needing_metadata,
+      variable_labels = vars_needing_metadata,  # Default to variable name
+      stringsAsFactors = FALSE
+    )
+
+    # Add value_labels column
+    new_rows$value_labels <- lapply(vars_needing_metadata, function(var) {
+      labels <- attr(joined_dat[[var]], "labels")
+      if (is.null(labels)) NA else labels
+    })
+
+    # Initialize other metadata columns to match structure
+    for (col in names(temp_dpdict)) {
+      if (!col %in% names(new_rows)) {
+        col_type <- class(temp_dpdict[[col]])
+        if ("character" %in% col_type) {
+          new_rows[[col]] <- NA_character_
+        } else if ("numeric" %in% col_type || "integer" %in% col_type) {
+          new_rows[[col]] <- NA_real_
+        } else {
+          new_rows[[col]] <- NA
+        }
+      }
+    }
+
+    temp_dpdict <- rbind(temp_dpdict, new_rows)
+
+    # Update metadata for these new variables
+    vars_to_update <- rep(FALSE, nrow(temp_dpdict))
+    vars_to_update[temp_dpdict$variable_names %in% vars_needing_metadata] <- TRUE
+
+    if (any(vars_to_update)) {
+      temp_dpdict <- update_dict_with_metadata(
+        survey_obj = NULL,
+        temp_dat = joined_dat,
+        temp_dpdict = temp_dpdict,
+        variables_to_update = vars_to_update
+      )
+    }
+  }
+
+  # Ensure dpdict order matches joined_dat
+  final_dpdict <- temp_dpdict[match(new_names, temp_dpdict$variable_names), ]
+  final_dpdict <- final_dpdict[!is.na(final_dpdict$variable_names), ]
+
+  # Generate informative messages
+  if (length(new_vars) > 0) {
+    if (y_is_survey) {
+      message(sprintf("Variables added from join: %s",
+                      paste(new_vars, collapse = ", ")))
+    } else {
+      labeled_new <- new_vars[sapply(new_vars, function(var) {
+        !is.null(attr(joined_dat[[var]], "label")) &&
+          nzchar(attr(joined_dat[[var]], "label")) &&
+          attr(joined_dat[[var]], "label") != var
+      })]
+
+      if (length(labeled_new) > 0) {
+        message("Variables added with existing labels: ",
+                paste(labeled_new, collapse = ", "))
+      }
+
+      unlabeled_new <- setdiff(new_vars, labeled_new)
+      if (length(unlabeled_new) > 0) {
+        message("Variables added with default labels: ",
+                paste(unlabeled_new, collapse = ", "))
+      }
+    }
+  }
+
+  if (length(base_conflict_vars) > 0) {
+    message(sprintf("Variables with naming conflicts (added %s suffixes): %s",
+                    paste(suffix, collapse = "/"),
+                    paste(base_conflict_vars, collapse = ", ")))
+  }
+
+  # Return updated survey_data object
+  structure(
+    list(
+      dat = joined_dat,
+      dpdict = final_dpdict
+    ),
+    class = "survey_data"
+  )
+}
