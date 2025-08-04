@@ -3556,6 +3556,33 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   invisible(output_data)
 }
 
+# Copy df to clipboard
+#
+# Useful for any dataframe manipulation of tab objects before copying
+#'@export
+copy_df <- function(df, row.names = FALSE, sep = "\t") {
+  # Ensure input is a data frame
+  if (!is.data.frame(df)) {
+    stop("Input must be a data frame")
+  }
+
+  # OS-specific behavior
+  os <- Sys.info()[["sysname"]]
+
+  if (os == "Windows") {
+    write.table(df, "clipboard", sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
+    message("Data copied to Windows clipboard.")
+  } else if (os == "Darwin") {  # macOS
+    clip <- pipe("pbcopy", "w")
+    write.table(df, file = clip, sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
+    close(clip)
+    message("Data copied to clipboard.")
+  } else {
+    stop("Clipboard functionality not implemented on this OS.")
+  }
+}
+
+
 #' Calculate summary value based on type
 #' @keywords internal
 calculate_summary <- function(type, arrays, base_array, col_array, statistic, values) {

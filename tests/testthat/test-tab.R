@@ -2194,3 +2194,37 @@ test_that("`which =` sub-selection restricts the sort scope", {
   expect_equal(sort(chosen, decreasing = TRUE),
                res$row_label[match(chosen, res$row_label)])
 })
+
+##### Unit tests for all_matching helper #####
+
+test_that("all_matching helper returns individual matching variables", {
+  # Use existing test data
+  test_data <- create_tab_test_data(100)
+  test_survey_data <- create_survey_data(test_data)
+
+  # Add some test variables with "ANY category" in labels to existing question group
+  test_survey_data <- test_survey_data %>%
+    mutate(
+      q1_4 = realiselabelled_vec(sample(c(0, 1), 100, replace = TRUE),
+                                 variable_label = "Q1: Brand attributes - ANY category A"),
+      q1_5 = realiselabelled_vec(sample(c(0, 1), 100, replace = TRUE),
+                                 variable_label = "Q1: Brand attributes - ANY category B"),
+      q1_6 = realiselabelled_vec(sample(c(0, 1), 100, replace = TRUE),
+                                 variable_label = "Q1: Brand attributes - Other stuff")
+    )
+
+  # Test all_matching finds only variables with "ANY category" in labels
+  result <- tab(test_survey_data,
+                all_matching("ANY category", q1_b, pattern_type = "fixed"),
+                gender)
+
+  # Should return 2 matching variables as separate rows (q1_4, q1_5 but not q1_6)
+  expect_s3_class(result, "tab_result")
+  expect_true(any(grepl("ANY category A", result$row_label)))
+  expect_true(any(grepl("ANY category B", result$row_label)))
+  expect_false(any(grepl("Other stuff", result$row_label)))
+
+  # Should have exactly 2 data rows + base row + any total rows
+  data_rows <- result[!grepl("Base|Total|NET", result$row_label), ]
+  expect_equal(nrow(data_rows), 2)
+})

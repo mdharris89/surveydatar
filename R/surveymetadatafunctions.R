@@ -4148,3 +4148,35 @@ left_join.survey_data <- function(x, y, by = NULL, copy = FALSE,
     class = "survey_data"
   )
 }
+
+#' Get the number of rows in a survey_data object
+#'
+#' @param x A survey_data object
+#' @return The number of rows in the data component
+#' @export
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' nrow(survey_obj)
+nrow.survey_data <- function(x) {
+  if (!is.survey_data(x)) {
+    stop("Object must be of class 'survey_data'")
+  }
+  nrow(x$dat)
+}
+
+#' Get the number of columns in a survey_data object
+#'
+#' @param x A survey_data object
+#' @return The number of columns in the data component
+#' @export
+#' @examples
+#' survey_obj <- create_survey_data(get_minimal_labelled_test_dat())
+#' ncol(survey_obj)
+ncol.survey_data <- function(x) {
+  if (!is.survey_data(x)) {
+    stop("Object must be of class 'survey_data'")
+  }
+  ncol(x$dat)
+}
+
+

@@ -1518,6 +1518,138 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     create_helper("total", help_total)
 
 
+    #' All matching helper - returns individual variables matching a pattern
+    #'
+    #' Finds all variables in a question group whose labels match a pattern
+    #' and returns each as a separate row (unlike response_match which aggregates).
+    help_all_matching <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
+
+      stopifnot(!is.null(dpdict))
+
+      # ── 0. unpack helper arguments --------------------------------------------
+      patterns      <- formula_spec$components[[1]]
+      group_name    <- formula_spec$components[[2]]
+      if (is.symbol(group_name)) group_name <- as.character(group_name)
+
+      # optional extras
+      pattern_type  <- formula_spec$components$pattern_type %||% "fixed"
+      label_mode    <- formula_spec$components$label_mode   %||% "full"
+      drop_empty    <- isTRUE(formula_spec$components$drop_empty %||% TRUE)
+
+      # Validate inputs
+      if (length(patterns) != 1 || !is.character(patterns)) {
+        stop("all_matching: pattern must be a single character string")
+      }
+
+      # ── 1. resolve group variables -------------------------------------------
+      group_vars <- resolve_to_variables(group_name, data, dpdict,
+                                         allow_patterns = TRUE,
+                                         error_context  = "question-group")
+
+      # build grepl wrapper
+      detect <- switch(pattern_type,
+                       regex = grepl,
+                       fixed = \(pat, x) grepl(pat, x, fixed = TRUE),
+                       glob  = \(pat, x) grepl(glob2rx(pat), x),
+                       stop("all_matching: unknown pattern_type '", pattern_type, "'")
+      )
+
+      get_var_lab <- function(v) {
+        idx <- match(v, dpdict$variable_names)
+        if (is.na(idx)) return(v)
+        label <- dpdict$variable_labels[idx]
+        if (is.na(label) || label == "") return(v)
+        return(label)
+      }
+
+      # ── 2. find matching variables -------------------------------------------
+      matching_vars <- character(0)
+
+      for (v in group_vars) {
+        if (!v %in% names(data)) next
+
+        var_label <- get_var_lab(v)
+        if (detect(patterns, var_label)) {
+          matching_vars <- c(matching_vars, v)
+        }
+      }
+
+      # Check if we found any matches
+      if (length(matching_vars) == 0) {
+        msg <- paste0("all_matching: no variables in group '", group_name,
+                      "' have labels matching pattern '", patterns, "'")
+        if (drop_empty) {
+          warning(msg, call. = FALSE)
+          out <- list()
+          attr(out, "is_multi_column") <- TRUE
+          return(out)
+        } else {
+          stop(msg)
+        }
+      }
+
+      # ── 3. create individual arrays for each matching variable ---------------
+      out <- list()
+
+      for (v in matching_vars) {
+        if (!v %in% names(data)) next
+
+        var_data <- data[[v]]
+
+        # Convert to numeric if needed, treating positive values as 1
+        if (is.logical(var_data)) {
+          array_data <- as.numeric(var_data)
+        } else if (is.numeric(var_data)) {
+          # For numeric data, treat positive values as 1, others as 0
+          array_data <- as.numeric(var_data > 0)
+        } else if (is.factor(var_data) || is.character(var_data)) {
+          # For categorical data, treat non-NA as 1
+          array_data <- as.numeric(!is.na(var_data))
+        } else {
+          # Default: treat non-NA as 1
+          array_data <- as.numeric(!is.na(var_data))
+        }
+
+        # Handle NAs - keep them as NA
+        array_data[is.na(var_data)] <- NA
+
+        # Skip if all zeros/NAs and drop_empty is TRUE
+        if (drop_empty && all(array_data == 0 | is.na(array_data), na.rm = TRUE)) {
+          next
+        }
+
+        # Create display label based on label_mode
+        display_label <- get_display_label(v, dpdict, label_mode, NULL, data)
+
+        # Create the array with metadata
+        array <- .ensure_meta(
+          array_data,
+          ivar = get_var_lab(v),
+          ival = NULL,
+          label = display_label
+        )
+
+        out[[display_label]] <- array
+      }
+
+      # Final check for empty results
+      if (length(out) == 0) {
+        msg <- paste0("all_matching: no variables with positive responses found")
+        if (drop_empty) {
+          warning(msg, call. = FALSE)
+        } else {
+          stop(msg)
+        }
+      }
+
+      attr(out, "is_multi_column") <- TRUE
+      return(out)
+    }
+
+    # Register the helper
+    create_helper("all_matching", help_all_matching)
+
+
     # SIGNIFICANCE TESTS ------------------------------------------------
 
     # Z-test for proportions
