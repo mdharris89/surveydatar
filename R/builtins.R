@@ -182,18 +182,169 @@ change_from <- function(var, condition) {
 }
 
 
+# User-accessible functions for surveydatar helpers
+# Add these to your R files (e.g., a new file like user_helpers.R)
+
 #' Check if any variable in a group is positive
 #'
+#' Creates a binary indicator showing which respondents have any positive value
+#' across the specified variables.
+#'
 #' @param vars Vector of variable names or single question group name
-#' @return A tab_helper object for use in tab() rows/cols/filter
+#' @return Expression for use in tab() rows/cols/filter
 #' @export
+#' @examples
+#' tab(data, any_positive(c("q1_1", "q1_2", "q1_3")), gender)
+#' tab(data, any_positive("q1"), gender)  # if q1 is a question group
 any_positive <- function(vars) {
-  structure(
-    vars,  # Store the variables as the main content
-    class = "tab_helper",
-    id = "any_positive"
-  )
+  match.call()
 }
+
+#' Create a total/base row
+#'
+#' Returns an indicator that includes all respondents (equivalent to a constant of 1).
+#' Useful for creating base rows or total calculations.
+#'
+#' @return Expression for use in tab() rows/cols/filter
+#' @export
+#' @examples
+#' tab(data, total(), gender)
+total <- function() {
+  match.call()
+}
+
+#' Match responses across multiple variables
+#'
+#' Creates binary arrays by matching patterns against variable labels or value labels
+#' within a group of variables. This is a multi-column helper that produces
+#' one array for each pattern match.
+#'
+#' @param patterns Character vector of patterns to match, or NULL if using get_* parameters
+#' @param group_name Question group name to search within
+#' @param mode Matching mode: "auto", "variable", or "value"
+#' @param pattern_type Type of pattern matching: "regex" or "fixed"
+#' @param label_fn Optional function to generate labels
+#' @param values Named list mapping labels to value codes (alternative to patterns)
+#' @param drop_empty Whether to drop empty results
+#' @param get_variable_labels Extract variable labels automatically from this group
+#' @param get_value_labels Extract value labels automatically from this group
+#' @return Expression for use in tab() rows/cols
+#' @export
+#' @examples
+#' # Match by patterns
+#' tab(data, response_match(c("Daily", "Weekly"), "usage_group"), gender)
+#'
+#' # Extract variable labels automatically
+#' tab(data, response_match(get_variable_labels = "q1"), gender)
+#'
+#' # Extract value labels automatically
+#' tab(data, response_match(get_value_labels = "q1"), gender)
+response_match <- function(patterns = NULL, group_name = NULL, mode = "auto",
+                           pattern_type = "regex", label_fn = NULL, values = NULL,
+                           drop_empty = TRUE, get_variable_labels = NULL,
+                           get_value_labels = NULL) {
+  match.call()
+}
+
+#' Filter by numeric value range
+#'
+#' Creates a binary indicator for respondents whose values fall within
+#' the specified numeric range.
+#'
+#' @param var Variable name
+#' @param min_val Minimum value
+#' @param max_val Maximum value
+#' @param inclusive Whether range endpoints are inclusive (default TRUE)
+#' @return Expression for use in tab() rows/cols/filter
+#' @export
+#' @examples
+#' tab(data, value_range(age, 25, 45), gender)
+#' tab(data, value_range(income, 50000, 100000, inclusive = FALSE), region)
+value_range <- function(var, min_val, max_val, inclusive = TRUE) {
+  match.call()
+}
+
+#' Filter by text pattern matching
+#'
+#' Creates a binary indicator for respondents whose text/character values
+#' match the specified pattern.
+#'
+#' @param var Variable name (character or factor)
+#' @param pattern Regular expression or fixed string pattern
+#' @param ignore_case Whether to ignore case when matching (default FALSE)
+#' @return Expression for use in tab() rows/cols/filter
+#' @export
+#' @examples
+#' tab(data, pattern(city, "New.*"), gender)
+#' tab(data, pattern(region, "North|South"), age_group)
+pattern <- function(var, pattern, ignore_case = FALSE) {
+  match.call()
+}
+
+#' Filter by percentile position
+#'
+#' Creates a binary indicator for respondents above or below a specified
+#' percentile threshold.
+#'
+#' @param var Variable name (numeric)
+#' @param position Either "above" or "below" the percentile
+#' @param percentile Percentile threshold (0-100)
+#' @return Expression for use in tab() rows/cols/filter
+#' @export
+#' @examples
+#' tab(data, percentile(income, "above", 75), gender)  # Top quartile
+#' tab(data, percentile(age, "below", 25), region)     # Bottom quartile
+percentile <- function(var, position, percentile) {
+  match.call()
+}
+
+#' Find all variables matching a pattern
+#'
+#' Finds all variables in a question group whose labels match a pattern
+#' and returns each as a separate row. Unlike response_match which aggregates
+#' matches, this returns individual variables that match the pattern.
+#'
+#' @param pattern Single character string pattern to match against variable labels
+#' @param group_name Question group name to search within
+#' @param pattern_type Type of pattern matching: "fixed" (default), "regex", or "glob"
+#' @param label_mode Label display mode (default "full")
+#' @param drop_empty Whether to drop empty results if no matches found (default TRUE)
+#' @return Expression for use in tab() rows/cols (multi-column helper)
+#' @export
+#' @examples
+#' # Find all variables in group A1 with "Microsoft" in the label
+#' tab(data, all_matching("Microsoft", "A1"), gender)
+#'
+#' # Use regex pattern matching
+#' tab(data, all_matching("Google|Microsoft", "A1", pattern_type = "regex"), region)
+#'
+#' # Use glob pattern matching
+#' tab(data, all_matching("*Canva*", "A1", pattern_type = "glob"), age_group)
+all_matching <- function(pattern, group_name, pattern_type = "fixed",
+                         label_mode = "full", drop_empty = TRUE) {
+  match.call()
+}
+
+#' Create banner columns
+#'
+#' Creates multiple columns by crossing an outer variable with an inner
+#' specification (variable, helper, or expression).
+#'
+#' @param outer_var Name of the outer variable
+#' @param inner_spec Inner specification (variable name, helper, or expression)
+#' @param subtotals Whether to include subtotal columns for each outer category
+#' @param sep Separator between outer and inner labels (default ": ")
+#' @return Expression for use in tab() cols
+#' @export
+#' @examples
+#' tab(data, satisfaction, banner(region, gender))
+#' tab(data, q1, banner(region, top_box(satisfaction, 2)))
+#' tab(data, q1, banner(region, satisfaction, subtotals = TRUE))
+banner <- function(outer_var, inner_spec, subtotals = FALSE, sep = ": ") {
+  match.call()
+}
+
+
 
 #' Create a gate that matches on a metadata field
 #'

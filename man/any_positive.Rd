@@ -10,8 +10,13 @@ any_positive(vars)
 \item{vars}{Vector of variable names or single question group name}
 }
 \value{
-A tab_helper object for use in tab() rows/cols/filter
+Expression for use in tab() rows/cols/filter
 }
 \description{
-Check if any variable in a group is positive
+Creates a binary indicator showing which respondents have any positive value
+across the specified variables.
+}
+\examples{
+tab(data, any_positive(c("q1_1", "q1_2", "q1_3")), gender)
+tab(data, any_positive("q1"), gender)  # if q1 is a question group
 }
