@@ -181,6 +181,20 @@ change_from <- function(var, condition) {
   match.call()
 }
 
+
+#' Check if any variable in a group is positive
+#'
+#' @param vars Vector of variable names or single question group name
+#' @return A tab_helper object for use in tab() rows/cols/filter
+#' @export
+any_positive <- function(vars) {
+  structure(
+    vars,  # Store the variables as the main content
+    class = "tab_helper",
+    id = "any_positive"
+  )
+}
+
 #' Create a gate that matches on a metadata field
 #'
 #' Creates a gate function that allows cells to be computed only when
