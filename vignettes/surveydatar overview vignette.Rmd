@@ -182,6 +182,7 @@ The package uses `split_into_question_groups()` internally to:
 2.  **Split groups** when it detects:
     -   Change in variable class (`splitbyclass`)
     -   Different number of value labels (`splitbynumlabelledvalues`)
+    -   Different actual label values (`splitbylabelvalues`) - note: disabled by default for performance
     -   Non-contiguous variables (`splitbynoncontiguous`)\
     -   Different common labels (`splitbycommonlabel`)
 

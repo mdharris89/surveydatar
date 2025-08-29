@@ -139,6 +139,36 @@ get_variable_labels_improved <- function(var_name, values, data, dpdict) {
   arr
 }
 
+#' Resolve helper target (variable name, vector of names, or group name)
+#' @keywords internal
+resolve_helper_target <- function(name_or_names, data, dpdict = NULL, error_context = "helper target") {
+  # Normalise to character vector
+  to_chr <- function(x) {
+    if (is.symbol(x)) return(as.character(x))
+    if (is.character(x)) return(x)
+    # Fallback for numbers or other atomic inputs erroneously passed
+    as.character(x)
+  }
+
+  chr <- to_chr(name_or_names)
+
+  # If a single token, try resolve_to_variables which handles vars, stems, groups
+  if (length(chr) == 1) {
+    # Exact variable present
+    if (chr %in% names(data)) return(chr)
+
+    # Use resolver (handles stems and dpdict groups); will error with good message on failure
+    return(resolve_to_variables(chr, data, dpdict, allow_patterns = TRUE, error_context = error_context))
+  }
+
+  # Otherwise treat as explicit vector of variable names
+  missing_vars <- chr[!chr %in% names(data)]
+  if (length(missing_vars) > 0) {
+    stop("Could not find variable(s): ", paste(missing_vars, collapse = ", "))
+  }
+  unique(chr)
+}
+
 #' Select top n response options
 #'
 #' @param var Variable name or expression
@@ -178,6 +208,26 @@ index_to <- function(var, base = NULL) {
 #' @return Expression for use in tab()
 #' @export
 change_from <- function(var, condition) {
+  match.call()
+}
+
+
+#' Expand a group to a matrix-friendly axis and auto-collapse
+#'
+#' Creates variable–value units (VVUs) for a question group, attaches a
+#' diagonal gate so only matching row/column VVUs compute when both axes
+#' use this helper, and hints the table to collapse back to variables or
+#' values after computation. Use in rows and/or columns.
+#'
+#' @param group Question group name (in dpdict) or vector of variables
+#' @param by Which dimension this axis represents: "variable" or "value"
+#' @return Expression for use in tab() rows/cols
+#' @export
+#' @examples
+#' # Brands on rows, frequencies on columns
+#' # rows = pull_to_matrix(A2_a, by = "variable")
+#' # cols = pull_to_matrix(A2,   by = "value")
+pull_to_matrix <- function(group, by = c("variable", "value")) {
   match.call()
 }
 
@@ -570,28 +620,26 @@ banner_processor <- function(helper_spec, data, dpdict = NULL, all_helpers = NUL
         # Apply the outer filter
         filtered_array <- inner_result * as.numeric(outer_filter)
 
-        inner_label <- if (!is.null(attr(inner_result, "meta")) && !is.null(attr(inner_result, "meta")$label)) {
-          attr(inner_result, "meta")$label
-        } else if (inner_parsed$type == "helper") {
+        inner_label <- if (inner_parsed$type == "helper") {
           # Create a more readable label for helpers
           helper_type <- inner_parsed$helper_type
           if (helper_type == "top_box") {
-            n <- inner_parsed$args[[2]]  # The number of top categories
-            paste0("Top ", n, " Box")
+            n <- inner_parsed$args[[2]]
+            paste0("top_box(", as.character(inner_parsed$args[[1]]), ", ", n, ")")
           } else if (helper_type == "bottom_box") {
-            n <- inner_parsed$args[[2]]  # The number of bottom categories
-            paste0("Bottom ", n, " Box")
+            n <- inner_parsed$args[[2]]
+            paste0("bottom_box(", as.character(inner_parsed$args[[1]]), ", ", n, ")")
           } else if (helper_type == "value_range") {
             min_val <- inner_parsed$args[[2]]
             max_val <- inner_parsed$args[[3]]
             paste0("Range ", min_val, "-", max_val)
           } else if (helper_type == "pattern") {
-            # Just use the helper type with proper casing
             "Pattern Match"
           } else {
-            # Default: use the helper type with proper casing
             tools::toTitleCase(gsub("_", " ", helper_type))
           }
+        } else if (!is.null(attr(inner_result, "meta")) && !is.null(attr(inner_result, "meta")$label)) {
+          attr(inner_result, "meta")$label
         } else {
           inner_parsed$label
         }
@@ -1130,133 +1178,186 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
     # Top box helper
     help_top_box <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
-      var_name <- as.character(formula_spec$components[[1]])
       n <- formula_spec$components[[2]]
 
-      if (!var_name %in% names(data)) {
-        stop("Variable '", var_name, "' not found in data")
+      vars <- resolve_helper_target(formula_spec$components[[1]], data, dpdict, error_context = "top_box")
+
+      make_one <- function(var_name) {
+        var_data <- data[[var_name]]
+
+        # Determine top values by label order (haven_labelled) or code order
+        if (inherits(var_data, "haven_labelled") && !is.null(attr(var_data, "labels"))) {
+          lbls <- attr(var_data, "labels")
+          ord_codes <- sort(as.numeric(lbls), decreasing = TRUE)
+          top_values <- utils::head(ord_codes, n)
+          arr <- as.numeric(var_data %in% top_values)
+          ival <- top_values
+        } else {
+          uv <- sort(unique(na.omit(var_data)), decreasing = TRUE)
+          top_values <- utils::head(uv, n)
+          arr <- as.numeric(var_data %in% top_values)
+          ival <- top_values
+        }
+
+        label <- paste0(get_var_label(var_name, dpdict), " - Top ", n, " Box")
+        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = ival, label = label)
       }
 
-      var_data <- data[[var_name]]
+      if (length(vars) == 1) return(make_one(vars[1]))
 
-      # Handle labelled variables
-      if (inherits(var_data, "haven_labelled")) {
-        labels <- attr(var_data, "labels")
-        top_values <- sort(labels, decreasing = TRUE)[seq_len(n)]
-      } else {
-        unique_vals <- sort(unique(na.omit(var_data)), decreasing = TRUE)
-        top_values <- unique_vals[seq_len(n)]
+      out <- setNames(vector("list", length(vars)), rep("", length(vars)))
+      for (i in seq_along(vars)) {
+        one <- make_one(vars[i])
+        out[[i]] <- one
+        names(out)[i] <- attr(one, "meta")$label
       }
-
-      as.numeric(var_data %in% top_values)
+      attr(out, "is_multi_column") <- TRUE
+      out
     }
     create_helper("top_box", help_top_box)
 
     # Bottom box helper
     help_bottom_box <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
-      var_name <- as.character(formula_spec$components[[1]])
       n <- formula_spec$components[[2]]
 
-      if (!var_name %in% names(data)) {
-        stop("Variable '", var_name, "' not found in data")
+      vars <- resolve_helper_target(formula_spec$components[[1]], data, dpdict, error_context = "bottom_box")
+
+      make_one <- function(var_name) {
+        var_data <- data[[var_name]]
+
+        if (inherits(var_data, "haven_labelled") && !is.null(attr(var_data, "labels"))) {
+          lbls <- attr(var_data, "labels")
+          ord_codes <- sort(as.numeric(lbls), decreasing = FALSE)
+          bottom_values <- utils::head(ord_codes, n)
+          arr <- as.numeric(var_data %in% bottom_values)
+          ival <- bottom_values
+        } else {
+          uv <- sort(unique(na.omit(var_data)), decreasing = FALSE)
+          bottom_values <- utils::head(uv, n)
+          arr <- as.numeric(var_data %in% bottom_values)
+          ival <- bottom_values
+        }
+
+        label <- paste0(get_var_label(var_name, dpdict), " - Bottom ", n, " Box")
+        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = ival, label = label)
       }
 
-      var_data <- data[[var_name]]
+      if (length(vars) == 1) return(make_one(vars[1]))
 
-      # Handle labelled variables
-      if (inherits(var_data, "haven_labelled")) {
-        labels <- attr(var_data, "labels")
-        bottom_values <- sort(labels)[seq_len(n)]
-      } else {
-        unique_vals <- sort(unique(na.omit(var_data)))
-        bottom_values <- unique_vals[seq_len(n)]
+      out <- setNames(vector("list", length(vars)), rep("", length(vars)))
+      for (i in seq_along(vars)) {
+        one <- make_one(vars[i])
+        out[[i]] <- one
+        names(out)[i] <- attr(one, "meta")$label
       }
-
-      as.numeric(var_data %in% bottom_values)
+      attr(out, "is_multi_column") <- TRUE
+      out
     }
     create_helper("bottom_box", help_bottom_box)
 
     # Value range helper
     help_value_range <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
-      var_name <- as.character(formula_spec$components[[1]])
       min_val <- formula_spec$components[[2]]
       max_val <- formula_spec$components[[3]]
 
       inclusive <- if (length(formula_spec$components) >= 4) {
         formula_spec$components[[4]]
       } else {
-        TRUE  # Default to inclusive range when not specified
+        TRUE
       }
 
-      if (!var_name %in% names(data)) {
-        stop("Variable '", var_name, "' not found in data")
+      vars <- resolve_helper_target(formula_spec$components[[1]], data, dpdict, error_context = "value_range")
+
+      non_num <- vars[!vapply(vars, function(v) is.numeric(data[[v]]), logical(1))]
+      if (length(non_num) > 0) {
+        stop("value_range requires numeric variables; non-numeric: ", paste(non_num, collapse = ", "))
       }
 
-      var_data <- data[[var_name]]
-
-      if (!is.numeric(var_data)) {
-        stop("value_range requires a numeric variable")
+      make_one <- function(var_name) {
+        var_data <- data[[var_name]]
+        arr <- if (inclusive) as.numeric(var_data >= min_val & var_data <= max_val)
+        else as.numeric(var_data > min_val & var_data < max_val)
+        label <- paste0(get_var_label(var_name, dpdict), " - Range ", min_val, "-", max_val)
+        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = c(min_val, max_val), label = label)
       }
 
-      if (inclusive) {
-        as.numeric(var_data >= min_val & var_data <= max_val)
-      } else {
-        as.numeric(var_data > min_val & var_data < max_val)
+      if (length(vars) == 1) return(make_one(vars[1]))
+
+      out <- setNames(vector("list", length(vars)), rep("", length(vars)))
+      for (i in seq_along(vars)) {
+        one <- make_one(vars[i])
+        out[[i]] <- one
+        names(out)[i] <- attr(one, "meta")$label
       }
+      attr(out, "is_multi_column") <- TRUE
+      out
     }
     create_helper("value_range", help_value_range)
 
     # Pattern match helper (for text variables)
     help_pattern <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
-      var_name <- as.character(formula_spec$components[[1]])
-      pattern <- formula_spec$components[[2]]
+      patt <- formula_spec$components[[2]]
       ignore_case <- if (length(formula_spec$components) >= 3) formula_spec$components[[3]] else FALSE
 
-      if (!var_name %in% names(data)) {
-        stop("Variable '", var_name, "' not found in data")
+      vars <- resolve_helper_target(formula_spec$components[[1]], data, dpdict, error_context = "pattern")
+
+      make_one <- function(var_name) {
+        var_data <- data[[var_name]]
+        if (!is.character(var_data) && !is.factor(var_data)) {
+          stop("pattern requires a character or factor variable: ", var_name)
+        }
+        if (is.factor(var_data)) var_data <- as.character(var_data)
+        arr <- as.numeric(grepl(patt, var_data, ignore.case = ignore_case))
+        label <- paste0(get_var_label(var_name, dpdict), " - Pattern: ", patt)
+        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = patt, label = label)
       }
 
-      var_data <- data[[var_name]]
+      if (length(vars) == 1) return(make_one(vars[1]))
 
-      if (!is.character(var_data) && !is.factor(var_data)) {
-        stop("pattern requires a character or factor variable")
+      out <- setNames(vector("list", length(vars)), rep("", length(vars)))
+      for (i in seq_along(vars)) {
+        one <- make_one(vars[i])
+        out[[i]] <- one
+        names(out)[i] <- attr(one, "meta")$label
       }
-
-      # Convert to character if factor
-      if (is.factor(var_data)) {
-        var_data <- as.character(var_data)
-      }
-
-      as.numeric(grepl(pattern, var_data, ignore.case = ignore_case))
+      attr(out, "is_multi_column") <- TRUE
+      out
     }
     create_helper("pattern", help_pattern)
 
     # Percentile selection helper
     help_percentile <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
-      var_name <- as.character(formula_spec$components[[1]])
       position <- formula_spec$components[[2]]
-      percentile <- formula_spec$components[[3]]
+      pct <- formula_spec$components[[3]]
 
-      if (!var_name %in% names(data)) {
-        stop("Variable '", var_name, "' not found in data")
+      vars <- resolve_helper_target(formula_spec$components[[1]], data, dpdict, error_context = "percentile")
+
+      non_num <- vars[!vapply(vars, function(v) is.numeric(data[[v]]), logical(1))]
+      if (length(non_num) > 0) {
+        stop("percentile requires numeric variables; non-numeric: ", paste(non_num, collapse = ", "))
       }
 
-      var_data <- data[[var_name]]
-
-      if (!is.numeric(var_data)) {
-        stop("percentile requires a numeric variable")
+      make_one <- function(var_name) {
+        var_data <- data[[var_name]]
+        thr <- stats::quantile(var_data, probs = pct/100, na.rm = TRUE)
+        if (identical(position, "above")) arr <- as.numeric(var_data > thr)
+        else if (identical(position, "below")) arr <- as.numeric(var_data < thr)
+        else stop("position must be 'above' or 'below'")
+        suf <- if (identical(position, "above")) paste0("Above p", pct) else paste0("Below p", pct)
+        label <- paste0(get_var_label(var_name, dpdict), " - ", suf)
+        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = c(position, pct), label = label)
       }
 
-      # Calculate percentile threshold
-      threshold <- quantile(var_data, probs = percentile/100, na.rm = TRUE)
+      if (length(vars) == 1) return(make_one(vars[1]))
 
-      if (position == "above") {
-        as.numeric(var_data > threshold)
-      } else if (position == "below") {
-        as.numeric(var_data < threshold)
-      } else {
-        stop("position must be 'above' or 'below'")
+      out <- setNames(vector("list", length(vars)), rep("", length(vars)))
+      for (i in seq_along(vars)) {
+        one <- make_one(vars[i])
+        out[[i]] <- one
+        names(out)[i] <- attr(one, "meta")$label
       }
+      attr(out, "is_multi_column") <- TRUE
+      out
     }
     create_helper("percentile", help_percentile)
 
@@ -2154,6 +2255,124 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       inner_spec
     }
     create_helper("calc_if", help_calc_if)
+
+    # Decorator helpers: index_to and change_from
+    # These are parsed and expanded in expand_variables; their processors
+    # should never be called in normal flow. We register them so the parser
+    # recognises them as helpers.
+    help_index_to <- function(formula_spec, ...) {
+      stop("index_to is a decorator and should not be evaluated directly.")
+    }
+    create_helper("index_to", help_index_to, role = "decorator", ref_arg = "base", op = "index")
+
+    help_change_from <- function(formula_spec, ...) {
+      stop("change_from is a decorator and should not be evaluated directly.")
+    }
+    create_helper("change_from", help_change_from, role = "decorator", ref_arg = "condition", op = "delta")
+
+    # pull_to_matrix helper ---------------------------------------------------
+    # Expands a group into variable–value units (VVUs); attaches a diagonal
+    # gate and collapse hints so that the final table collapses back to
+    # variables (rows) or values (cols) as appropriate.
+    help_pull_to_matrix <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
+      # Unpack args
+      group_input <- formula_spec$components[[1]]
+      by_input <- if (length(formula_spec$components) >= 2) formula_spec$components[[2]] else "variable"
+
+      # Normalize 'by'
+      if (!is.character(by_input) || length(by_input) != 1) {
+        stop("pull_to_matrix: 'by' must be a single character value: 'variable' or 'value'")
+      }
+      by_input <- match.arg(by_input, c("variable", "value"))
+
+      # Resolve variables in the group
+      group_vars <- resolve_to_variables(group_input, data, dpdict,
+                                         allow_patterns = TRUE,
+                                         error_context  = "question-group")
+      if (length(group_vars) == 0) {
+        stop("pull_to_matrix: no variables resolved for group input")
+      }
+
+      # Diagonal gate: compute only when both ivar and ival match
+      diag_gate <- function(row_meta, col_meta, ...) {
+        # If either side lacks meta, do not restrict computation
+        if (is.null(row_meta) || is.null(col_meta)) return(TRUE)
+        rv <- row_meta$ivar;  cv <- col_meta$ivar
+        rvl <- row_meta$ival;  cvl <- col_meta$ival
+        if (is.null(rv) || is.null(cv) || is.null(rvl) || is.null(cvl)) return(TRUE)
+        # Compare as character for robustness
+        identical(as.character(rv), as.character(cv)) &&
+          identical(as.character(rvl), as.character(cvl))
+      }
+
+      # Build VVU arrays
+      out <- list()
+
+      for (v in group_vars) {
+        if (!v %in% names(data)) next
+        var_data <- data[[v]]
+
+        # Determine categorical codes and labels
+        codes <- NULL
+        labels <- NULL
+
+        # Prefer labelled values
+        lbls <- attr(var_data, "labels")
+        if (!is.null(lbls) && length(lbls) > 0) {
+          codes <- as.numeric(unname(lbls))
+          labels <- names(lbls)
+        } else if (is.factor(var_data)) {
+          # Factors: levels are the display labels; codes are 1..n
+          labels <- levels(var_data)
+          codes <- seq_along(labels)
+        } else {
+          # Fallback to unique non-NA numeric codes
+          uv <- sort(unique(na.omit(var_data)))
+          if (!is.numeric(uv) && !is.integer(uv)) {
+            stop("pull_to_matrix: variable '", v, "' is not categorical or labelled")
+          }
+          codes <- as.numeric(uv)
+          # Derive simple labels via get_value_label if possible
+          labels <- vapply(codes, function(code) get_value_label(v, code, dpdict), character(1))
+        }
+
+        # Create one array per code (VVU)
+        var_lab <- get_var_label(v, dpdict)
+
+        for (i in seq_along(codes)) {
+          code <- codes[i]
+          val_lab <- labels[i]
+          arr <- as.numeric(var_data == code & !is.na(var_data))
+
+          # Compose display label for the VVU
+          vvu_label <- paste0(var_lab, ": ", val_lab)
+
+          arr <- .ensure_meta(
+            arr,
+            ivar = var_lab,
+            ival = val_lab,
+            label = vvu_label
+          )
+
+          # Attach diagonal gate (only restricts when both axes use VVU meta)
+          attr(arr, "cell_gate") <- diag_gate
+
+          # Hint collapse target for this axis
+          # Rows: by = "variable" -> collapse VVUs by ivar back to variables
+          # Cols: by = "value"    -> collapse VVUs by ival back to values
+          collapse_by <- if (identical(by_input, "variable")) "ivar" else "ival"
+          attr(arr, "collapse_by") <- collapse_by
+
+          out[[vvu_label]] <- arr
+        }
+      }
+
+      # Mark as multi-column helper
+      attr(out, "is_multi_column") <- TRUE
+      attr(out, "helper_type") <- "pull_to_matrix"
+      out
+    }
+    create_helper("pull_to_matrix", help_pull_to_matrix)
   }
 }
 

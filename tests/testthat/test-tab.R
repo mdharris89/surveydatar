@@ -2013,6 +2013,117 @@ test_that("banner helper works with different separators", {
   expect_true("Group2 - 3" %in% col_names)
 })
 
+##### Helper target resolution tests #####
+
+test_that("helpers resolve question group names to per-variable outputs", {
+  # Minimal data with a group in dpdict
+  dat <- data.frame(
+    qg_1 = sample(1:5, 40, replace = TRUE),
+    qg_2 = sample(1:5, 40, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+  dpdict <- data.frame(
+    variable_names  = c("qg_1", "qg_2"),
+    variable_labels = c("Item A", "Item B"),
+    question_group  = c("QG", "QG"),
+    stringsAsFactors = FALSE
+  )
+  dpdict$value_labels <- I(list(NULL, NULL))
+
+  survey_obj <- create_survey_data(dat, dpdict)
+  res <- tab(survey_obj, rows = top_box(QG, 1))
+  expect_s3_class(res, "tab_result")
+  # Expect one helper row per variable (label may use var label or name)
+  expect_equal(sum(grepl("Top 1 Box", res$row_label)), 2)
+})
+
+test_that("helpers resolve stems without dpdict (pattern QX_*)", {
+  set.seed(1)
+  dat <- data.frame(
+    QX_1 = sample(1:4, 30, replace = TRUE),
+    QX_2 = sample(1:4, 30, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  # No dpdict; stem resolution should find QX_1 and QX_2
+  res <- tab(dat, rows = top_box(QX, 1))
+  expect_s3_class(res, "tab_result")
+  expect_true(any(grepl("QX_1 - Top 1 Box", res$row_label)))
+  expect_true(any(grepl("QX_2 - Top 1 Box", res$row_label)))
+})
+
+test_that("value_range errors clearly on mixed-type groups", {
+  dat <- data.frame(
+    g1 = rnorm(25),
+    g2 = sample(letters[1:3], 25, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+  dpdict <- data.frame(
+    variable_names  = c("g1", "g2"),
+    variable_labels = c("Metric 1", "Category 1"),
+    question_group  = c("G", "G"),
+    stringsAsFactors = FALSE
+  )
+  dpdict$value_labels <- I(list(NULL, NULL))
+
+  survey_obj <- create_survey_data(dat, dpdict)
+  expect_error(
+    tab(survey_obj, rows = value_range(G, 0, 1)),
+    regexp = "non-numeric",
+    info = "value_range should reject groups containing non-numeric variables"
+  )
+})
+
+test_that("pattern helper works with group of character/factor", {
+  dat <- data.frame(
+    open1 = factor(c("foo", "bar", "baz", "foobar")),
+    open2 = c("alpha", "beta", "foo", "theta"),
+    stringsAsFactors = FALSE
+  )
+  dpdict <- data.frame(
+    variable_names  = c("open1", "open2"),
+    variable_labels = c("Open 1", "Open 2"),
+    question_group  = c("Open", "Open"),
+    stringsAsFactors = FALSE
+  )
+  dpdict$value_labels <- I(list(NULL, NULL))
+
+  survey_obj <- create_survey_data(dat, dpdict)
+  res <- tab(survey_obj, rows = pattern(Open, "foo"))
+  expect_s3_class(res, "tab_result")
+  expect_equal(sum(grepl("Pattern: foo", res$row_label)), 2)
+})
+
+test_that("percentile helper computes per-variable thresholds for groups", {
+  set.seed(2)
+  dat <- data.frame(
+    s1 = rnorm(60, mean = 0),
+    s2 = rnorm(60, mean = 2),
+    stringsAsFactors = FALSE
+  )
+  dpdict <- data.frame(
+    variable_names  = c("s1", "s2"),
+    variable_labels = c("Score 1", "Score 2"),
+    question_group  = c("Scores", "Scores"),
+    stringsAsFactors = FALSE
+  )
+  dpdict$value_labels <- I(list(NULL, NULL))
+
+  survey_obj <- create_survey_data(dat, dpdict)
+  res <- tab(survey_obj, rows = percentile(Scores, "above", 50))
+  expect_s3_class(res, "tab_result")
+  expect_equal(sum(grepl("Above p50", res$row_label)), 2)
+})
+
+test_that("helpers error cleanly for unknown target names", {
+  dat <- data.frame(x = 1:5)
+  expect_error(
+    tab(dat, rows = top_box(DoesNotExist, 1)),
+    regexp = "Could not resolve|not found|resolve",
+    info = "Unknown group/variable should raise a precise error"
+  )
+})
+
 ##### Unit tests for glue #####
 
 test_that("multi_tab works with standard test data", {

@@ -478,6 +478,136 @@ The calculation flow for each cell:
 5.  Element-wise multiplication (`base * row * col`) gives you the actual cell membership
 6.  Your processor calculates and returns a single value for that cell
 
+## Banner Columns
+
+Banners allow you to create multiple columns by crossing categories:
+
+```{r banner_basics}
+# Cross region with gender to create separate columns for each combination
+tab(survey_data, satisfaction, banner(region, gender))
+
+# Use banners with helpers
+tab(survey_data, satisfaction, banner(region, top_box(satisfaction, 2)))
+
+# Include subtotals for each outer category
+tab(survey_data, q1_1, banner(region, gender, subtotals = TRUE))
+```
+
+Banners are particularly useful for demographic breaks and complex column structures in market research.
+
+## Significance Testing
+
+Add statistical significance testing to your tables using `add_sig()`:
+
+```{r sig_testing}
+# Basic significance testing (compares each column to first column)
+result_with_sig <- tab(survey_data, satisfaction, region) %>% 
+  add_sig(test = "z_test_proportions", level = 0.05)
+
+# For means, use t-test
+income_result <- tab(survey_data, gender, region, 
+                     statistic = "mean", values = "income") %>%
+  add_sig(test = "t_test", versus = "first_col")
+
+# Multiple comparison adjustment
+adjusted_result <- tab(survey_data, satisfaction, region) %>%
+  add_sig(test = "z_test_proportions", adjust = "bonferroni")
+
+# View significance results
+sig_info <- attr(result_with_sig, "significance")
+print(result_with_sig)  # Prints with significance indicators
+```
+
+Available tests include `z_test_proportions`, `t_test`, `chi_square`, and `mann_whitney`. Use `"auto"` for automatic test selection based on your statistic.
+
+## Advanced Feature: Gates and Orthogonal Tables
+
+Gates control which cells are calculated based on row/column metadata. For example, to create a brand-attribute matrix where each row/column is a brand x frequency combination, you can use:
+
+```{r brand_attr_matrix, eval=FALSE}
+# Brand–attribute style matrix using value labels
+tab(survey_data,
+  rows = calc_if(no_mismatch("ival"),
+                 response_match(c("Daily", "Weekly", "Monthly"), "A2", mode = "value")),
+  cols = response_match(c("Daily", "Weekly", "Monthly"), "A2", mode = "value"),
+  statistic = "count",
+  sum_by = "ival",
+  show_base = FALSE, show_row_nets = FALSE, show_col_nets = FALSE
+)
+```
+
+What happens step-by-step:
+
+- First, calc_if(no_mismatch("ival")) creates an orthogonal table where only cells on the matching row/col value are computed; off-diagonals are blank/zero.
+- Then, sum_by = "ival" collapses those duplicates by the shared value label, leaving one row/column per unique value and preserving the gated (diagonal) structure.
+
+Note: This is an advanced, unusually imperative pattern in the package. A simpler, more declarative syntax for this use case will likely become the recommended approach.
+
+## Table Manipulation
+
+### Low Base Thresholds
+
+Remove columns or rows with insufficient sample sizes:
+
+```{r low_base}
+# Remove columns with fewer than 30 respondents
+filtered_result <- tab(survey_data, satisfaction, region,
+                       low_base_threshold = 30)
+
+# Useful for demographic breaks with small segments
+age_breaks <- tab(survey_data, satisfaction, age_group,
+                  filter = income > 75000,  # Wealthy respondents only
+                  low_base_threshold = 25)
+```
+
+### Label Display Modes
+
+Control how variable labels are displayed:
+
+```{r label_modes}
+# Smart mode: shows suffixes for multi-item questions, full labels for single items
+smart_labels <- tab(survey_data, q1, region, label_mode = "smart")
+
+# Full mode: always shows complete variable labels
+full_labels <- tab(survey_data, q1, region, label_mode = "full") 
+
+# Suffix mode: extracts and shows question suffixes
+suffix_labels <- tab(survey_data, q1, region, label_mode = "suffix")
+```
+
+The `smart` mode is particularly useful for question batteries where you want concise but informative row labels.
+
+### Sorting Tables
+
+Sort your results by values or labels:
+
+```{r sorting}
+# Sort rows by NET column values (descending)
+sorted_result <- sort_tab(comprehensive_result, rows = "NET")
+
+# Sort columns alphabetically  
+alpha_sorted <- sort_tab(comprehensive_result, 
+                         cols = list(by = "label", order = "asc"))
+
+# Sort with natural ordering (handles numbers properly)
+natural_sorted <- sort_tab(comprehensive_result,
+                          rows = list(by = "label", natural = TRUE))
+
+# Restore original order
+restored <- sort_tab(natural_sorted, rows = "original", cols = "original")
+```
+
+### Copying to Clipboard
+
+Export formatted results to clipboard for use in presentations:
+
+```{r copying, eval=FALSE}
+# Copy with formatting preserved
+copy_tab(comprehensive_result)
+
+# Results are formatted with statistic info and significance indicators
+```
+
 ## Putting It All Together
 
 Here's a comprehensive example combining multiple features:

@@ -1,107 +1,128 @@
-# Guide to built-in statistics and helpers  (note: not fully tested)
+# Guide to built-in statistics and helpers  (note: this vignette not fully tested)
 
 ## Statistics
 
-### 1. Median (median)
+Below are all built-in statistics. Use the `statistic` argument in `tab()`; some also require a numeric `values` variable.
 
-Calculate the median value instead of mean for continuous variables.
+### 1. Count (count)
+
+``` r
+# Base counts by gender and region
+tab(data, gender, region, statistic = "count")
+```
+
+### 2. Row percentage (row_pct)
+
+``` r
+# Share of each region within each brand row
+tab(data, brand, region, statistic = "row_pct")
+```
+
+### 3. Column percentage (column_pct)
+
+``` r
+# Share of each brand within each region column
+tab(data, brand, region, statistic = "column_pct")
+```
+
+### 4. Mean (mean)
+
+``` r
+# Average income by gender and region
+tab(data, gender, region, statistic = "mean", values = "income")
+```
+
+### 5. Median (median)
 
 ``` r
 # Median income by gender and region
 tab(data, gender, region, statistic = "median", values = "income")
-
-# Compare mean vs median
-mean_income <- tab(data, gender, region, statistic = "mean", values = "income")
-median_income <- tab(data, gender, region, statistic = "median", values = "income")
 ```
 
-### 2. Standard Deviation (sd)
-
-Measure the variability of values within each cell.
+### 6. Standard deviation (sd)
 
 ``` r
 # Income variability by demographic groups
 tab(data, age_group, region, statistic = "sd", values = "income")
-
-# Satisfaction score variability
-tab(data, gender, product_type, statistic = "sd", values = "satisfaction_score")
 ```
 
-### 3. Coefficient of Variation (cv)
-
-Relative measure of variability (SD/Mean × 100), useful for comparing variability across groups with different means.
+### 7. Coefficient of variation (cv)
 
 ``` r
-# Which demographic has most consistent income?
+# Relative variability of income (SD/Mean × 100)
 tab(data, education_level, region, statistic = "cv", values = "income")
-
-# Product rating consistency
-tab(data, product_type, purchase_frequency, statistic = "cv", values = "rating")
 ```
 
-### 4. Index (index)
-
-Shows how each cell compares to the total (100 = average). Values above 100 indicate over-representation.
-
-``` r
-# Which regions over-index for each gender?
-tab(data, gender, region, statistic = "index")
-
-# Product preference indexing
-tab(data, product_preference, age_group, statistic = "index")
-```
-
-### 5. Percentiles (p25, p75)
-
-Calculate specific percentiles of a numeric variable.
+### 8. Percentiles (p25, p75)
 
 ``` r
 # Income quartiles by demographics
-tab(data, education_level, region, statistic = "p25", values = "income")  # 25th percentile
-tab(data, education_level, region, statistic = "p75", values = "income")  # 75th percentile
+tab(data, education_level, region, statistic = "p25", values = "income")
+tab(data, education_level, region, statistic = "p75", values = "income")
+```
+
+### 9. Index (index)
+
+``` r
+# Over/under-index vs total (100 = average)
+tab(data, gender, region, statistic = "index")
+```
+
+### 10. Correlation (correlation)
+
+Requires numeric `rows` and `cols` variables.
+
+``` r
+# Correlation between satisfaction and loyalty
+tab(data, satisfaction_score, loyalty_score, statistic = "correlation")
 ```
 
 ## Helpers
 
-### 1. Value Range (value_range)
+Helpers generate arrays for `rows`, `cols`, or filters. Listed from simplest/general to more specific.
 
-Select respondents within a specific numeric range.
+### 1. Total (total)
 
 ``` r
-# Age ranges
-tab(data, value_range(age, 25, 34), region)
+# Overall totals crossed by gender
+tab(data, total(), gender, statistic = "count")
+```
 
-# Income brackets
-tab(data, 
-    rows = rows_list(
-      "Low Income" = value_range(income, 0, 30000),
-      "Middle Income" = value_range(income, 30001, 70000),
-      "High Income" = value_range(income, 70001, 999999)
-    ),
-    cols = education_level)
+### 2. Any positive (any_positive)
+
+``` r
+# Anyone selecting any of q1_1, q1_2, q1_3
+tab(data, any_positive(c("q1_1", "q1_2", "q1_3")), gender)
+
+# Using a question group name (if defined in dpdict)
+tab(data, any_positive("q1"), region)
+```
+
+### 3. Top box (top_box)
+
+``` r
+# Top-2 box of a 5-point satisfaction scale
+tab(data, top_box(satisfaction, 2), gender)
+```
+
+### 4. Bottom box (bottom_box)
+
+``` r
+# Bottom-2 box of a 5-point satisfaction scale
+tab(data, bottom_box(satisfaction, 2), region)
+```
+
+### 5. Value range (value_range)
+
+``` r
+# Age 25–34 inclusive
+tab(data, value_range(age, 25, 34), region)
 
 # Exclusive boundaries
 tab(data, value_range(satisfaction_score, 3, 4, inclusive = FALSE), product_type)
 ```
 
-### 2. Pattern Matching (pattern)
-
-Find text patterns in open-ended or categorical responses.
-
-``` r
-# Find specific mentions in comments
-tab(data, pattern(comments, "excellent|outstanding"), gender)
-
-# Email domain analysis
-tab(data, pattern(email, "@gmail\\.com$"), age_group)
-
-# Case-sensitive matching
-tab(data, pattern(product_code, "^PRO-", ignore_case = FALSE), region)
-```
-
-### 3. Percentile Selection (percentile)
-
-Select respondents above or below a certain percentile of a numeric variable.
+### 6. Percentile selection (percentile)
 
 ``` r
 # Top 10% of spenders
@@ -109,61 +130,66 @@ tab(data, percentile(total_spend, "above", 90), product_category)
 
 # Bottom quartile of engagement
 tab(data, percentile(engagement_score, "below", 25), channel)
-
-# Combined with filters
-tab(data, 
-    rows = rows_list(
-      "High Earners" = percentile(income, "above", 75),
-      "Low Earners" = percentile(income, "below", 25)
-    ),
-    cols = satisfaction)
 ```
 
-### 4. Negation (not)
-
-Logical NOT operation for any condition.
+### 7. Pattern matching (pattern)
 
 ``` r
-# Everyone except the satisfied
-tab(data, not(top_box(satisfaction, 2)), gender)
+# Find specific mentions in comments
+tab(data, pattern(comments, "excellent|outstanding"), gender)
 
-# Outside age range
-tab(data, not(value_range(age, 25, 34)), region)
-
-# Exclude pattern matches
-tab(data, not(pattern(email, "@internal\\.com$")), department)
-
-# Complex negations
-tab(data, not(top_box(satisfaction, 2) * value_range(age, 18, 24)), product_type)
+# Email domain analysis
+tab(data, pattern(email, "@gmail\\.com$"), age_group)
 ```
 
-## Advanced Usage Examples
-
-### Comprehensive Satisfaction Analysis
+### 8. Response match (response_match)
 
 ``` r
-# Multi-dimensional satisfaction breakdown
-tab(data,
-    rows = rows_list(
-      "Very Satisfied" = top_box(satisfaction, 1),
-      "Satisfied" = top_box(satisfaction, 2) * not(top_box(satisfaction, 1)),
-      "Neutral" = mid_box(satisfaction, 1),
-      "Dissatisfied" = bottom_box(satisfaction, 2) * not(bottom_box(satisfaction, 1)),
-      "Very Dissatisfied" = bottom_box(satisfaction, 1)
-    ),
-    cols = rows_list(
-      "High Income" = percentile(income, "above", 75),
-      "Middle Income" = not(percentile(income, "above", 75)) * not(percentile(income, "below", 25)),
-      "Low Income" = percentile(income, "below", 25)
-    ))
+# Match value labels within a question group into buckets
+tab(data, response_match(c("Daily", "Weekly"), "usage_group"), gender)
+
+# Automatically extract value labels for a group
+tab(data, response_match(get_value_labels = "q1"), region)
 ```
 
-### Statistical Comparison Table
+### 9. All matching (all_matching)
 
 ``` r
-# Create multiple statistics for the same breakdown
-mean_table <- tab(data, age_group, region, statistic = "mean", values = "satisfaction_score")
-median_table <- tab(data, age_group, region, statistic = "median", values = "satisfaction_score")
-sd_table <- tab(data, age_group, region, statistic = "sd", values = "satisfaction_score")
-cv_table <- tab(data, age_group, region, statistic = "cv", values = "satisfaction_score")
+# Return individual variables whose labels match the pattern within a group
+tab(data, all_matching("Microsoft", "A1"), gender)
 ```
+
+## Macro helpers (banner, calc_if + no_mismatch)
+
+These operate at a higher level than single-variable helpers.
+
+### Banner (banner)
+
+``` r
+# Cross an outer variable with an inner spec
+tab(data, q1, banner(region, gender))
+
+# Nest helpers inside banner
+tab(data, q1, banner(region, top_box(satisfaction, 2)))
+
+# With subtotals per outer category
+tab(data, q1, banner(region, satisfaction, subtotals = TRUE))
+```
+
+### calc_if with no_mismatch gate
+
+Use `calc_if(no_mismatch("ival"), ...)` to compute cells only when row and column share at least one matching metadata value (e.g., the same response option label stored in `ival`). Useful for orthogonal tables.
+
+``` r
+# Only compute cells when row and column refer to the same response (by ival)
+tab(
+  data,
+  rows = calc_if(no_mismatch("ival"), response_match(get_value_labels = "q1")),
+  cols = response_match(get_value_labels = "q1"),
+  statistic = "count"
+)
+```
+
+## Notes
+
+- Helpers `index_to` and `change_from` are API placeholders; examples are omitted until implemented.
