@@ -232,7 +232,7 @@ insert_into_str <- function(string_to_insert_into, string_to_insert, string_to_f
 
   # define which instances of string_to_find to insert at
   if (all((length(instances_to_insert_at) == 1) & (instances_to_insert_at == "ALL"))) {
-    instances_to_insert_at <- 1:length(found_positions)
+    instances_to_insert_at <- seq_along(found_positions)
   } else {
     # handle cases where more instances_to_insert_at than instances found
     if (max(instances_to_insert_at) > length(found_positions)) {
@@ -1029,4 +1029,327 @@ convert_integers_to_double.data.frame <- function(x, labelled_only = TRUE) {
 convert_integers_to_double.survey_data <- function(x, labelled_only = TRUE) {
   x$dat <- convert_integers_to_double(x$dat, labelled_only = labelled_only)
   return(x)
+}
+
+
+#' Bind columns while preserving metadata
+#'
+#' Wrapper around dplyr::bind_cols that preserves per-column metadata, in
+#' particular variable labels (attr(, "label")) and value labels (attr(, "labels")).
+#' Any other simple attributes (except structural ones like names/class/dim) on
+#' the input columns are also preserved on the corresponding output columns.
+#'
+#' This function masks dplyr::bind_cols and is intended to be a drop-in
+#' replacement. It accepts the same signature and passes all arguments through
+#' to dplyr.
+#'
+#' @inheritParams dplyr::bind_cols
+#' @return A data frame, as from dplyr::bind_cols, with metadata reapplied
+#' @export
+bind_cols <- function(...) {
+
+  # Capture evaluated arguments to forward and to inspect metadata
+  arg_list <- list(...)
+
+  # Track if any survey_data objects were provided and keep first dpdict
+  any_survey <- FALSE
+  base_dpdict <- NULL
+
+  # Helper to unwrap survey_data inputs for binding while tracking dpdict
+  unwrap_for_bind <- function(x) {
+    if (inherits(x, "survey_data")) {
+      if (!any_survey) {
+        any_survey <<- TRUE
+        base_dpdict <<- x$dpdict
+      }
+      return(x$dat)
+    }
+    x
+  }
+
+  # Transform arguments for forwarding
+  if (length(arg_list) == 1L && is.list(arg_list[[1L]]) && !is.data.frame(arg_list[[1L]])) {
+    inner <- arg_list[[1L]]
+    inner <- lapply(inner, unwrap_for_bind)
+    arg_list_call <- list(inner)
+    names(arg_list_call) <- names(arg_list)
+  } else {
+    arg_list_call <- lapply(arg_list, unwrap_for_bind)
+    names(arg_list_call) <- names(arg_list)
+  }
+
+  # Build a list of per-output-column attributes in bind order (scan transformed inputs)
+  col_attrs <- list()
+  for (item in arg_list_call) {
+    if (is.null(item)) next
+    if (is.list(item) && !is.data.frame(item)) {
+      for (sub in item) {
+        if (is.data.frame(sub)) {
+          for (nm in names(sub)) {
+            col_attrs[[length(col_attrs) + 1L]] <- attributes(sub[[nm]])
+          }
+        } else {
+          col_attrs[[length(col_attrs) + 1L]] <- attributes(sub)
+        }
+      }
+    } else if (is.data.frame(item)) {
+      for (nm in names(item)) {
+        col_attrs[[length(col_attrs) + 1L]] <- attributes(item[[nm]])
+      }
+    } else {
+      col_attrs[[length(col_attrs) + 1L]] <- attributes(item)
+    }
+  }
+
+  # Delegate binding to dplyr with transformed arguments
+  out <- do.call(dplyr::bind_cols, arg_list_call)
+
+  # Reapply captured attributes by column position
+  excluded <- c("names", "class", "dim", "dimnames", "row.names", "tsp")
+  n_apply <- min(length(col_attrs), ncol(out))
+  if (n_apply > 0) {
+    for (i in seq_len(n_apply)) {
+      attrs <- col_attrs[[i]]
+      if (is.null(attrs)) next
+
+      # Variable label
+      if (!is.null(attrs$label)) {
+        attr(out[[i]], "label") <- attrs$label
+      }
+
+      # Value labels
+      if (!is.null(attrs$labels)) {
+        out[[i]] <- sjlabelled::set_labels(out[[i]], labels = attrs$labels)
+      }
+
+      # Other non-structural attributes
+      other_names <- setdiff(names(attrs), c(excluded, "label", "labels"))
+      for (an in other_names) {
+        attr(out[[i]], an) <- attrs[[an]]
+      }
+    }
+  }
+
+  # If any survey_data inputs were provided, update dpdict accordingly and wrap
+  if (isTRUE(any_survey)) {
+    # Use mutate.survey_data to add columns so dpdict is updated by existing utilities
+    # Base survey_data is the first survey_data argument encountered
+    base_survey <- NULL
+    for (orig in list(...)) {
+      if (inherits(orig, "survey_data")) { base_survey <- orig; break }
+    }
+    # Build a RHS data frame via bind_cols to apply name repair and collect columns from other args
+    rhs_args <- list()
+    for (i in seq_along(arg_list_call)) {
+      obj <- arg_list_call[[i]]
+      # Skip the first survey_data (already in base_survey)
+      if (inherits(list(...)[[i]], "survey_data")) {
+        if (identical(list(...)[[i]], base_survey)) next else obj <- obj
+      }
+      rhs_args[[length(rhs_args) + 1L]] <- obj
+    }
+    rhs_df <- if (length(rhs_args) > 0) do.call(dplyr::bind_cols, rhs_args) else data.frame()
+
+    # Splice columns into mutate to trigger mutate.survey_data metadata update
+    res <- dplyr::mutate(base_survey, !!!as.list(rhs_df))
+    return(res)
+  }
+
+  out
+}
+
+
+#' Bind rows while preserving metadata
+#'
+#' Wrapper around dplyr::bind_rows that preserves column metadata across inputs,
+#' preferring metadata from the first dataset on conflicts and emitting a single
+#' aggregated warning. Preserved metadata includes variable labels
+#' (attr(, "label")) and value labels (attr(, "labels")). Other simple
+#' attributes (excluding structural ones like names/class/dim) are also
+#' preserved based on the first dataset in which the column appears.
+#'
+#' This function masks dplyr::bind_rows and is intended to be a drop-in
+#' replacement. It accepts the same signature and passes all arguments through
+#' to dplyr.
+#'
+#' @inheritParams dplyr::bind_rows
+#' @return A data frame, as from dplyr::bind_rows, with metadata reconciled and reapplied
+#' @export
+bind_rows <- function(...) {
+
+  # Capture evaluated arguments to forward
+  arg_list <- list(...)
+
+  # Track if any survey_data objects were provided and keep first dpdict
+  any_survey <- FALSE
+  base_dpdict <- NULL
+
+  unwrap_for_bind <- function(x) {
+    if (inherits(x, "survey_data")) {
+      if (!any_survey) {
+        any_survey <<- TRUE
+        base_dpdict <<- x$dpdict
+      }
+      return(x$dat)
+    }
+    x
+  }
+
+  # Transform arguments for forwarding
+  if (length(arg_list) == 1L && is.list(arg_list[[1L]]) && !is.data.frame(arg_list[[1L]])) {
+    inner <- arg_list[[1L]]
+    inner <- lapply(inner, unwrap_for_bind)
+    arg_list_call <- list(inner)
+    names(arg_list_call) <- names(arg_list)
+  } else {
+    arg_list_call <- lapply(arg_list, unwrap_for_bind)
+    names(arg_list_call) <- names(arg_list)
+  }
+
+  # Build a flat list of data frames to inspect (respect both variadic and list-input forms) from transformed args
+  df_list <- list()
+  if (length(arg_list_call) == 1L && is.list(arg_list_call[[1L]]) && !is.data.frame(arg_list_call[[1L]])) {
+    df_list <- arg_list_call[[1L]]
+  } else {
+    nms <- names(arg_list_call)
+    for (i in seq_along(arg_list_call)) {
+      nm <- if (length(nms)) nms[[i]] else ""
+      if (!is.null(nm) && nm %in% c(".id", ".name_repair")) next
+      df_list[[length(df_list) + 1L]] <- arg_list_call[[i]]
+    }
+  }
+
+  # Metadata accumulator by column name
+  meta_map <- new.env(parent = emptyenv())
+  label_conflicts <- character(0)
+  vlabel_conflict_vars <- character(0)
+
+  # Helper to merge value labels with first-dataset precedence
+  merge_value_labels <- function(base_map, add_vec) {
+    if (is.null(add_vec) || length(add_vec) == 0) return(list(map = base_map, conflicted = FALSE))
+
+    # add_vec is a named vector: names are label text, values are codes
+    add_codes <- unname(add_vec)
+    add_texts <- names(add_vec)
+    conflicted <- FALSE
+    for (j in seq_along(add_codes)) {
+      code_chr <- as.character(add_codes[[j]])
+      text <- add_texts[[j]]
+      if (!is.null(base_map[[code_chr]])) {
+        if (!identical(base_map[[code_chr]], text)) {
+          conflicted <- TRUE
+          # Prefer base_map (first dataset); do nothing
+        }
+      } else {
+        base_map[[code_chr]] <- text
+      }
+    }
+    list(map = base_map, conflicted = conflicted)
+  }
+
+  # Walk inputs in order to accumulate baseline and detect conflicts
+  if (length(df_list) > 0) {
+    for (idx in seq_along(df_list)) {
+      df <- df_list[[idx]]
+      if (!is.data.frame(df)) next
+      for (nm in names(df)) {
+        x <- df[[nm]]
+        x_attrs <- attributes(x)
+        x_label <- if (!is.null(x_attrs)) x_attrs$label else NULL
+        x_vlabels <- if (!is.null(x_attrs)) x_attrs$labels else NULL
+        x_other <- if (!is.null(x_attrs)) x_attrs[setdiff(names(x_attrs), c("names", "class", "dim", "dimnames", "row.names", "tsp", "label", "labels"))] else NULL
+
+        if (!exists(nm, envir = meta_map, inherits = FALSE)) {
+          # First occurrence establishes baseline
+          meta_map[[nm]] <- list(label = x_label, vlabel_map = as.list(setNames(if (length(x_vlabels)) as.list(names(x_vlabels)) else list(), character(0))), other = x_other)
+          # Build initial value-label map (code -> text)
+          if (!is.null(x_vlabels) && length(x_vlabels) > 0) {
+            base_map <- new.env(parent = emptyenv())
+            codes <- unname(x_vlabels)
+            texts <- names(x_vlabels)
+            for (j in seq_along(codes)) base_map[[as.character(codes[[j]])]] <- texts[[j]]
+            meta_map[[nm]]$vlabel_map <- as.list(as.list(base_map))
+          } else {
+            meta_map[[nm]]$vlabel_map <- list()
+          }
+        } else {
+          # Compare labels
+          base <- meta_map[[nm]]
+          if (!is.null(x_label) && !identical(base$label, x_label)) {
+            label_conflicts <- unique(c(label_conflicts, nm))
+          }
+          # Merge value labels with precedence
+          base_map <- as.list(base$vlabel_map)
+          # Convert list-like map back to named vector structure for merge helper
+          # (we will keep base_map as list code->text during merge)
+          merged <- merge_value_labels(as.list(base_map), x_vlabels)
+          if (isTRUE(merged$conflicted)) {
+            vlabel_conflict_vars <- unique(c(vlabel_conflict_vars, nm))
+          }
+          base$vlabel_map <- merged$map
+          meta_map[[nm]] <- base
+        }
+      }
+    }
+  }
+
+  # Perform the actual bind
+  out <- do.call(dplyr::bind_rows, arg_list_call)
+
+  # Reapply metadata to result
+  for (nm in names(out)) {
+    if (!exists(nm, envir = meta_map, inherits = FALSE)) next
+    info <- meta_map[[nm]]
+
+    # Variable label
+    if (!is.null(info$label)) {
+      attr(out[[nm]], "label") <- info$label
+    }
+
+    # Value labels: convert code->text map back to named vector (text = names, code = values)
+    if (length(info$vlabel_map) > 0) {
+      # Determine code type based on output column storage
+      to_type <- if (is.integer(out[[nm]])) "integer" else if (is.numeric(out[[nm]])) "double" else if (is.character(out[[nm]])) "character" else "character"
+      codes_chr <- names(info$vlabel_map)
+      texts <- unlist(unname(info$vlabel_map), use.names = FALSE)
+      # Coerce codes
+      codes <- switch(to_type,
+        integer = suppressWarnings(as.integer(codes_chr)),
+        double  = suppressWarnings(as.double(codes_chr)),
+        character = as.character(codes_chr),
+        as.character(codes_chr)
+      )
+      # Build named vector: names are texts, values are codes
+      if (length(codes) == length(texts) && length(codes) > 0) {
+        lab_vec <- stats::setNames(codes, texts)
+        out[[nm]] <- sjlabelled::set_labels(out[[nm]], labels = lab_vec)
+      }
+    }
+
+    # Other attributes from first occurrence
+    if (!is.null(info$other) && length(info$other) > 0) {
+      other_names <- names(info$other)
+      for (an in other_names) {
+        attr(out[[nm]], an) <- info$other[[an]]
+      }
+    }
+  }
+
+  # Single aggregated warning for conflicts
+  if (length(label_conflicts) + length(vlabel_conflict_vars) > 0) {
+    parts <- character(0)
+    if (length(label_conflicts) > 0) {
+      parts <- c(parts, paste0("variable labels differed for: ", paste(sort(unique(label_conflicts)), collapse = ", ")))
+    }
+    if (length(vlabel_conflict_vars) > 0) {
+      parts <- c(parts, paste0("value label text differed for some codes in: ", paste(sort(unique(vlabel_conflict_vars)), collapse = ", ")))
+    }
+    warning(paste0("bind_rows metadata conflicts detected; using metadata from the first dataset (by column). Details: ", paste(parts, collapse = "; ")))
+  }
+
+  if (isTRUE(any_survey)) {
+    return(structure(list(dat = out, dpdict = base_dpdict), class = "survey_data"))
+  }
+
+  out
 }

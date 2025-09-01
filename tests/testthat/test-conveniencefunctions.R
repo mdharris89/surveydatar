@@ -268,6 +268,108 @@ test_that("closest_matching_string works", {
   expect_equal(result, "ant")
 })
 
+test_that("bind_cols preserves variable/value labels and other attributes", {
+
+  v1 <- sjlabelled::set_labels(c(1, 2), labels = c("Yes" = 1, "No" = 2))
+  attr(v1, "label") <- "Q1 - response"
+  attr(v1, "foo") <- "bar"
+
+  v2 <- sjlabelled::set_labels(c(1, 2), labels = c("A" = 1, "B" = 2))
+  attr(v2, "label") <- "Q2 - response"
+
+  df1 <- data.frame(a = v1)
+  df2 <- data.frame(b = v2)
+
+  res <- surveydatar:::bind_cols(df1, df2)
+
+  expect_equal(sjlabelled::get_label(res$a), "Q1 - response")
+  expect_equal(unname(sjlabelled::get_labels(res$a, values = "as.name")["1"]), "Yes")
+  expect_equal(unname(sjlabelled::get_labels(res$a, values = "as.name")["2"]), "No")
+  expect_equal(attr(res$a, "foo"), "bar")
+
+  expect_equal(sjlabelled::get_label(res$b), "Q2 - response")
+  expect_equal(unname(sjlabelled::get_labels(res$b, values = "as.name")["1"]), "A")
+  expect_equal(unname(sjlabelled::get_labels(res$b, values = "as.name")["2"]), "B")
+})
+
+test_that("bind_rows preserves metadata, merges value labels, and prefers first on conflicts", {
+
+  df1 <- data.frame(
+    a = sjlabelled::set_labels(c(1, 1), labels = c("Yes" = 1))
+  )
+  attr(df1$a, "label") <- "Label A"
+
+  # Conflicting variable label; value labels add a new code and conflict on code 1 text
+  df2 <- data.frame(
+    a = sjlabelled::set_labels(c(1, 2), labels = c("Yea" = 1, "No" = 2))
+  )
+  attr(df2$a, "label") <- "Label A (changed)"
+
+  expect_warning(
+    res <- surveydatar:::bind_rows(df1, df2, .id = "src"),
+    "bind_rows metadata conflicts detected"
+  )
+
+  # Variable label prefers first dataset
+  expect_equal(sjlabelled::get_label(res$a), "Label A")
+
+  # Value labels merged; code 1 retains first dataset's text, code 2 added from second
+  labs <- sjlabelled::get_labels(res$a, values = "as.name")
+  expect_equal(unname(labs["1"]), "Yes")
+  expect_equal(unname(labs["2"]), "No")
+})
+
+test_that("bind_rows with identical metadata emits no warning and preserves labels", {
+
+  df1 <- data.frame(a = sjlabelled::set_labels(c(1, 2), labels = c("Yes" = 1, "No" = 2)))
+  attr(df1$a, "label") <- "Label A"
+
+  df2 <- data.frame(a = sjlabelled::set_labels(c(2, 1), labels = c("Yes" = 1, "No" = 2)))
+  attr(df2$a, "label") <- "Label A"
+
+  expect_silent({ res <- surveydatar:::bind_rows(df1, df2) })
+  expect_equal(sjlabelled::get_label(res$a), "Label A")
+  labs <- sjlabelled::get_labels(res$a, values = "as.name")
+  expect_equal(unname(labs["1"]), "Yes")
+  expect_equal(unname(labs["2"]), "No")
+})
+
+test_that("bind_rows works with survey_data and preserves dpdict", {
+
+  s1 <- create_survey_data(get_minimal_labelled_test_dat())
+  s2 <- create_survey_data(get_minimal_labelled_test_dat())
+
+  expect_silent({ res <- surveydatar:::bind_rows(s1, s2, .id = "src") })
+
+  expect_true(is.survey_data(res))
+  # dpdict should be unchanged (identical to first's dpdict)
+  expect_equal(res$dpdict, s1$dpdict)
+
+  # .id should be present on dat and reflect two sources
+  expect_true("src" %in% names(res$dat))
+  expect_setequal(unique(res$dat$src), c("1", "2"))
+})
+
+test_that("bind_cols works with survey_data and updates dpdict", {
+
+  s <- create_survey_data(get_minimal_labelled_test_dat())
+
+  newvec <- rep(c(1, 2), length.out = nrow(s$dat))
+  newvec <- sjlabelled::set_labels(newvec, labels = c("X" = 1, "Y" = 2))
+  attr(newvec, "label") <- "New Var"
+
+  res <- surveydatar:::bind_cols(s, data.frame(newvar = newvec))
+
+  expect_true(is.survey_data(res))
+  expect_true("newvar" %in% names(res$dat))
+  expect_equal(sjlabelled::get_label(res$dat$newvar), "New Var")
+
+  # dpdict includes new variable with correct label
+  expect_true("newvar" %in% res$dpdict$variable_names)
+  idx <- which(res$dpdict$variable_names == "newvar")
+  expect_equal(res$dpdict$variable_labels[idx], "New Var")
+})
+
 test_that("labelled_map_dfc works", {
 
   unlabelled_test_dat <- get_minimal_unlabelled_test_dat()
