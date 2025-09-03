@@ -884,10 +884,28 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     if(noisy >=2){start_time <- proc.time()}
   }
 
-  for(i in seq_len(nrow(temp_dpdict[variables_to_update,]))){
-    if(noisy >= 2){print(paste0("Checking ", temp_dpdict$variable_names[variables_to_update][i], " for has_multivariable_positive_values"))}
+  processed_groups <- character(0)
+  for(i in which(variables_to_update)){
+    current_question_group <- temp_dpdict$question_group[i]
 
-    set_of_variable_names_in_question_group <- temp_dpdict$variable_names[temp_dpdict$question_group == temp_dpdict$question_group[i] & variables_to_update]
+    # Skip if we've already processed this question group
+    if(current_question_group %in% processed_groups) {
+      next
+    }
+    if(noisy >= 2){print(paste0("Checking question group ", current_question_group, " for has_multivariable_positive_values"))}
+
+    # Get all variable names in this question group that are being updated
+    set_of_variable_names_in_question_group <- temp_dpdict$variable_names[temp_dpdict$question_group == current_question_group & variables_to_update]
+
+    # Only keep variables that actually exist in temp_dat
+    set_of_variable_names_in_question_group <- set_of_variable_names_in_question_group[set_of_variable_names_in_question_group %in% names(temp_dat)]
+
+    if(length(set_of_variable_names_in_question_group) == 0) {
+      # No valid variables in group - set all to FALSE
+      temp_dpdict$has_multivariable_positive_values[temp_dpdict$question_group == current_question_group & variables_to_update] <- FALSE
+      processed_groups <- c(processed_groups, current_question_group)
+      next
+    }
 
     question_group_within_dat <- temp_dat[set_of_variable_names_in_question_group]
 
@@ -898,13 +916,12 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
       any(!is.na(x) & x != 0)
     }, logical(1))
 
-    if(sum(count_within_question_group) > 1){
-      temp_dpdict$has_multivariable_positive_values[temp_dpdict$variable_names %in% set_of_variable_names_in_question_group & variables_to_update] <- TRUE
-      i <- i + length(set_of_variable_names_in_question_group)
-    } else {
-      temp_dpdict$has_multivariable_positive_values[variables_to_update][i] <- FALSE
-      i <- i + 1
-    }
+    # Set the same value for all variables in this question group
+    has_multiple_positives <- sum(count_within_question_group) > 1
+    temp_dpdict$has_multivariable_positive_values[temp_dpdict$question_group == current_question_group & variables_to_update] <- has_multiple_positives
+
+    # Mark this group as processed
+    processed_groups <- c(processed_groups, current_question_group)
   }
 
   if(noisy >=2){print(proc.time() - start_time)}
@@ -968,7 +985,9 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   temp_dpdict$question_folder[variables_to_update] <- questions_dict$question_folder[match(temp_dpdict$question_group[variables_to_update], questions_dict$question_group)]
 
   # variable metadata that is dependent on question metadata
-  question_suffixes <- get_unique_suffixes(temp_dpdict[variables_to_update,], var_with_unique_id = "variable_names",
+  rows_to_update <- which(variables_to_update)
+
+  question_suffixes <- get_unique_suffixes(temp_dpdict[rows_to_update,], var_with_unique_id = "variable_names",
                                            var_with_strings = "variable_labels",
                                            var_with_question_groups = "question_group", seps_priority = c("- "))
 
@@ -1216,7 +1235,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
     # loop through each unique question group
     for(i in unique(lcs_dict$question_group)){
       # subset temp_dpdict just for the variables in our current question group
-      current_question_dpdict <- temp_dpdict[temp_dpdict$question_group == i,]
+      current_question_dpdict <- temp_dpdict[temp_dpdict$question_group == i & variables_to_process,]
 
       if(noisy >= 3){
         print(paste0("Finding best lcs for question group ", i, "..."))
@@ -1225,8 +1244,8 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
       # if requested, add a column for variable_labels_less_prefix - for every variable in current question group
       if(ignorelabelbeforeprefix == TRUE){
         current_question_dpdict$variable_labels_less_prefix <- ""
-        for(j in 1:nrow(current_question_dpdict)){
-          current_question_dpdict$variable_labels_less_prefix[j] <- gsub(paste0("^([^", prefix_sep, "]+)", prefix_sep), "", current_question_dpdict$variable_labels[j])
+        for(k in 1:nrow(current_question_dpdict)){
+          current_question_dpdict$variable_labels_less_prefix[k] <- gsub(paste0("^([^", prefix_sep, "]+)", prefix_sep), "", current_question_dpdict$variable_labels[k])
         }
       }
 
