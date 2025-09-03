@@ -1019,7 +1019,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'        - splitbylabelvalues: Logical. If TRUE, each variable with different actual label values gets a new suffix (exact match required, including order). Default FALSE.
 #'        - findlongest: Logical. If TRUE, finds longest common substring (computationally expensive).
 #'        - min_lcs_length: Integer. Any potential lcs shorter than this is disqualified.
-#'        - min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables.
+#'        - min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables. Variables in groups smaller than this threshold will each receive unique LCS values, causing them to split into separate groups.
 #'        - consistent_consecutive_mode: Logical. If TRUE, look for strings common with consecutive variables.
 #'        - consecutive_range: Integer. For variable_compare_mode == "reduced", only looks at variables this many before and after.
 #'        - variable_compare_mode: String. Either "complete" or "reduced" - affects how variables are compared.
@@ -1039,13 +1039,13 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
 #'   \item `splitbylabelvalues = FALSE`: Split if the actual label values differ (requires exact match including order). Off by default for performance.
 #'   \item `findlongest = FALSE`: If FALSE (default) and `splitbycommonlabel=TRUE`, the common label is assumed to be the text before `statement_sep`. If TRUE, the function actively searches for the Longest Common Substring (LCS) between labels, which is much slower.
 #'   \item `min_lcs_length = 10`: Minimum length for a string to be considered a potential LCS when `findlongest=TRUE`.
-#'   \item `min_common_strings = 5`: When `findlongest=TRUE`, requires an LCS candidate to be common to at least this many variables in the group to be prioritized.
+#'   \item `min_common_strings = 5`: When `findlongest=TRUE`, requires an LCS candidate to be common to at least this many variables for grouping. If no LCS meets this threshold, variables receive unique LCS values and split into separate groups.
 #'   \item `consistent_consecutive_mode = FALSE`: Alternative LCS finding logic (experimental/unused by default).
 #'   \item `consecutive_range = 10`: Range for comparing variables in 'reduced' mode.
 #'   \item `variable_compare_mode = "reduced"`: How variables are compared when `findlongest=TRUE` ("complete" or "reduced").
 #' }
 #' Finding the LCS (`findlongest = TRUE`) uses \code{\link{get_longest_common_substring}}.
-#' Note: If the last variable in a group retains its full label as `question_lcs`, `min_common_strings` might be set too high.
+#' Note: If variables unexpectedly split into separate groups, `min_common_strings` might be set higher than the number of similar variables in your data.
 #'
 #' @return The input `temp_dpdict` data frame with updated 'question_group'
 #'         and 'question_lcs' columns
@@ -1331,7 +1331,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
             # but another question group has too few statements such that min_common_strings is not reached
             # not as simple as just taking the string common to most variables as we also want to maximise length
             # e.g. where there are common substrings e.g. where there is a question, statement and brand separated by seps
-            # CURRENT SOLUTION: where no variables found meeting the min_common_strings, we take the most common string, and only then, if multiple, the longest lcs, instead of j_name
+            # CURRENT SOLUTION: hen no LCS meets min_common_strings threshold, assign each variable its own full label as LCS. This ensures splitbycommonlabel will separate them into different groups, respecting the minimum threshold requirement.
 
             variabledpdict_summary <- variabledpdict[, c("lcs", "lcs_distance")]
             variabledpdict_summary$n <- vapply(variabledpdict_summary$lcs, # n here is the number of variables with matching lcs
@@ -1339,7 +1339,11 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
                                                numeric(1))
 
             if(nrow(subset(variabledpdict_summary, n >= min_common_strings)) < 1){
-              variabledpdict_summary <- variabledpdict_summary[which.max(variabledpdict_summary$n), ]
+              # If min_common_strings threshold not met, assign each variable its OWN UNIQUE full label as LCS
+              best_lcs <- ifelse(ignorelabelbeforeprefix,
+                                 current_question_dpdict$variable_labels_less_prefix[current_question_dpdict$variable_names == j_name],
+                                 current_question_dpdict$variable_labels[current_question_dpdict$variable_names == j_name])
+              best_lcs_distance <- nchar(best_lcs)
             } else {
               variabledpdict_summary <- subset(variabledpdict_summary, n >= min_common_strings)
             }

@@ -40,7 +40,7 @@ Defaults are used if not provided. See \code{\link{check_seps}}. Key elements:
 - splitbylabelvalues: Logical. If TRUE, each variable with different actual label values gets a new suffix (exact match required, including order). Default FALSE.
 - findlongest: Logical. If TRUE, finds longest common substring (computationally expensive).
 - min_lcs_length: Integer. Any potential lcs shorter than this is disqualified.
-- min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables.
+- min_common_strings: Integer. For findlongest == TRUE, looks for substrings common to at least this many variables. Variables in groups smaller than this threshold will each receive unique LCS values, causing them to split into separate groups.
 - consistent_consecutive_mode: Logical. If TRUE, look for strings common with consecutive variables.
 - consecutive_range: Integer. For variable_compare_mode == "reduced", only looks at variables this many before and after.
 - variable_compare_mode: String. Either "complete" or "reduced" - affects how variables are compared.}
@@ -75,13 +75,13 @@ Default \code{config} settings:
 \item \code{splitbylabelvalues = FALSE}: Split if the actual label values differ (requires exact match including order). Off by default for performance.
 \item \code{findlongest = FALSE}: If FALSE (default) and \code{splitbycommonlabel=TRUE}, the common label is assumed to be the text before \code{statement_sep}. If TRUE, the function actively searches for the Longest Common Substring (LCS) between labels, which is much slower.
 \item \code{min_lcs_length = 10}: Minimum length for a string to be considered a potential LCS when \code{findlongest=TRUE}.
-\item \code{min_common_strings = 5}: When \code{findlongest=TRUE}, requires an LCS candidate to be common to at least this many variables in the group to be prioritized.
+\item \code{min_common_strings = 5}: When \code{findlongest=TRUE}, requires an LCS candidate to be common to at least this many variables for grouping. If no LCS meets this threshold, variables receive unique LCS values and split into separate groups.
 \item \code{consistent_consecutive_mode = FALSE}: Alternative LCS finding logic (experimental/unused by default).
 \item \code{consecutive_range = 10}: Range for comparing variables in 'reduced' mode.
 \item \code{variable_compare_mode = "reduced"}: How variables are compared when \code{findlongest=TRUE} ("complete" or "reduced").
 }
 Finding the LCS (\code{findlongest = TRUE}) uses \code{\link{get_longest_common_substring}}.
-Note: If the last variable in a group retains its full label as \code{question_lcs}, \code{min_common_strings} might be set too high.
+Note: If variables unexpectedly split into separate groups, \code{min_common_strings} might be set higher than the number of similar variables in your data.
 }
 \examples{
 temp_dat <- get_big_test_dat(n=10)
