@@ -33,7 +33,6 @@ multi_tab_rows(data, rows, cols = NULL, by, ...)
 \item{by}{Variable or specification for splitting data:
 \itemize{
 \item Variable name: splits by all unique values
-\item Subsetting: country\link{c("UK", "US")}
 \item Named list: list("Europe" = country \%in\% c("UK", "FR"), "Asia" = country == "JP")
 }}
 

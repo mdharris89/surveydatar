@@ -2103,9 +2103,16 @@ print.tab_result <- function(x, ...) {
   x_formatted        <- x
   base_row_idx <- which(x_formatted$row_label == statistic$base_label)
 
+  # Identify data rows (exclude base and summary rows) for proper indexing
+  exclude_row_labels <- c(statistic$base_label)
+  if (!is.null(statistic$summary_row)) {
+    exclude_row_labels <- c(exclude_row_labels, statistic$summary_row)
+  }
+  data_row_mask <- !(x$row_label %in% exclude_row_labels)
+
   for (col in names(x_formatted)[-1]) {
     orig <- x[[col]]
-    col_idx <- which(names(x_formatted) == col) - 1  # Adjust for row_label column
+    col_idx <- which(names(x)[-1] == col)
 
     # Check if this column is the base column
     base_orientation <- attr(x_formatted, "base_orientation")
@@ -2125,34 +2132,49 @@ print.tab_result <- function(x, ...) {
         formatted_val <- statistic$format_fn(orig[i])
 
         # Add significance indicators from all tests
-        if (!is.null(all_sig)) {
+        if (!is.null(all_sig) && data_row_mask[i]) {
           sig_indicators <- character()
+
+          # The sig matrix only contains data rows, so we need to count how many data rows come before the current row
+          sig_row_idx <- sum(data_row_mask[1:i])
 
           for (test_name in names(all_sig)) {
             sig_result <- all_sig[[test_name]]
 
-            if (i <= nrow(sig_result$levels) && col_idx <= ncol(sig_result$levels)) {
-              sig_level <- sig_result$levels[i, col_idx]
+            if (!is.null(sig_result$levels) &&
+                is.matrix(sig_result$levels) &&
+                sig_row_idx <= nrow(sig_result$levels) &&
+                col_idx <= ncol(sig_result$levels)) {
 
-              if (sig_level == "higher") {
-                # Find which column this test is comparing to
-                versus_col <- sig_result$versus
-                # Extract column letter
-                if (grepl("column", versus_col)) {
-                  # Extract column name from versus string
-                  versus_col_name <- sub(".*: ", "", versus_col)
-                  if (versus_col_name %in% names(col_letters)) {
-                    sig_indicators <- c(sig_indicators,
-                                        paste0(col_letters[versus_col_name], "+"))
+              sig_level <- sig_result$levels[sig_row_idx, col_idx]
+
+              if (!is.na(sig_level) && nzchar(sig_level)) {
+                if (sig_level == "higher") {
+                  ref_col_name <- test_name
+
+                  if (!ref_col_name %in% names(col_letters) && !is.null(sig_result$versus)) {
+                    # Extract column name from "column N: Name" format
+                    if (grepl("^column \\d+: ", sig_result$versus)) {
+                      ref_col_name <- sub("^column \\d+: ", "", sig_result$versus)
+                    }
                   }
-                }
-              } else if (sig_level == "lower") {
-                versus_col <- sig_result$versus
-                if (grepl("column", versus_col)) {
-                  versus_col_name <- sub(".*: ", "", versus_col)
-                  if (versus_col_name %in% names(col_letters)) {
+
+                  if (ref_col_name %in% names(col_letters)) {
                     sig_indicators <- c(sig_indicators,
-                                        paste0(col_letters[versus_col_name], "-"))
+                                        paste0(col_letters[ref_col_name], "+"))
+                  }
+                } else if (sig_level == "lower") {
+                  ref_col_name <- test_name
+
+                  if (!ref_col_name %in% names(col_letters) && !is.null(sig_result$versus)) {
+                    if (grepl("^column \\d+: ", sig_result$versus)) {
+                      ref_col_name <- sub("^column \\d+: ", "", sig_result$versus)
+                    }
+                  }
+
+                  if (ref_col_name %in% names(col_letters)) {
+                    sig_indicators <- c(sig_indicators,
+                                        paste0(col_letters[ref_col_name], "-"))
                   }
                 }
               }
@@ -3723,21 +3745,56 @@ add_sig_all <- function(tab_result,
     stop("Input must be a tab_result object")
   }
 
+  # Get statistic info to identify summary columns
+  statistic <- attr(tab_result, "statistic")
+
+  # Build list of columns to exclude
+  columns_to_exclude <- character()
+
+  # Always exclude base column
+  if (!is.null(statistic$base_label)) {
+    columns_to_exclude <- c(columns_to_exclude, statistic$base_label)
+  }
+
+  # Always exclude summary columns
+  if (!is.null(statistic$summary_col)) {
+    columns_to_exclude <- c(columns_to_exclude, statistic$summary_col)
+  }
+  if (!is.null(statistic$summary_row)) {
+    # In case summary_row appears as a column somehow
+    columns_to_exclude <- c(columns_to_exclude, statistic$summary_row)
+  }
+
+  # Add any user-specified exclusions
+  if (!is.null(exclude)) {
+    columns_to_exclude <- c(columns_to_exclude, exclude)
+  }
+
   # Get all column names except row_label
   col_names <- names(tab_result)[-1]
 
-  # Exclude specified columns
-  if (!is.null(exclude)) {
-    col_names <- setdiff(col_names, exclude)
+  # Remove excluded columns
+  col_names <- setdiff(col_names, columns_to_exclude)
+
+  # Only proceed if there are columns left to test
+  if (length(col_names) == 0) {
+    warning("No columns left to test after excluding summary/base columns")
+    return(tab_result)
   }
 
-  # Add significance vs each column
+  # Add significance vs each remaining column
   for (col in col_names) {
-    tab_result <- add_sig(tab_result,
-                          versus = col,
-                          test = test,
-                          level = level,
-                          adjust = adjust)
+    # Use tryCatch to handle any issues with individual columns
+    tryCatch({
+      tab_result <- add_sig(tab_result,
+                            versus = col,
+                            test = test,
+                            level = level,
+                            adjust = adjust,
+                            name = col)  # Use column name as test name
+    }, error = function(e) {
+      warning("Could not add significance for column '", col, "': ", e$message)
+    })
   }
 
   return(tab_result)
@@ -4453,7 +4510,6 @@ merge_tab_metadata <- function(result, tab1, tab2, direction, prefix, new_col_na
 #' @param cols Column specification (same as tab())
 #' @param by Variable or specification for splitting data:
 #'   - Variable name: splits by all unique values
-#'   - Subsetting: country[c("UK", "US")]
 #'   - Named list: list("Europe" = country %in% c("UK", "FR"), "Asia" = country == "JP")
 #' @param direction "cols" (side-by-side) or "rows" (stacked)
 #' @param include_total Include a total group with all data?
