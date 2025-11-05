@@ -4,7 +4,7 @@
 \alias{.transform_line_area}
 \title{Transform for line/area charts}
 \usage{
-.transform_line_area(df, n_rows, n_cols, col_names)
+.transform_line_area(df, n_rows, n_cols, col_names, stat_info)
 }
 \description{
 Transform for line/area charts

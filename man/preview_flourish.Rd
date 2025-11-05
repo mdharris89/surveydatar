@@ -6,7 +6,6 @@
 \usage{
 preview_flourish(
   x,
-  chart_type = NULL,
   api_key = Sys.getenv("FLOURISH_API_KEY"),
   display = c("inline", "viewer"),
   viewer = getOption("viewer", utils::browseURL),
@@ -15,8 +14,6 @@ preview_flourish(
 }
 \arguments{
 \item{x}{A flourish_tab object created by \code{\link{tab_to_flourish}}}
-
-\item{chart_type}{Optional chart type to override the one in the flourish_tab object}
 
 \item{api_key}{Flourish API key. Defaults to FLOURISH_API_KEY environment variable}
 

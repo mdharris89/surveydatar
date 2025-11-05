@@ -2,11 +2,11 @@
 % Please edit documentation in R/tabtoflourish.R
 \name{.transform_pie_donut}
 \alias{.transform_pie_donut}
-\title{Transform for pie/donut charts}
+\title{Transform for donut charts}
 \usage{
-.transform_pie_donut(df, n_rows, n_cols, col_names)
+.transform_pie_donut(df, n_rows, n_cols, col_names, stat_info)
 }
 \description{
-Transform for pie/donut charts
+Transform for donut charts
 }
 \keyword{internal}

@@ -98,14 +98,17 @@ test_that("tab_to_flourish data cleaning works", {
 
   # Test stripping options
   fltab_strip_all <- tab_to_flourish(tab_result,
-                                     strip_base = TRUE,
                                      strip_summary_rows = TRUE,
                                      strip_summary_cols = TRUE)
 
+  # Base is always stripped for Flourish
   expect_false("Base (n)" %in% fltab_strip_all$data$row_label)
 
-  fltab_keep_base <- tab_to_flourish(tab_result, strip_base = FALSE)
-  expect_true("Base (n)" %in% fltab_keep_base$data$row_label)
+  # Base should always be stripped, even with other options set to FALSE
+  fltab_keep_summaries <- tab_to_flourish(tab_result, 
+                                          strip_summary_rows = FALSE,
+                                          strip_summary_cols = FALSE)
+  expect_false("Base (n)" %in% fltab_keep_summaries$data$row_label)
 })
 
 test_that("tab_to_flourish handles different chart types", {
@@ -119,36 +122,13 @@ test_that("tab_to_flourish handles different chart types", {
   tab_result <- tab(test_data, gender, region)
 
   # Test explicit chart types
-  chart_types <- c("column_grouped", "bar_grouped", "table", "pie", "line")
+  chart_types <- c("column_grouped", "bar_grouped", "table", "donut", "line")
 
   for (chart_type in chart_types) {
     fltab <- tab_to_flourish(tab_result, chart_type = chart_type)
     expect_equal(fltab$chart_type, chart_type)
     expect_s3_class(fltab, "flourish_tab")
   }
-})
-
-test_that("tab_to_flourish percent scaling works", {
-  skip_if_not_installed("tidyr")
-
-  test_data <- data.frame(
-    gender = factor(c("Male", "Female", "Male", "Female")),
-    region = factor(c("North", "South", "East", "West"))
-  )
-
-  tab_result <- tab(test_data, gender, region, statistic = "column_pct")
-
-  # Test auto scaling
-  fltab_auto <- tab_to_flourish(tab_result, percent_scale = "auto")
-  expect_s3_class(fltab_auto, "flourish_tab")
-
-  # Test 0-1 scaling
-  fltab_01 <- tab_to_flourish(tab_result, percent_scale = "0-1")
-  expect_s3_class(fltab_01, "flourish_tab")
-
-  # Test 0-100 scaling
-  fltab_100 <- tab_to_flourish(tab_result, percent_scale = "0-100")
-  expect_s3_class(fltab_100, "flourish_tab")
 })
 
 test_that("print.flourish_tab works correctly", {
@@ -171,15 +151,6 @@ test_that("print.flourish_tab works correctly", {
 
 test_that("tab_to_flourish error handling works", {
   expect_error(tab_to_flourish("not_a_tab_result"), "tab_result")
-
-  # Test with invalid percent_scale
-  test_data <- data.frame(
-    gender = factor(c("Male", "Female")),
-    region = factor(c("North", "South"))
-  )
-
-  tab_result <- tab(test_data, gender, region)
-  expect_error(tab_to_flourish(tab_result, percent_scale = "invalid"), "arg")
 })
 
 test_that("tab_to_flourish handles rows_list and complex specifications", {
@@ -198,8 +169,7 @@ test_that("tab_to_flourish handles rows_list and complex specifications", {
 
   fltab <- tab_to_flourish(tab_result)
   expect_s3_class(fltab, "flourish_tab")
-  expect_true("High Cyl" %in% fltab$data$row_label ||
-                any(grepl("High Cyl", fltab$data$row_label)))
+  expect_true("High Cyl" %in% names(fltab$data))
 })
 
 test_that("preview_flourish requires correct inputs", {

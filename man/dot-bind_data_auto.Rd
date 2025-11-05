@@ -4,7 +4,7 @@
 \alias{.bind_data_auto}
 \title{Bind data to Flourish widget based on chart type}
 \usage{
-.bind_data_auto(widget, ft, chart_type, api_key)
+.bind_data_auto(widget, ft, chart_type, api_key, data_for_binding = NULL)
 }
 \description{
 Bind data to Flourish widget based on chart type

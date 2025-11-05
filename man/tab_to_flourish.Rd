@@ -8,10 +8,9 @@ tab_to_flourish(
   tab_result,
   chart_type = NULL,
   long = TRUE,
-  strip_base = TRUE,
   strip_summary_rows = TRUE,
   strip_summary_cols = TRUE,
-  percent_scale = c("auto", "0-1", "0-100"),
+  table_settings = NULL,
   settings = NULL,
   ...
 )
@@ -21,13 +20,11 @@ tab_to_flourish(
 
 \item{long}{Should the data be pivoted to long format? (default TRUE)}
 
-\item{strip_base}{Remove the "Base (n)" row? (default TRUE)}
+\item{strip_summary_rows}{Remove NET / Avg rows? (default TRUE for non-table charts)}
 
-\item{strip_summary_rows}{Remove NET / Avg rows? (default TRUE)}
+\item{strip_summary_cols}{Remove Total / NET columns? (default TRUE for non-table charts)}
 
-\item{strip_summary_cols}{Remove Total / NET columns? (default TRUE)}
-
-\item{percent_scale}{How percentages are stored: "auto", "0-1", "0-100"}
+\item{table_settings}{Named list of table-specific settings. See details for options.}
 
 \item{settings}{Named list corresponding to flourish settings with dot notation e.g. "number_format.suffix" = "\%"}
 
@@ -45,6 +42,48 @@ An object of class "flourish_tab" containing:
 }
 \description{
 Convert a surveydatar tab_result into a Flourish-ready object
+}
+\details{
+This function extracts metadata from the tab_result (statistic info, summary labels, etc.)
+at the start, then transforms the data values for Flourish visualization. The transform
+functions work with plain data frames and don't preserve tab_result-specific attributes
+(arrays, base_matrix, etc.) since these are not needed for visualization. Base counts are
+always removed as Flourish cannot handle them elegantly in visualizations (base can appear
+as either a row or column depending on the statistic). If chart_type is not specified, the
+function automatically selects an appropriate chart type based on the statistic type and
+data dimensions. For example, count tables with many columns (>4) will use a table chart,
+while simpler structures use bar or column charts. Percentage statistics may use stacked
+or grouped charts depending on the number of rows and columns.
+
+For stacked and grouped charts, the transformation depends on the statistic:
+\itemize{
+\item For \code{column_pct}: Data is transposed so columns become x-axis and rows become stacks/groups
+\item For \code{row_pct}: Data is not transposed; rows become bars and columns become stacks/groups
+}
+This ensures the visualization always matches user intuition: the dimension that sums to 100\%
+is shown as the primary visual element (column or bar).
+\subsection{Table Settings}{
+
+The \code{table_settings} parameter accepts a named list with the following options:
+
+\strong{Color Coding:}
+\itemize{
+\item \code{color_mode} - Character: "none" (default) or "heatmap"
+\item \code{color_midpoint} - Numeric value, "mean", or "median". Midpoint for diverging color scale (default "mean")
+\item \code{color_palette} - Character vector of 3 colors (low, mid, high). Defaults to soft blue-white-red
+}
+
+Heatmap coloring applies a gradient to each numeric column independently,
+with each column scaled from its minimum to maximum value.
+
+\strong{Table Display:}
+\itemize{
+\item \code{rows_per_page} - Integer: Number of rows per page (default 20)
+\item \code{show_sorting} - Logical: Enable column sorting (default TRUE)
+\item \code{show_search} - Logical: Enable search/filter box (default TRUE)
+\item \code{first_column_width} - Numeric: Width multiplier for first column (default 2)
+}
+}
 }
 \examples{
 f_tab <- data \%>\% tab(q1, gender) \%>\% tab_to_flourish()

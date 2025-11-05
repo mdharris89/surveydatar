@@ -1,6 +1,6 @@
 ## Introduction
 
-The surveydatar package provides seamless integration with Flourish, allowing you to convert cross-tabulation results into interactive charts. This vignette demonstrates how to create publication-ready visualizations from survey-style analysis using the familiar mtcars dataset.
+The surveydatar package provides an integration with Flourish via flourishcharts, allowing you to convert cross-tabulation results into a selection of beautiful interactive charts. This vignette demonstrates how to create flourish visualizations from survey-style analysis using the familiar mtcars dataset.
 
 ## Setting Up Your Data
 
@@ -66,11 +66,9 @@ settings = list(
 preview_flourish(fltab_styled)
 ```
 
-## Advanced Examples
-
 ### Using rows_list for Complex Groupings
 
-Create more sophisticated analyses using `rows_list()`:
+Create more complicated analyses using tab's `rows_list()`:
 
 ```{r rows-list}
 # Complex row groupings
@@ -92,13 +90,13 @@ settings = list(
   "layout.title" = "Car Categories by Performance and Efficiency"
 )
 )
+
+preview_flourish(fltab_advanced)
 ```
 
 ### Mean Statistics for Numeric Analysis
 
 Analyze continuous variables using mean statistics:
-
-TO DO: this doesn't work currently
 
 ```{r mean-analysis}
 # Average horsepower by categories
@@ -120,25 +118,20 @@ settings = list(
   "number_format.suffix" = " hp"
 )
 )
+
+preview_flourish(fltab_hp)
 ```
 
 ### Time Series Style Analysis
 
-Create line charts for pseudo-time series data:
+Create line charts for time series data:
 
 ```{r line-chart}
-# Create data with multiple numeric columns
-mpg_by_cyl <- mtcars2 %>%
-group_by(cyl) %>%
-summarise(
-  `1970s` = mean(mpg[model %in% c("Mazda RX4", "Datsun 710")], na.rm = TRUE),
-  `1980s` = mean(mpg[!model %in% c("Mazda RX4", "Datsun 710")], na.rm = TRUE),
-  .groups = "drop"
-)
+# Add a year column to create time series data
+mtcars2$year <- factor(sample(1973:1975, nrow(mtcars2), replace = TRUE))
 
-# Manual tab_result creation for demonstration
-# (In practice, you'd structure your data differently)
-tab_line <- tab(mtcars2, cyl_category, mpg_category, statistic = "mean", values = "mpg")
+# Create a tab showing average MPG over time by cylinder category
+tab_line <- tab(mtcars2, cyl_category, year, statistic = "mean", values = "mpg")
 
 fltab_line <- tab_to_flourish(
 tab_line,
@@ -148,13 +141,286 @@ settings = list(
   "number_format.suffix" = " mpg"
 )
 )
+
+preview_flourish(fltab_line)
+```
+
+#### Stacked Column Charts
+
+Show composition within categories:
+
+```{r stacked-column}
+# Create percentage data for stacking
+tab_stacked <- tab(mtcars2, performance, cyl_category, statistic = "column_pct")
+
+fltab_stacked <- tab_to_flourish(
+  tab_stacked,
+  chart_type = "column_stacked",
+  settings = list(
+    "layout.title" = "Performance Distribution by Cylinder Category"
+  )
+)
+
+preview_flourish(fltab_stacked)
+```
+
+#### Proportional Stacked Columns
+
+Show 100% composition for comparison:
+
+```{r stacked-column-prop}
+fltab_stacked_prop <- tab_to_flourish(
+  tab_stacked,
+  chart_type = "column_stacked_prop",
+  settings = list(
+    "layout.title" = "Performance Distribution (Proportional)"
+  )
+)
+
+preview_flourish(fltab_stacked_prop)
+```
+
+#### Stacked Bar Charts
+
+Horizontal stacked bars for longer category labels:
+
+```{r stacked-bar}
+tab_bar <- tab(mtcars2, cyl_category, performance, statistic = "row_pct")
+
+fltab_bar_stacked <- tab_to_flourish(
+  tab_bar,
+  chart_type = "bar_stacked",
+  settings = list(
+    "layout.title" = "Cylinder Distribution Across Performance Categories"
+  )
+)
+
+preview_flourish(fltab_bar_stacked)
+```
+
+#### Proportional Stacked Bars
+
+```{r stacked-bar-prop}
+fltab_bar_stacked_prop <- tab_to_flourish(
+  tab_bar,
+  chart_type = "bar_stacked_prop",
+  settings = list(
+    "layout.title" = "Cylinder Distribution (Proportional)"
+  )
+)
+
+preview_flourish(fltab_bar_stacked_prop)
+```
+
+#### Area Charts
+
+Filled line charts for showing distributions across ordered categories:
+
+```{r area-chart}
+# Create ordered horsepower bins to show distribution
+mtcars2$hp_range <- cut(mtcars2$hp, 
+                         breaks = c(0, 100, 150, 200, 250, 350),
+                         labels = c("50-100", "100-150", "150-200", "200-250", "250+"),
+                         include.lowest = TRUE)
+
+# Count of cars by cylinder category across HP ranges
+tab_area <- tab(mtcars2, cyl_category, hp_range, statistic = "count")
+
+fltab_area <- tab_to_flourish(
+  tab_area,
+  chart_type = "area",
+  settings = list(
+    "layout.title" = "Vehicle Distribution Across Horsepower Ranges"
+  )
+)
+
+preview_flourish(fltab_area)
+```
+
+#### Stacked Area Charts
+
+Show cumulative values across ordered categories:
+
+```{r area-stacked}
+# Use the same HP range to show cumulative distribution
+tab_area_stacked <- tab(mtcars2, cyl_category, hp_range, statistic = "count")
+
+fltab_area_stacked <- tab_to_flourish(
+  tab_area_stacked,
+  chart_type = "area_stacked",
+  settings = list(
+    "layout.title" = "Cumulative Vehicle Distribution by Engine Type"
+  )
+)
+
+preview_flourish(fltab_area_stacked)
+```
+
+#### Donut Charts
+
+Show proportions of a single categorical variable as a circular chart:
+
+```{r donut}
+# Single variable distribution
+tab_donut <- tab(mtcars2, performance)
+
+fltab_donut <- tab_to_flourish(
+  tab_donut,
+  chart_type = "donut",
+  settings = list(
+    "layout.title" = "Distribution of Performance Categories"
+  )
+)
+
+preview_flourish(fltab_donut)
+```
+
+### Table View
+
+Create beautiful, interactive tables for showing detailed survey data. Tables support advanced features like color coding, pagination, sorting, and search.
+
+#### Preparing the Data
+
+First, let's create detailed categorical variables suitable for tabular display:
+
+```{r detailed-variables}
+# Create detailed MPG categories
+mtcars2$mpg_detailed <- cut(mtcars2$mpg, 
+                             breaks = c(0, 15, 18, 21, 24, 27, 35), 
+                             labels = c("Very Low (<15)", "Low (15-18)", 
+                                       "Medium (18-21)", "Good (21-24)", 
+                                       "Very Good (24-27)", "Excellent (27+)"))
+
+# Create horsepower class categories
+mtcars2$hp_class <- cut(mtcars2$hp, 
+                         breaks = c(0, 100, 150, 200, 250, 350), 
+                         labels = c("Economy (<100)", "Standard (100-150)", 
+                                   "Performance (150-200)", "High Performance (200-250)", 
+                                   "Extreme (250+)"))
+
+# Preview the cross-tabulation
+tab_detailed <- tab(mtcars2, mpg_detailed, hp_class)
+tab_detailed
+```
+
+#### Basic Table Chart
+
+Convert to a basic Flourish table with default settings:
+
+```{r basic-table}
+# Create a basic table chart
+fltab_basic <- tab_to_flourish(
+  tab_detailed,
+  chart_type = "table"
+)
+
+# Preview (requires Flourish API key)
+preview_flourish(fltab_basic)
+```
+
+#### Heatmap Color Coding
+
+Add color coding to highlight patterns in your data:
+
+```{r table-heatmap}
+# Add heatmap coloring (each column scaled independently)
+fltab_heatmap <- tab_to_flourish(
+  tab_detailed,
+  chart_type = "table",
+  table_settings = list(
+    color_mode = "heatmap",
+    color_midpoint = "mean"
+  )
+)
+
+preview_flourish(fltab_heatmap)
+```
+
+You can customize the color midpoint calculation:
+
+```{r table-heatmap-median}
+# Use median as midpoint instead of mean
+fltab_heatmap_median <- tab_to_flourish(
+  tab_detailed,
+  chart_type = "table",
+  table_settings = list(
+    color_mode = "heatmap",
+    color_midpoint = "median"
+  )
+)
+
+preview_flourish(fltab_heatmap_median)
+```
+
+#### Custom Pagination and Search
+
+Control how many rows appear per page and enable search functionality:
+
+```{r table-pagination}
+# Table with pagination and search
+fltab_paginated <- tab_to_flourish(
+  tab_detailed,
+  chart_type = "table",
+  table_settings = list(
+    rows_per_page = 2,
+    show_search = TRUE,
+    show_sorting = TRUE
+  )
+)
+
+preview_flourish(fltab_paginated)
+```
+
+#### Custom Color Palettes
+
+Specify your own color palette for heatmaps:
+
+```{r table-custom-colors}
+# Custom brand colors
+fltab_custom <- tab_to_flourish(
+  tab_detailed,
+  chart_type = "table",
+  table_settings = list(
+    color_mode = "heatmap",
+    color_palette = c("#1f77b4", "#ffffff", "#ff7f0e"),  # Blue-White-Orange
+    color_midpoint = 50  # Specific midpoint value
+  )
+)
+
+preview_flourish(fltab_custom)
+```
+
+#### Combining Table Features
+
+Combine multiple settings for a fully customized table:
+
+```{r table-combined}
+# Professional table with all features
+fltab_professional <- tab_to_flourish(
+  tab_detailed,
+  chart_type = "table",
+  table_settings = list(
+    color_mode = "heatmap",
+    color_midpoint = "mean",
+    rows_per_page = 20,
+    show_search = TRUE,
+    show_sorting = TRUE,
+    first_column_width = 2.0  # Make row labels extra wide
+  ),
+  settings = list(
+    chart_layout_title = "Vehicle Distribution: Fuel Efficiency vs Engine Power",
+    chart_layout_subtitle = "Based on mtcars dataset"
+  )
+)
+
+preview_flourish(fltab_professional)
 ```
 
 ## Chart Type Selection
 
 ### Automatic Chart Type Detection
 
-The package automatically selects appropriate chart types based on your data:
+The package automatically selects appropriate chart types based on your data structure and statistic type. For count statistics, tables with many columns (>4) will use a table chart, while simpler structures use bar or column charts:
 
 ```{r auto-chart-types}
 # Different data structures get different chart types
@@ -169,10 +435,10 @@ tab_single <- tab(mtcars2, performance)
 fltab_single <- tab_to_flourish(tab_single)
 cat("Single column chart type:", fltab_single$chart_type, "\n")
 
-# Many categories → table
-tab_detailed <- tab(mtcars2, model, cyl_category)
+# Many rows and columns → table
+tab_detailed <- tab(mtcars2, mpg_detailed, hp_class)
 fltab_detailed <- tab_to_flourish(tab_detailed)
-cat("Detailed table chart type:", fltab_detailed$chart_type, "\n")
+cat("Large table chart type:", fltab_detailed$chart_type, "\n")
 ```
 
 ### Explicit Chart Type Control
@@ -181,7 +447,7 @@ Override automatic selection when needed:
 
 ```{r explicit-chart-types}
 # Force different chart types
-chart_types <- c("column_grouped", "bar_grouped", "pie", "table")
+chart_types <- c("column_grouped", "bar_grouped", "donut", "table")
 
 for (chart_type in chart_types) {
 fltab <- tab_to_flourish(tab_result, chart_type = chart_type)
@@ -194,83 +460,22 @@ cat("Chart type:", chart_type, "- Data dimensions:",
 
 ### Controlling Summary Rows and Columns
 
-Customize which elements appear in your charts:
+Customize which elements appear in your charts. Note that base counts are always removed for Flourish visualizations as they cannot be handled elegantly:
 
 ```{r formatting-options}
-# Remove base counts and summary rows for cleaner charts
+# Remove summary rows and columns for cleaner charts (default is TRUE)
 fltab_clean <- tab_to_flourish(
 tab_result,
-strip_base = TRUE,
 strip_summary_rows = TRUE,
 strip_summary_cols = TRUE
 )
 
-# Keep everything for detailed analysis
+# Keep summary rows and columns for more detailed analysis
 fltab_detailed <- tab_to_flourish(
 tab_result,
-strip_base = FALSE,
 strip_summary_rows = FALSE,
 strip_summary_cols = FALSE
 )
-```
-
-### Percent Scaling
-
-Control how percentages are handled:
-
-```{r percent-scaling}
-# Different scaling approaches
-tab_pct <- tab(mtcars2, cyl_category, mpg_category, statistic = "column_pct")
-
-# Auto-detect scaling (recommended)
-fltab_auto <- tab_to_flourish(tab_pct, percent_scale = "auto")
-
-# Force 0-100 scale
-fltab_100 <- tab_to_flourish(tab_pct, percent_scale = "0-100")
-
-# Force 0-1 scale
-# TO DO: this needs fixing
-fltab_01 <- tab_to_flourish(tab_pct, percent_scale = "0-1")
-```
-
-## Integration Workflow
-
-### Complete Workflow Example
-
-Here's a complete example combining everything:
-
-```{r complete-workflow}
-# 1. Create comprehensive analysis
-comprehensive_tab <- tab(
-  mtcars2,
-  rows = rows_list(
-    "All Vehicles" = cyl_category,
-    "Sports Cars" = cyl_category * (hp >= 150) * (qsec <= 16),
-    "Economy Cars" = cyl_category * (mpg >= 25)
-  ),
-  cols = mpg_category,
-  statistic = "column_pct"
-)
-
-# 2. Convert with full customization
-fltab_final <- tab_to_flourish(
-  comprehensive_tab,
-  chart_type = "column_grouped",
-  strip_base = TRUE,
-  settings = list(
-    "layout.title" = "Vehicle Analysis: Efficiency vs Performance",
-    "layout.subtitle" = "Percentage distribution across categories",
-    "layout.source" = "Data: mtcars dataset",
-    "labels" = TRUE,
-    "number_format.suffix" = "%",
-    "number_format.n_dec" = 1,
-    "y.linear_max" = 100,
-    "y.linear_min" = 0
-  )
-)
-
-# 3. Preview (requires API key setup)
-preview_flourish(fltab_final)
 ```
 
 ### Direct Flourish Manipulation
@@ -316,16 +521,4 @@ FLOURISH_API_KEY=your_api_key_here
 
 ``` r
 install.packages(c("flourishcharts", "tidyr"))
-```
-
-## Conclusion
-
-The surveydatar-Flourish integration provides a powerful workflow for creating interactive visualizations from survey analysis. Key benefits include:
-
--   **Seamless Integration**: Direct conversion from `tab()` results to Flourish charts
--   **Intelligent Defaults**: Automatic chart type selection and formatting
--   **Full Customization**: Complete control over Flourish settings and appearance
--   **Multiple Chart Types**: Support for columns, bars, lines, pies, and tables
--   **Professional Output**: Publication-ready interactive charts
-
-This integration bridges the gap between statistical analysis and data visualization, making it easy to create compelling presentations of your survey findings.
+``

@@ -4,13 +4,7 @@
 \alias{.clean_tab_data}
 \title{Clean tab data by removing metadata rows/columns}
 \usage{
-.clean_tab_data(
-  tab_result,
-  stat_info,
-  strip_base,
-  strip_summary_rows,
-  strip_summary_cols
-)
+.clean_tab_data(tab_result, stat_info, strip_summary_rows, strip_summary_cols)
 }
 \description{
 Clean tab data by removing metadata rows/columns

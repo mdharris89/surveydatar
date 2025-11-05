@@ -4,7 +4,7 @@
 \alias{.transform_for_chart_type}
 \title{Transform data based on chart type requirements}
 \usage{
-.transform_for_chart_type(df, chart_type, long = TRUE)
+.transform_for_chart_type(df, chart_type, stat_info, long = TRUE)
 }
 \description{
 Transform data based on chart type requirements

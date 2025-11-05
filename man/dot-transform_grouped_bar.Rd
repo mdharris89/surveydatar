@@ -4,7 +4,7 @@
 \alias{.transform_grouped_bar}
 \title{Transform for grouped bar charts}
 \usage{
-.transform_grouped_bar(df, n_rows, n_cols, col_names)
+.transform_grouped_bar(df, n_rows, n_cols, col_names, stat_info)
 }
 \description{
 Transform for grouped bar charts

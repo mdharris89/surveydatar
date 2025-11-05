@@ -4,7 +4,7 @@
 \alias{.transform_stacked_bar}
 \title{Transform for stacked bar charts}
 \usage{
-.transform_stacked_bar(df, n_rows, n_cols, col_names)
+.transform_stacked_bar(df, n_rows, n_cols, col_names, stat_info)
 }
 \description{
 Transform for stacked bar charts

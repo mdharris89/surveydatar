@@ -1,0 +1,398 @@
+---
+title: "Interactive Tables with tab_to_reactable"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Interactive Tables with tab_to_reactable}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+```{r setup}
+library(surveydatar)
+library(reactable)
+```
+
+## Overview
+
+`tab_to_reactable()` converts surveydatar tab results into interactive HTML tables using the reactable package. Unlike `tab_to_flourish()`, which is optimized for various chart types, `tab_to_reactable()` is specifically designed for rich tabular displays with features like:
+
+- Optional base (n) display with special formatting
+- Flexible color coding (heatmap, top-n, significance)
+- Frozen headers and first column
+- Sortable columns
+- Significance testing visualization
+
+## Basic Usage
+
+The workflow follows a two-stage pattern:
+
+1. Create a `reactable_tab` object with `tab_to_reactable()`
+2. Display it with `display_reactable()`
+
+```{r basic}
+# Create sample data
+data <- data.frame(
+  satisfaction = factor(sample(1:5, 200, replace = TRUE)),
+  region = factor(sample(c("North", "South", "East", "West"), 200, replace = TRUE))
+)
+
+# Basic table
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable() %>%
+  display_reactable()
+```
+
+The two-stage approach allows you to inspect the object before rendering:
+
+```{r inspect}
+r_tab <- data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable()
+
+# Inspect the object
+print(r_tab)
+
+# View the data
+head(r_tab$data)
+
+# Then display when ready
+display_reactable(r_tab)
+```
+
+## Base (n) Display
+
+Unlike Flourish tables, reactable tables can elegantly display base counts:
+
+```{r base}
+# Show base (default)
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(show_base = TRUE) %>%
+  display_reactable()
+
+# Hide base
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(show_base = FALSE) %>%
+  display_reactable()
+```
+
+Base rows/columns are automatically styled with a light gray background and italic text to differentiate them from data cells. Values are rounded to integers (appropriate for counts, including weighted data).
+
+## Summary Rows and Columns
+
+Control visibility of NET/Total rows and columns:
+
+```{r summaries}
+# Keep everything (default)
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable() %>%
+  display_reactable()
+
+# Strip summary rows
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(strip_summary_rows = TRUE) %>%
+  display_reactable()
+
+# Strip both summaries and base for a clean data-only view
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    strip_summary_rows = TRUE,
+    strip_summary_cols = TRUE,
+    show_base = FALSE
+  ) %>%
+  display_reactable()
+```
+
+## Color Coding: Heatmap
+
+Heatmap mode applies gradient coloring to cells based on their values:
+
+```{r heatmap}
+# Color within each column (default)
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_scope = "column"
+  ) %>%
+  display_reactable()
+
+# Color within each row
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_scope = "row"
+  ) %>%
+  display_reactable()
+
+# Single scale across the entire table
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_scope = "table"
+  ) %>%
+  display_reactable()
+```
+
+### Customizing the Heatmap
+
+Control the color scale with `color_palette` and `color_midpoint`:
+
+```{r heatmap-custom}
+# Custom midpoint
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_midpoint = "median"  # or "mean" (default), or a specific number
+  ) %>%
+  display_reactable()
+
+# Custom color palette (low, mid, high)
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_palette = c("#2166AC", "#FFFFFF", "#B2182B")  # Blue-white-red
+  ) %>%
+  display_reactable()
+```
+
+## Color Coding: Top N
+
+Highlight the top N values within a specified scope:
+
+```{r topn}
+# Highlight top 3 in each column
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "top_n",
+    color_top_n = 3,
+    color_scope = "column"
+  ) %>%
+  display_reactable()
+
+# Highlight top 5 across entire table
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "top_n",
+    color_top_n = 5,
+    color_scope = "table"
+  ) %>%
+  display_reactable()
+```
+
+## Significance Testing
+
+When significance testing has been applied to a tab result, you can visualize it with colors and/or symbols.
+
+First, let's create data with clear statistical differences between regions:
+
+```{r sig-data}
+# Create data with statistically significant regional differences
+set.seed(123)
+sig_data <- data.frame(
+  satisfaction = factor(c(
+    # North: Higher satisfaction (skewed toward 4-5)
+    sample(4:5, 100, replace = TRUE, prob = c(0.4, 0.6)),
+    # South: Lower satisfaction (skewed toward 2-3)
+    sample(2:3, 100, replace = TRUE, prob = c(0.5, 0.5)),
+    # East: Mixed satisfaction (centered on 3)
+    sample(2:4, 100, replace = TRUE, prob = c(0.3, 0.4, 0.3)),
+    # West: Similar to North but slightly lower
+    sample(3:5, 100, replace = TRUE, prob = c(0.3, 0.4, 0.3))
+  ), levels = 1:5),
+  region = factor(rep(c("North", "South", "East", "West"), each = 100))
+)
+```
+
+### Color Coding for Significance
+
+```{r sig-color}
+sig_data %>%
+  tab(satisfaction, region) %>%
+  add_sig(versus = "region: North") %>%
+  tab_to_reactable(color_mode = "significance") %>%
+  display_reactable()
+```
+
+The color scheme uses directional colors:
+- **Mild green** (#C8E6C9): Significantly above at 90% confidence (p < 0.10)
+- **Strong green** (#66BB6A): Significantly above at 95% confidence (p < 0.05)
+- **Mild red** (#FFCDD2): Significantly below at 90% confidence
+- **Strong red** (#EF5350): Significantly below at 95% confidence
+
+### Significance Symbols
+
+Add directional symbols to values:
+
+```{r sig-symbol}
+sig_data %>%
+  tab(satisfaction, region) %>%
+  add_sig(versus = "region: North") %>%
+  tab_to_reactable(sig_symbol = TRUE) %>%
+  display_reactable()
+```
+
+Symbols used:
+- ↑* : Significantly above at 90% (p < 0.10)
+- ↑** : Significantly above at 95% (p < 0.05)
+- ↓* : Significantly below at 90%
+- ↓** : Significantly below at 95%
+
+### Combining Color and Symbols
+
+`sig_symbol` works independently of `color_mode`, allowing powerful combinations:
+
+```{r sig-combined}
+# Significance colors + symbols
+sig_data %>%
+  tab(satisfaction, region) %>%
+  add_sig(versus = "region: North") %>%
+  tab_to_reactable(
+    color_mode = "significance",
+    sig_symbol = TRUE
+  ) %>%
+  display_reactable()
+
+# Heatmap colors + significance symbols
+sig_data %>%
+  tab(satisfaction, region) %>%
+  add_sig(versus = "region: North") %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_scope = "column",
+    sig_symbol = TRUE
+  ) %>%
+  display_reactable()
+```
+
+### Multiple Significance Comparisons
+
+If your tab has multiple significance tests, specify which one to use:
+
+```{r sig-multiple}
+sig_data %>%
+  tab(satisfaction, region) %>%
+  add_sig(versus = "region: North", name = "vs_North") %>%
+  add_sig(versus = "region: South", name = "vs_South") %>%
+  tab_to_reactable(
+    color_mode = "significance",
+    sig_comparison = "vs_North"
+  ) %>%
+  display_reactable()
+```
+
+If only one comparison exists, it's selected automatically. If multiple exist without specifying `sig_comparison`, you'll get a helpful error message.
+
+## Table Features
+
+### Frozen Headers and Columns
+
+```{r frozen}
+# Freeze first column (default)
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(freeze_first_column = TRUE) %>%
+  display_reactable()
+
+# Disable frozen column
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(freeze_first_column = FALSE) %>%
+  display_reactable()
+```
+
+Headers are frozen by default (`freeze_headers = TRUE`) for easier navigation in long tables.
+
+### Sorting
+
+```{r sorting}
+# Enable sorting (default)
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(enable_sorting = TRUE) %>%
+  display_reactable()
+
+# Disable sorting
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(enable_sorting = FALSE) %>%
+  display_reactable()
+```
+
+Click any column header to sort. Click again to reverse sort order.
+
+### Pagination
+
+```{r pagination}
+# Custom page size
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(pagination = 2) %>%
+  display_reactable()
+
+# Disable pagination
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(pagination = FALSE) %>%
+  display_reactable()
+```
+
+## Display Options
+
+The `display_reactable()` function accepts additional arguments for customization:
+
+```{r display}
+r_tab <- data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable()
+
+# Custom dimensions
+display_reactable(r_tab, height = "400px", width = "100%")
+
+# Pass additional reactable options
+display_reactable(r_tab, compact = TRUE, outlined = TRUE)
+```
+
+## Complete Example
+
+Here's a comprehensive example combining multiple features:
+
+```{r complete}
+data %>%
+  # Create tab with custom statistic
+  tab(satisfaction, region, statistic = "column_pct") %>%
+  # Add significance testing
+  add_sig(versus = "region: North") %>%
+  # Convert to reactable with multiple features
+  tab_to_reactable(
+    show_base = TRUE,
+    color_mode = "heatmap",
+    color_scope = "column",
+    color_midpoint = "mean",
+    sig_symbol = TRUE,
+    freeze_first_column = TRUE,
+    enable_sorting = TRUE,
+    pagination = 15
+  ) %>%
+  # Display
+  display_reactable(height = "500px")
+```
