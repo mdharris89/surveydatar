@@ -4,7 +4,7 @@
 \alias{.combine_tables}
 \title{Combine main and footer tables with CSS styling}
 \usage{
-.combine_tables(main_table, footer_table, font_family)
+.combine_tables(main_table, footer_table, font_family, font_size)
 }
 \description{
 Combine main and footer tables with CSS styling

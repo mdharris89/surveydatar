@@ -18,6 +18,7 @@
 #' @param searchable Logical: enable search/filter box (default FALSE)
 #' @param decimal_places Integer: number of decimal places to display (default 1)
 #' @param font_family Character: CSS font-family to use for the table (default "Consolas, Monaco, 'Courier New', Courier, monospace")
+#' @param font_size Character: CSS font-size for the table (e.g., "12px", "0.9em"). Default is "12px".
 #' @param ... Additional arguments (reserved for future use)
 #'
 #' @return An object of class "reactable_tab" containing:
@@ -90,6 +91,7 @@ tab_to_reactable <- function(tab_result,
                              searchable = FALSE,
                              decimal_places = 1,
                              font_family = "Consolas, Monaco, 'Courier New', Courier, monospace",
+                             font_size = "12px",
                              ...) {
   
   # Validate input
@@ -133,7 +135,8 @@ tab_to_reactable <- function(tab_result,
     pagination = pagination,
     searchable = searchable,
     decimal_places = decimal_places,
-    font_family = font_family
+    font_family = font_family,
+    font_size = font_size
   )
   
   # Return structured object
@@ -310,7 +313,7 @@ display_reactable <- function(x,
     footer_table <- .create_footer_table(x, split_data$footer_data, width)
     
     # Combine tables with CSS styling
-    .combine_tables(main_table, footer_table, x$settings$font_family)
+    .combine_tables(main_table, footer_table, x$settings$font_family, x$settings$font_size)
   } else {
     # Simple case: single table
     .create_single_table(x, height, width, ...)
@@ -564,6 +567,7 @@ display_reactable <- function(x,
     font_css <- htmltools::tags$style(htmltools::HTML(paste0("
       .reactable {
         font-family: ", x$settings$font_family, " !important;
+        font-size: ", x$settings$font_size, " !important;
       }
       .rt-thead .rt-th:hover {
         background-color: #F0F0F0 !important;
@@ -579,7 +583,7 @@ display_reactable <- function(x,
 
 #' Combine main and footer tables with CSS styling
 #' @keywords internal
-.combine_tables <- function(main_table, footer_table, font_family) {
+.combine_tables <- function(main_table, footer_table, font_family, font_size) {
   # Check for htmltools
   if (!requireNamespace("htmltools", quietly = TRUE)) {
     warning("htmltools package not available. Returning main table only.")
@@ -610,6 +614,7 @@ display_reactable <- function(x,
     .main-table .rt-table,
     .footer-table .rt-table {
       font-family: ", font_family, " !important;
+      font-size: ", font_size, " !important;
     }
     .main-table .rt-table {
       border-bottom: none !important;

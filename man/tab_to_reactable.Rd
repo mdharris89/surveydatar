@@ -23,6 +23,7 @@ tab_to_reactable(
   searchable = FALSE,
   decimal_places = 1,
   font_family = "Consolas, Monaco, 'Courier New', Courier, monospace",
+  font_size = "12px",
   ...
 )
 }
@@ -62,6 +63,8 @@ tab_to_reactable(
 \item{decimal_places}{Integer: number of decimal places to display (default 1)}
 
 \item{font_family}{Character: CSS font-family to use for the table (default "Consolas, Monaco, 'Courier New', Courier, monospace")}
+
+\item{font_size}{Character: CSS font-size for the table (e.g., "12px", "0.9em"). Default is "12px".}
 
 \item{...}{Additional arguments (reserved for future use)}
 }
