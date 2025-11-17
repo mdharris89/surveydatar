@@ -648,9 +648,78 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
       return(refresh_layout(tab_result))
     }
     
-    # If to_col is NULL, create diff for all cols vs from_col (not implemented)
-    warning("delta_vs with NULL to_col not yet implemented for cell-based")
-    return(tab_result)
+    # If to_col is NULL, create diff for all cols vs from_col
+    # Loop through all columns except from_col
+    for (col_idx in seq_along(layout$col_defs)) {
+      if (col_idx == from_idx) next  # Skip from_col itself
+      
+      col_def <- layout$col_defs[[col_idx]]
+      to_col_label <- col_def$label
+      
+      # Create derived column: to - from
+      new_col_cells <- character(nrow(layout$grid))
+      
+      for (i in seq_len(nrow(layout$grid))) {
+        from_cell_id <- layout$grid[i, from_idx]
+        to_cell_id <- layout$grid[i, col_idx]
+        
+        if (is.na(from_cell_id) || is.na(to_cell_id)) {
+          new_col_cells[i] <- NA
+          next
+        }
+        
+        from_cell <- get_cell(store, from_cell_id)
+        to_cell <- get_cell(store, to_cell_id)
+        
+        diff_value <- to_cell$value - from_cell$value
+        
+        # Create derived cell
+        derived_spec <- list(
+          base_expr = from_cell$specification$base_expr,
+          row_expr = from_cell$specification$row_expr,
+          col_expr = call("delta", from_col, to_col_label),
+          meta = from_cell$specification$meta
+        )
+        
+        derived_cell_id <- add_cell(
+          store,
+          value = diff_value,
+          base = NA,
+          specification = derived_spec,
+          computation = list(statistic = NA, array_refs = list()),
+          derivation = list(
+            operation = "delta_vs",
+            source_cells = c(from_cell_id, to_cell_id)
+          )
+        )
+        
+        new_col_cells[i] <- derived_cell_id
+      }
+      
+      # Create layout_def for new derived column
+      diff_label <- if (!is.null(label)) {
+        paste(label, to_col_label, sep = " ")
+      } else {
+        paste(to_col_label, "-", from_col)
+      }
+      
+      derived_col_expr <- call("delta", from_col, to_col_label)
+      
+      new_col_def <- new_layout_def(
+        col_expr_matcher = exact_match_matcher(derived_col_expr),
+        derivation_matcher = function(deriv) {
+          !is.null(deriv) && deriv$operation == "delta_vs"
+        },
+        label = diff_label,
+        dimension = "col"
+      )
+      
+      # Add to col_defs
+      tab_result$layout$col_defs <- c(tab_result$layout$col_defs, list(new_col_def))
+    }
+    
+    # Refresh layout (reallocate grid with all new columns)
+    return(refresh_layout(tab_result))
   }
   
   # Data.frame-based path (existing implementation)

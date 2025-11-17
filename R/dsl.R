@@ -535,7 +535,7 @@ dsl_get_variables <- function(dsl) {
 #'
 #' @param dsl DSL expression
 #' @return Vector of values or NULL if not determinable
-#' @keywords internal
+#' @export
 dsl_get_values <- function(dsl) {
   if (is.numeric(dsl) || is.character(dsl)) return(dsl)
   if (!is.call(dsl)) return(NULL)

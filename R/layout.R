@@ -1409,9 +1409,53 @@ hide_rows <- function(tab_result, ...,
       }
       
       return(tab_result)
+    } else if (.match == "custom") {
+      # Custom matcher path
+      if (length(criteria) != 1 || !is.function(criteria[[1]])) {
+        stop(".match='custom' requires exactly one matcher function")
+      }
+      
+      matcher <- criteria[[1]]
+      store <- tab_result$cell_store
+      layout <- tab_result$layout
+      
+      # Evaluate matcher on each row_def
+      rows_to_hide <- character()
+      for (row_idx in seq_along(layout$row_defs)) {
+        row_def <- layout$row_defs[[row_idx]]
+        
+        # Extract base values for this row across columns
+        row_bases <- numeric()
+        for (col_idx in seq_along(layout$col_defs)) {
+          cell_id <- layout$grid[row_idx, col_idx]
+          if (!is.na(cell_id) && cell_id %in% names(store)) {
+            cell <- store[[cell_id]]
+            if (!is.null(cell$base) && !is.na(cell$base)) {
+              row_bases <- c(row_bases, cell$base)
+            }
+          }
+        }
+        
+        # Apply matcher to base values
+        # If any base in the row matches, hide the row
+        if (length(row_bases) > 0 && any(sapply(row_bases, matcher), na.rm = TRUE)) {
+          rows_to_hide <- c(rows_to_hide, row_def$label)
+        }
+      }
+      
+      # Remove matching rows
+      if (length(rows_to_hide) > 0) {
+        tab_result$layout$row_defs <- Filter(function(rd) {
+          !rd$label %in% rows_to_hide
+        }, tab_result$layout$row_defs)
+        
+        return(refresh_layout(tab_result))
+      }
+      
+      return(tab_result)
     } else {
-      # Non-label match types not yet supported with physical grid modification
-      stop("hide_rows() currently only supports .match='label' for cell-based tab_results. ",
+      # Other match types not yet supported with physical grid modification
+      stop("hide_rows() currently only supports .match='label' and .match='custom' for cell-based tab_results. ",
            "Other match types will be supported in a future update.")
     }
   }
@@ -1513,9 +1557,53 @@ hide_cols <- function(tab_result, ...,
       }
       
       return(tab_result)
+    } else if (.match == "custom") {
+      # Custom matcher path
+      if (length(criteria) != 1 || !is.function(criteria[[1]])) {
+        stop(".match='custom' requires exactly one matcher function")
+      }
+      
+      matcher <- criteria[[1]]
+      store <- tab_result$cell_store
+      layout <- tab_result$layout
+      
+      # Evaluate matcher on each col_def
+      cols_to_hide <- character()
+      for (col_idx in seq_along(layout$col_defs)) {
+        col_def <- layout$col_defs[[col_idx]]
+        
+        # Extract base values for this column across rows
+        col_bases <- numeric()
+        for (row_idx in seq_along(layout$row_defs)) {
+          cell_id <- layout$grid[row_idx, col_idx]
+          if (!is.na(cell_id) && cell_id %in% names(store)) {
+            cell <- store[[cell_id]]
+            if (!is.null(cell$base) && !is.na(cell$base)) {
+              col_bases <- c(col_bases, cell$base)
+            }
+          }
+        }
+        
+        # Apply matcher to base values
+        # If any base in the column matches, hide the column
+        if (length(col_bases) > 0 && any(sapply(col_bases, matcher), na.rm = TRUE)) {
+          cols_to_hide <- c(cols_to_hide, col_def$label)
+        }
+      }
+      
+      # Remove matching columns
+      if (length(cols_to_hide) > 0) {
+        tab_result$layout$col_defs <- Filter(function(cd) {
+          !cd$label %in% cols_to_hide
+        }, tab_result$layout$col_defs)
+        
+        return(refresh_layout(tab_result))
+      }
+      
+      return(tab_result)
     } else {
-      # Non-label match types not yet supported with physical grid modification
-      stop("hide_cols() currently only supports .match='label' for cell-based tab_results. ",
+      # Other match types not yet supported with physical grid modification
+      stop("hide_cols() currently only supports .match='label' and .match='custom' for cell-based tab_results. ",
            "Other match types will be supported in a future update.")
     }
   }
@@ -1580,13 +1668,40 @@ hide_if <- function(tab_result, .condition) {
   
   # Cell-based path
   if (inherits(tab_result, "tab_cell_collection")) {
-    # We need to create a filter that evaluates the full cell
-    # The challenge is that layout_def matchers receive individual components
-    # For now, warn that this may not work as expected
-    warning("hide_if() implementation is simplified. For complex cell filtering, ",
-            "consider using hide_rows/hide_cols with .match='custom' or applying ",
-            "filters at the tab() stage.")
+    store <- tab_result$cell_store
+    layout <- tab_result$layout
     
+    # Evaluate condition for each cell
+    cells_to_hide <- character()
+    
+    for (cell_id in names(store)) {
+      cell <- store[[cell_id]]
+      # Evaluate condition on full cell object
+      result <- tryCatch(
+        .condition(cell),
+        error = function(e) {
+          warning("Error evaluating condition for cell '", cell_id, "': ", e$message)
+          FALSE
+        }
+      )
+      
+      if (isTRUE(result)) {
+        cells_to_hide <- c(cells_to_hide, cell_id)
+      }
+    }
+    
+    # Mark cells as hidden in layout by replacing cell_ids with NA
+    for (cell_id in cells_to_hide) {
+      # Find in grid and mark as NA
+      grid_positions <- which(layout$grid == cell_id, arr.ind = TRUE)
+      if (nrow(grid_positions) > 0) {
+        for (k in seq_len(nrow(grid_positions))) {
+          layout$grid[grid_positions[k, 1], grid_positions[k, 2]] <- NA
+        }
+      }
+    }
+    
+    tab_result$layout <- layout
     return(tab_result)
   }
 
@@ -1607,16 +1722,17 @@ hide_if <- function(tab_result, .condition) {
   # Evaluate condition for each cell
   for (i in seq_len(n_rows)) {
     for (j in seq_len(n_cols)) {
-      # Create evaluation environment with cell context
-      eval_env <- new.env(parent = parent.frame())
-      eval_env$value <- tab_result[i, j + 1]  # +1 for row_label column
-      eval_env$base <- base_matrix[i, j]
-      eval_env$row_label <- tab_result$row_label[i]
-      eval_env$col_name <- names(tab_result)[j + 1]
+      # Create cell-like object with available properties
+      cell <- list(
+        value = tab_result[i, j + 1],  # +1 for row_label column
+        base = base_matrix[i, j],
+        row_label = tab_result$row_label[i],
+        col_name = names(tab_result)[j + 1]
+      )
 
       # Evaluate condition
       result <- tryCatch(
-        eval(condition_expr, envir = eval_env),
+        .condition(cell),
         error = function(e) {
           warning("Error evaluating condition for cell [", i, ",", j, "]: ", e$message)
           FALSE
