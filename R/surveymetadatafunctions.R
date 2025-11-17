@@ -3636,6 +3636,9 @@ mutate.survey_data <- function(.data, ...) {
           new_rows[[col]] <- NA_character_
         } else if ("numeric" %in% col_type || "integer" %in% col_type) {
           new_rows[[col]] <- NA_real_
+        } else if ("list" %in% col_type) {
+          # For list columns (like value_labels), create a list of NAs
+          new_rows[[col]] <- rep(list(NA), length(new_vars))
         } else {
           new_rows[[col]] <- NA
         }
@@ -4182,6 +4185,9 @@ left_join.survey_data <- function(x, y, by = NULL, copy = FALSE,
           new_rows[[col]] <- NA_character_
         } else if ("numeric" %in% col_type || "integer" %in% col_type) {
           new_rows[[col]] <- NA_real_
+        } else if ("list" %in% col_type) {
+          # For list columns, create a list of NAs
+          new_rows[[col]] <- rep(list(NA), length(vars_needing_metadata))
         } else {
           new_rows[[col]] <- NA
         }

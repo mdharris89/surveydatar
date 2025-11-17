@@ -1912,3 +1912,261 @@ test_that("DSL normalization is idempotent", {
   # Should be identical
   expect_identical(norm1, norm2)
 })
+
+
+test_that("transform_label_comparisons works with == operator", {
+  # Create test data with haven_labelled variable
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3))
+  )
+  
+  # Test expression transformation
+  expr <- quote(gender == "Female")
+  transformed <- transform_label_comparisons(expr, test_data)
+  
+  # Should transform to gender == 1
+  expect_equal(as.character(transformed[[1]]), "==")
+  expect_equal(as.character(transformed[[2]]), "gender")
+  expect_equal(as.numeric(transformed[[3]]), 1)
+})
+
+test_that("transform_label_comparisons works with != operator", {
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3))
+  )
+  
+  expr <- quote(gender != "Male")
+  transformed <- transform_label_comparisons(expr, test_data)
+  
+  # Should transform to gender != 2
+  expect_equal(as.character(transformed[[1]]), "!=")
+  expect_equal(as.character(transformed[[2]]), "gender")
+  expect_equal(as.numeric(transformed[[3]]), 2)
+})
+
+test_that("transform_label_comparisons works with %in% operator", {
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3))
+  )
+  
+  expr <- quote(gender %in% c("Female", "Male"))
+  transformed <- transform_label_comparisons(expr, test_data)
+  
+  # Should transform to gender %in% c(1, 2)
+  expect_equal(as.character(transformed[[1]]), "%in%")
+  expect_equal(as.character(transformed[[2]]), "gender")
+  expect_true(is.call(transformed[[3]]))
+  expect_equal(as.character(transformed[[3]][[1]]), "c")
+  expect_equal(as.numeric(transformed[[3]][[2]]), 1)
+  expect_equal(as.numeric(transformed[[3]][[3]]), 2)
+})
+
+test_that("transform_label_comparisons is case-sensitive", {
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3))
+  )
+  
+  expr <- quote(gender == "female")
+  expect_error(
+    transform_label_comparisons(expr, test_data),
+    "Label 'female' not found in variable 'gender'"
+  )
+})
+
+test_that("transform_label_comparisons errors on invalid label", {
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3))
+  )
+  
+  expr <- quote(gender == "Invalid")
+  expect_error(
+    transform_label_comparisons(expr, test_data),
+    "Label 'Invalid' not found in variable 'gender'.*Available labels: Female, Male, Other"
+  )
+})
+
+test_that("transform_label_comparisons leaves numeric comparisons unchanged", {
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3))
+  )
+  
+  expr <- quote(gender == 1)
+  transformed <- transform_label_comparisons(expr, test_data)
+  
+  # Should remain unchanged
+  expect_equal(as.character(transformed[[1]]), "==")
+  expect_equal(as.character(transformed[[2]]), "gender")
+  expect_equal(transformed[[3]], 1)
+})
+
+test_that("transform_label_comparisons leaves non-labelled variables unchanged", {
+  test_data <- data.frame(
+    age = c(25, 30, 35, 40)
+  )
+  
+  expr <- quote(age > 30)
+  transformed <- transform_label_comparisons(expr, test_data)
+  
+  # Should remain unchanged
+  expect_equal(transformed, expr)
+})
+
+test_that("tab() works with string label comparisons using ==", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  # Test with string label
+  result1 <- tab(survey_data, gender == "Female", region)
+  
+  # Test with numeric code (should give same result)
+  result2 <- tab(survey_data, gender == 1, region)
+  
+  # Both should work and give same results
+  expect_s3_class(result1, "tab_cell_collection")
+  expect_s3_class(result2, "tab_cell_collection")
+  
+  df1 <- as.data.frame(result1)
+  df2 <- as.data.frame(result2)
+  
+  # Values should be identical
+  expect_equal(df1[[2]], df2[[2]])  # North column
+  expect_equal(df1[[3]], df2[[3]])  # South column
+})
+
+test_that("tab() works with string label comparisons using !=", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  result <- tab(survey_data, gender != "Male", region)
+  
+  expect_s3_class(result, "tab_cell_collection")
+  df <- as.data.frame(result)
+  expect_true(nrow(df) >= 1)
+})
+
+test_that("tab() works with string label comparisons using %in%", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  result <- tab(survey_data, gender %in% c("Female", "Male"), region)
+  
+  expect_s3_class(result, "tab_cell_collection")
+  df <- as.data.frame(result)
+  expect_true(nrow(df) >= 1)
+})
+
+test_that("tab() errors with helpful message for invalid label", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  expect_error(
+    tab(survey_data, gender == "Invalid", region),
+    "Label 'Invalid' not found in variable 'gender'"
+  )
+})
+
+test_that("tab() is case-sensitive for label matching", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  expect_error(
+    tab(survey_data, gender == "female", region),
+    "Label 'female' not found in variable 'gender'"
+  )
+})
+
+test_that("tab() works with label comparisons in filter parameter", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    satisfaction = sample(1:5, 100, replace = TRUE),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  result <- tab(survey_data, satisfaction, region, filter = gender == "Female")
+  
+  expect_s3_class(result, "tab_cell_collection")
+  df <- as.data.frame(result)
+  expect_true(nrow(df) >= 1)
+})
+
+test_that("tab() handles complex expressions with label comparisons", {
+  set.seed(123)
+  test_data <- data.frame(
+    gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
+    age = sample(18:65, 100, replace = TRUE),
+    region = factor(sample(c("North", "South"), 100, replace = TRUE))
+  )
+  
+  survey_data <- create_survey_data(test_data)
+  
+  # Complex expression: (gender == "Female") & (age > 30)
+  # The & operator should be handled recursively
+  result <- tab(survey_data, (gender == "Female") & (age > 30), region)
+  
+  expect_s3_class(result, "tab_cell_collection")
+  df <- as.data.frame(result)
+  expect_true(nrow(df) >= 1)
+})
+
+test_that("transform_label_comparisons handles nested expressions", {
+  test_data <- data.frame(
+    gender = haven::labelled(c(1, 2, 1, 3), c(Female = 1, Male = 2, Other = 3)),
+    age = c(25, 35, 45, 55)
+  )
+  
+  # Test nested expression with & operator
+  expr <- quote((gender == "Female") & (age > 30))
+  transformed <- transform_label_comparisons(expr, test_data)
+  
+  # Should transform the gender == "Female" part to gender == 1
+  expect_true(is.call(transformed))
+  expect_equal(as.character(transformed[[1]]), "&")
+  
+  # Left side is wrapped in parentheses, so we need to unwrap it
+  left_side <- transformed[[2]]
+  expect_equal(as.character(left_side[[1]]), "(")
+  
+  # The actual comparison is inside the parentheses
+  inner_left <- left_side[[2]]
+  expect_equal(as.character(inner_left[[1]]), "==")
+  expect_equal(as.character(inner_left[[2]]), "gender")
+  expect_equal(as.numeric(inner_left[[3]]), 1)
+  
+  # Right side should be unchanged (also in parentheses)
+  right_side <- transformed[[3]]
+  expect_equal(as.character(right_side[[1]]), "(")
+  
+  inner_right <- right_side[[2]]
+  expect_equal(as.character(inner_right[[1]]), ">")
+  expect_equal(as.character(inner_right[[2]]), "age")
+  expect_equal(inner_right[[3]], 30)
+})
+

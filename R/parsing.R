@@ -520,9 +520,13 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
 
     # Create subset with only needed variables
     data_subset <- data[, expr_vars, drop = FALSE]
+    
+    # Transform label comparisons (e.g., gender == "Female" -> gender == 1)
+    transformed_expr <- transform_label_comparisons(formula_spec$components$expr, data_subset)
+    
     # Evaluate the expression with numeric-only data for relevant variables
     eval_data <- prepare_eval_data(data_subset)
-    expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
+    expr_result <- rlang::eval_tidy(transformed_expr, eval_data)
     if (!is.logical(expr_result) && !is.numeric(expr_result)) {
       stop("Expression must evaluate to logical or numeric")
     }
@@ -562,8 +566,12 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
 
       # Create subset with only needed variables
       data_subset <- data[, expr_vars, drop = FALSE]
+      
+      # Transform label comparisons
+      transformed_expr <- transform_label_comparisons(formula_spec$components$expr, data_subset)
+      
       eval_data <- prepare_eval_data(data_subset)
-      expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
+      expr_result <- rlang::eval_tidy(transformed_expr, eval_data)
       if (!is.numeric(expr_result)) {
         stop("Expression must evaluate to numeric values")
       }
@@ -755,8 +763,12 @@ process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
 
             # Create subset with only needed variables
             data_subset <- data[, expr_vars, drop = FALSE]
+            
+            # Transform label comparisons
+            transformed_arg <- transform_label_comparisons(arg, data_subset)
+            
             eval_data <- prepare_eval_data(data_subset)
-            evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
+            evaluated_args[[i]] <- rlang::eval_tidy(transformed_arg, eval_data)
           }, error = function(e) {
             stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
           })
@@ -779,8 +791,12 @@ process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
           expr_vars <- all.vars(arg)
           # Create subset with only needed variables
           data_subset <- data[, expr_vars, drop = FALSE]
+          
+          # Transform label comparisons
+          transformed_arg <- transform_label_comparisons(arg, data_subset)
+          
           eval_data <- prepare_eval_data(data_subset)
-          evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
+          evaluated_args[[i]] <- rlang::eval_tidy(transformed_arg, eval_data)
         }, error = function(e) {
           stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
         })
@@ -902,6 +918,144 @@ process_helper_for_specs <- function(formula_spec, data, dpdict = NULL, all_help
   }
   
   return(evaluated_args)
+}
+
+#' Transform label comparisons in expressions
+#'
+#' Walks an expression tree and replaces string literals with their corresponding
+#' numeric values from haven_labelled labels. Supports ==, !=, and %in% operators.
+#'
+#' @param expr Expression to transform
+#' @param data Data frame containing variables
+#' @return Transformed expression with strings replaced by numeric values
+#' @keywords internal
+transform_label_comparisons <- function(expr, data) {
+  # Base cases: symbols, literals, NULL
+  if (is.null(expr) || !is.language(expr)) {
+    return(expr)
+  }
+  
+  if (is.symbol(expr)) {
+    return(expr)
+  }
+  
+  # Recursive case: function calls
+  if (is.call(expr)) {
+    fn <- as.character(expr[[1]])
+    
+    # Handle comparison operators: ==, !=
+    if (fn %in% c("==", "!=") && length(expr) == 3) {
+      lhs <- expr[[2]]
+      rhs <- expr[[3]]
+      
+      # Check if LHS is a simple variable name
+      if (is.symbol(lhs)) {
+        var_name <- as.character(lhs)
+        
+        # Check if variable exists and is haven_labelled
+        if (var_name %in% names(data)) {
+          var_data <- data[[var_name]]
+          
+          if (inherits(var_data, "haven_labelled")) {
+            labels <- attr(var_data, "labels")
+            
+            # If RHS is a string literal, try to match it to a label
+            if (is.character(rhs) && length(rhs) == 1 && !is.null(labels) && length(labels) > 0) {
+              # Look for exact match in label names (case-sensitive)
+              matching_idx <- which(names(labels) == rhs)
+              
+              if (length(matching_idx) == 1) {
+                # Replace string with corresponding numeric value
+                expr[[3]] <- labels[matching_idx]
+                return(expr)
+              } else if (length(matching_idx) == 0) {
+                # No match found - provide helpful error
+                available_labels <- paste(names(labels), collapse = ", ")
+                stop("Label '", rhs, "' not found in variable '", var_name, 
+                     "'. Available labels: ", available_labels, call. = FALSE)
+              } else {
+                # Multiple matches (shouldn't happen with exact match, but be safe)
+                stop("Label '", rhs, "' matches multiple values in variable '", var_name, "'", 
+                     call. = FALSE)
+              }
+            }
+          }
+        }
+      }
+      
+      # Recursively transform both sides (in case of nested expressions)
+      expr[[2]] <- transform_label_comparisons(expr[[2]], data)
+      expr[[3]] <- transform_label_comparisons(expr[[3]], data)
+      return(expr)
+    }
+    
+    # Handle %in% operator
+    if (fn == "%in%" && length(expr) == 3) {
+      lhs <- expr[[2]]
+      rhs <- expr[[3]]
+      
+      # Check if LHS is a simple variable name
+      if (is.symbol(lhs)) {
+        var_name <- as.character(lhs)
+        
+        # Check if variable exists and is haven_labelled
+        if (var_name %in% names(data)) {
+          var_data <- data[[var_name]]
+          
+          if (inherits(var_data, "haven_labelled")) {
+            labels <- attr(var_data, "labels")
+            
+            if (!is.null(labels) && length(labels) > 0) {
+              # Check if RHS is c(...) with character values
+              if (is.call(rhs) && as.character(rhs[[1]]) == "c") {
+                # Extract arguments from c()
+                c_args <- as.list(rhs)[-1]
+                
+                # Transform each character argument
+                transformed_args <- lapply(c_args, function(arg) {
+                  if (is.character(arg) && length(arg) == 1) {
+                    # Look for exact match in label names
+                    matching_idx <- which(names(labels) == arg)
+                    
+                    if (length(matching_idx) == 1) {
+                      return(labels[matching_idx])
+                    } else if (length(matching_idx) == 0) {
+                      available_labels <- paste(names(labels), collapse = ", ")
+                      stop("Label '", arg, "' not found in variable '", var_name, 
+                           "'. Available labels: ", available_labels, call. = FALSE)
+                    } else {
+                      stop("Label '", arg, "' matches multiple values in variable '", var_name, "'", 
+                           call. = FALSE)
+                    }
+                  } else {
+                    return(arg)
+                  }
+                })
+                
+                # Reconstruct c() call with transformed arguments
+                expr[[3]] <- as.call(c(quote(c), transformed_args))
+                return(expr)
+              }
+            }
+          }
+        }
+      }
+      
+      # Recursively transform both sides
+      expr[[2]] <- transform_label_comparisons(expr[[2]], data)
+      expr[[3]] <- transform_label_comparisons(expr[[3]], data)
+      return(expr)
+    }
+    
+    # For all other calls, recursively transform arguments
+    for (i in seq_along(expr)[-1]) {
+      expr[[i]] <- transform_label_comparisons(expr[[i]], data)
+    }
+    return(expr)
+  }
+  
+  # Default: return unchanged
+  expr
 }
 
 #' Prepare data for expression evaluation by converting haven_labelled to numeric

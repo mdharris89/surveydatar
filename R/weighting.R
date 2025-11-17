@@ -1213,10 +1213,10 @@ constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data =
 
 #' Calculate target weights for bias-corrected optimization
 #'
-#' Implements the alpha-blended objective: w_target_i = α·(1/π_i) + (1-α)·1
+#' Implements the alpha-blended objective: w_target_i = alpha*(1/pi_i) + (1-alpha)*1
 #'
 #' @param n Sample size
-#' @param selection_probs Vector of selection probabilities (π_i)
+#' @param selection_probs Vector of selection probabilities (pi_i)
 #' @param alpha Bias correction emphasis (0 = no correction, 1 = full HT)
 #' @param min_prob Minimum probability to prevent extreme weights
 #' @param max_weight Cap on individual target weights
@@ -1287,7 +1287,7 @@ calculate_target_weights <- function(
 
     # Check bias correction effectiveness
     bias_check <- target_weights * selection_probs
-    message(sprintf("  - Bias check (median w*π): %.3f (should be ≈ 1)",
+    message(sprintf("  - Bias check (median w*pi): %.3f (should be ~ 1)",
                     median(bias_check)))
   }
 
@@ -1465,7 +1465,7 @@ build_survey_weights <- function(dat_clean,
 
     # Report issues concisely
     if (length(empty_constraints) > 0) {
-      message(sprintf("  ⚠️  %d empty constraints (no matching respondents)",
+      message(sprintf("  WARNING: %d empty constraints (no matching respondents)",
                       length(empty_constraints)))
       # Show first few
       for (i in head(empty_constraints, 3)) {
@@ -1474,7 +1474,7 @@ build_survey_weights <- function(dat_clean,
     }
 
     if (length(bad_targets) > 0) {
-      message(sprintf("  ⚠️  %d constraints with non-positive targets",
+      message(sprintf("  WARNING: %d constraints with non-positive targets",
                       length(bad_targets)))
     }
 
@@ -1482,7 +1482,7 @@ build_survey_weights <- function(dat_clean,
     max_possible <- Matrix::rowSums(abs(constraint_list$X)) * cap
     tight_constraints <- sum(constraint_list$targets > max_possible * 0.95)
     if (tight_constraints > 0) {
-      message(sprintf("  ⚠️  %d constraints require >95%% of max possible contribution",
+      message(sprintf("  WARNING: %d constraints require >95%% of max possible contribution",
                       tight_constraints))
     }
 
@@ -1490,7 +1490,7 @@ build_survey_weights <- function(dat_clean,
     if (is_debug()) {
       assign("debug_constraint_list", constraint_list, envir = .GlobalEnv)
       assign("debug_data", dat_clean, envir = .GlobalEnv)
-      message("  📌 Saved to global env: debug_constraint_list, debug_data")
+      message("  DEBUG: Saved to global env: debug_constraint_list, debug_data")
     }
   }
 
@@ -2072,7 +2072,7 @@ run_unified_weighting <- function(raw_data,
 
         empty_constraints <- constraint_summary[constraint_summary$n_rows == 0, ]
         if (nrow(empty_constraints) > 0) {
-          message(sprintf("\n⚠️  WARNING: %d empty constraints found:", nrow(empty_constraints)))
+          message(sprintf("\nWARNING: %d empty constraints found:", nrow(empty_constraints)))
           print(empty_constraints)
         }
       } # End verbose summary of constraints
@@ -2363,8 +2363,8 @@ run_unified_weighting <- function(raw_data,
           bias_check <- final_weights * sel_probs
 
           message(sprintf("\nBias correction effectiveness:"))
-          message(sprintf("  Median(w*π): %.3f (ideal = 1.0)", median(bias_check)))
-          message(sprintf("  Mean(w*π): %.3f, SD: %.3f",
+          message(sprintf("  Median(w*pi): %.3f (ideal = 1.0)", median(bias_check)))
+          message(sprintf("  Mean(w*pi): %.3f, SD: %.3f",
                           mean(bias_check), sd(bias_check)))
           break
         }
