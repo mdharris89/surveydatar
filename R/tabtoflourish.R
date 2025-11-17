@@ -61,7 +61,6 @@ utils::globalVariables(c("row_label", "value"))
 #' f_tab <- data %>% tab(q1, gender) %>% tab_to_flourish()
 #' f_tab                      # shows bindings + head(data)
 #' # flourishcharts::flourish(f_tab$data, f_tab$chart_type, bindings = f_tab$bindings)
-#' Main function remains clean and high-level
 tab_to_flourish <- function(tab_result,
                             chart_type    = NULL,
                             long          = TRUE,
@@ -69,17 +68,63 @@ tab_to_flourish <- function(tab_result,
                             strip_summary_cols = TRUE,
                             table_settings = NULL,
                             settings      = NULL,
+                            label_mode = "full",
                             ...) {
 
   stopifnot(inherits(tab_result, "tab_result"))
 
-  # 1. Extract metadata
-  stat_info <- .extract_stat_info(tab_result)
+  # Extract metadata first (before any modifications)
+  stat_info <- .extract_stat_info_safe(tab_result)
+  
+  # Apply native operations if cell-based
+  if (inherits(tab_result, "tab_cell_collection")) {
+    # Flourish can't handle base - ensure it's removed
+    # (User may have already hidden it in pipeline, but this ensures it)
+    if (stat_info$base_label %in% c(tab_result$layout$row_labels, 
+                                     tab_result$layout$col_labels)) {
+      tab_result <- hide_base(tab_result)
+    }
+    
+    # Strip summaries if requested
+    # (Default is TRUE to maintain backward compatibility)
+    if (strip_summary_rows || strip_summary_cols) {
+      tab_result <- hide_summary(tab_result, 
+                                 rows = strip_summary_rows,
+                                 cols = strip_summary_cols)
+    }
+    
+    # Materialize with class preservation
+    tab_result <- .materialize_for_export(tab_result, show_base = FALSE, label_mode = label_mode)
+    
+  } else {
+    # Data.frame-based path (existing implementation)
+    # Apply layout ordering before export
+    layout <- attr(tab_result, "layout")
+    if (!is.null(layout) && !is.null(layout$row_order)) {
+      tab_result <- tab_result[layout$row_order, , drop = FALSE]
+    }
+    if (!is.null(layout) && !is.null(layout$col_order)) {
+      col_order_with_label <- c(1, layout$col_order + 1)
+      tab_result <- tab_result[, col_order_with_label, drop = FALSE]
+    }
+    
+    # Apply visibility filtering before export
+    visibility <- attr(tab_result, "visibility")
+    if (!is.null(visibility)) {
+      if (!is.null(visibility$rows)) {
+        tab_result <- tab_result[visibility$rows, , drop = FALSE]
+      }
+      if (!is.null(visibility$cols)) {
+        visible_cols <- c(TRUE, visibility$cols)
+        tab_result <- tab_result[, visible_cols, drop = FALSE]
+      }
+    }
+  }
 
-  # 2. Determine chart type early (needed for strip_summary defaults)
+  # Determine chart type early (needed for strip_summary defaults)
   chart_type <- chart_type %||% guess_flourish_chart_type(tab_result)
   
-  # 3. Adjust strip_summary defaults for table charts
+  # Adjust strip_summary defaults for table charts
   is_table <- (chart_type == "table")
   if (is_table) {
     # For tables, default to keeping summary rows/cols (user can override)
@@ -87,18 +132,22 @@ tab_to_flourish <- function(tab_result,
     strip_summary_cols <- strip_summary_cols %||% FALSE
   }
 
-  # 4. Clean data (always strip base for Flourish)
-  df <- .clean_tab_data(tab_result, stat_info,
-                        strip_summary_rows = strip_summary_rows,
-                        strip_summary_cols = strip_summary_cols)
+  # Clean data (skip for cell-based tabs - already handled by hide_summary/hide_base)
+  if (inherits(tab_result, "tab_cell_collection")) {
+    # Cell-based: base and summaries already correctly filtered before materialization
+    # Convert to data.frame before any tidyr operations
+    df <- as.data.frame(tab_result)
+  } else {
+    # Data.frame-based: only strip base (summaries handled during tab() creation)
+    df <- .clean_tab_data(tab_result, stat_info,
+                          strip_summary_rows = FALSE,
+                          strip_summary_cols = FALSE)
+  }
 
-  # 5. Store table settings for later (don't modify data)
-  # Color coding will be handled via Flourish settings, not data columns
-
-  # 6. Transform data for chart type
+  # Transform data for chart type
   transform_result <- .transform_for_chart_type(df, chart_type, stat_info, long = long)
 
-  # 7. Merge default and user settings
+  # Merge default and user settings
   default_settings <- .get_default_settings(stat_info$id, chart_type)
   
   # Add table-specific settings (always apply defaults for tables, even if table_settings is NULL)
@@ -132,27 +181,8 @@ tab_to_flourish <- function(tab_result,
 #' Extract statistic information from tab result
 #' @keywords internal
 .extract_stat_info <- function(tab_result) {
-  stat <- attr(tab_result, "statistic")
-
-  # Get summary labels from attributes first (what was actually used)
-  actual_summary_row <- attr(tab_result, "summary_row_label")
-  actual_summary_col <- attr(tab_result, "summary_col_label")
-
-  list(
-    stat = stat,
-    id = stat$id,
-    base_label = stat$base_label,
-    summary_row = if (!is.null(actual_summary_row)) {
-      actual_summary_row
-    } else {
-      stat$summary_row
-    },
-    summary_col = if (!is.null(actual_summary_col)) {
-      actual_summary_col
-    } else {
-      stat$summary_col
-    }
-  )
+  # Use the safe version from export_helpers
+  .extract_stat_info_safe(tab_result)
 }
 
 #' Clean tab data by removing metadata rows/columns
@@ -186,6 +216,8 @@ tab_to_flourish <- function(tab_result,
   chart_type <- tolower(chart_type)
 
   # Get data dimensions
+
+  # NEEDS FIXING
   n_rows <- nrow(df)
   n_cols <- ncol(df) - 1
   col_names <- names(df)[-1]
@@ -280,6 +312,7 @@ tab_to_flourish <- function(tab_result,
       )
     )
   } else {
+
     # Transpose for column_pct and other stats
     # First pivot to long format
     long_df <- tidyr::pivot_longer(
@@ -537,9 +570,7 @@ tab_to_flourish <- function(tab_result,
 
 #' Create data bindings for Flourish charts
 #'
-#' Creates appropriate column bindings based on chart type and data format.
-#' This is a simple helper function that provides generic heuristics for
-#' binding data columns to chart aesthetics.
+#' Creates column bindings based on chart type and data format.
 #'
 #' @param chart_type Character string specifying the Flourish chart type
 #' @param data Data frame to create bindings for
@@ -773,20 +804,42 @@ preview_flourish <- function(x,
 
 #' Guess a sensible Flourish chart_type from a tab_result
 #' @keywords internal
-guess_flourish_chart_type <- function(tab) {
+guess_flourish_chart_type <- function(tab_result) {
 
-  stopifnot(inherits(tab, "tab_result"))
+  stopifnot(inherits(tab_result, "tab_result"))
 
-  # Extract info and clean data to get actual dimensions
-  stat_info <- .extract_stat_info(tab)
-  df <- .clean_tab_data(tab, stat_info,
-                        strip_summary_rows = TRUE,
-                        strip_summary_cols = TRUE)
+  # Extract info and get dimensions without materializing
+  stat_info <- .extract_stat_info_safe(tab_result)
 
-  # Get dimensions
-  n_rows <- nrow(df)
-  n_cols <- ncol(df) - 1  # Excluding row_label
-  max_label_char <- max(nchar(df[,1]))
+  dims <- .get_grid_dimensions(tab_result,
+                               exclude_base = TRUE,
+                               exclude_summary_rows = FALSE,
+                               exclude_summary_cols = FALSE)
+  
+  n_rows <- dims$nrow
+  n_cols <- dims$ncol
+  
+  # Get row labels for length check
+  if (inherits(tab_result, "tab_cell_collection")) {
+    row_labels <- tab_result$layout$row_labels
+    # Filter out base and summary
+    if (stat_info$base_label %in% row_labels) {
+      row_labels <- row_labels[row_labels != stat_info$base_label]
+    }
+    if (!is.null(stat_info$summary_row) && stat_info$summary_row %in% row_labels) {
+      row_labels <- row_labels[row_labels != stat_info$summary_row]
+    }
+  } else {
+    row_labels <- tab_result$row_label
+    if (stat_info$base_label %in% row_labels) {
+      row_labels <- row_labels[row_labels != stat_info$base_label]
+    }
+    if (!is.null(stat_info$summary_row) && stat_info$summary_row %in% row_labels) {
+      row_labels <- row_labels[row_labels != stat_info$summary_row]
+    }
+  }
+  
+  max_label_char <- if (length(row_labels) > 0) max(nchar(row_labels)) else 0
   stat_id <- stat_info$id
 
   # Check there's data
@@ -869,7 +922,6 @@ guess_flourish_chart_type <- function(tab) {
 
   chart_type
 }
-
 
 #' Get default table settings
 #' @keywords internal
@@ -989,9 +1041,6 @@ guess_flourish_chart_type <- function(tab) {
       settings$cell_fill_custom_numeric <- color_rules
     }
   }
-  
-  # Hover tooltips (placeholder - will implement base size later)
-  settings$chart_popup_show_popups <- TRUE
   
   settings
 }

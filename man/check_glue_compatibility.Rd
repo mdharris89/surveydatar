@@ -2,11 +2,11 @@
 % Please edit documentation in R/tab.R
 \name{check_glue_compatibility}
 \alias{check_glue_compatibility}
-\title{Check if two tabs can be glued together}
+\title{Check if two tab results can be glued together}
 \usage{
 check_glue_compatibility(tab1, tab2, direction)
 }
 \description{
-Check if two tabs can be glued together
+Check if two tab results can be glued together
 }
 \keyword{internal}

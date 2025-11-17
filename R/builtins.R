@@ -1,146 +1,63 @@
-#' Get value label for a variable-value combination
+# Built-in Tab Helpers and Statistics
+#
+# This file contains the built-in helper functions and statistics for tab().
+
+#' Set array metadata for semantic matching
 #'
-#' Looks up the label for a specific value of a variable, checking:
-#' 1. Value labels in dpdict (if available)
-#' 2. Common patterns (e.g., frequency scales)
-#' 3. Falls back to string representation
+#' Attaches metadata to arrays for DSL-based semantic matching and display.
+#' 
+#' Helpers should explicitly provide the label parameter, e.g. by
+#' calling derive_label_from_dsl(dsl_expr, dpdict) before calling this function.
+#' This ensures high-quality labels that use variable and value labels from dpdict.
+#' 
+#' For custom logic that cannot be expressed as DSL, provide dsl = NULL along with
+#' variables and tags, and construct the label manually.
 #'
-#' @param var Variable name
-#' @param value The value to get a label for
-#' @param dpdict Data dictionary
-#' @return Character string label
-#' @keywords internal
-get_value_label <- function(var, value, dpdict = NULL) {
-  # First check if dpdict has value labels
-  if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
-    var_row <- dpdict[dpdict$variable_names == var, ]
-    if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
-      labels <- var_row$value_labels[[1]]
-      if (as.character(value) %in% names(labels)) {
-        return(labels[[as.character(value)]])
-      }
-    }
-  }
-
-  # Common patterns for frequency scales
-  if (grepl("^(app_|A2_|A3_|freq_|frequency_)", var)) {
-    if (value %in% 1:4) {
-      return(c("Daily", "Weekly", "Monthly", "Never")[value])
-    } else if (value %in% 1:5) {
-      return(c("Daily", "Weekly", "Monthly", "Rarely", "Never")[value])
-    }
-  }
-
-  # Satisfaction scales
-  if (grepl("(satisf|satis)", var, ignore.case = TRUE) && value %in% 1:5) {
-    return(c("Very Dissatisfied", "Dissatisfied", "Neutral",
-             "Satisfied", "Very Satisfied")[value])
-  }
-
-  # Agreement scales
-  if (grepl("(agree|agreement)", var, ignore.case = TRUE) && value %in% 1:5) {
-    return(c("Strongly Disagree", "Disagree", "Neutral",
-             "Agree", "Strongly Agree")[value])
-  }
-
-  # Default: return as character
-  return(as.character(value))
-}
-
-# Helper function for getting variable labels
-get_variable_labels_improved <- function(var_name, values, data, dpdict) {
-  var_data <- data[[var_name]]
-
-  # Handle factors
-  if (is.factor(var_data)) {
-    result <- character(length(values))
-    for (i in seq_along(values)) {
-      val <- values[i]
-      if (!is.na(val) && val <= length(levels(var_data))) {
-        result[i] <- levels(var_data)[val]
-      } else {
-        result[i] <- as.character(val)
-      }
-    }
-    return(result)
-  }
-
-  # Handle haven_labelled specifically
-  if (inherits(var_data, "haven_labelled")) {
-    labels_attr <- attr(var_data, "labels")
-    if (!is.null(labels_attr)) {
-      result <- character(length(values))
-      for (i in seq_along(values)) {
-        val <- values[i]
-        # For haven_labelled, labels are stored as named vector
-        label_match <- names(labels_attr)[labels_attr == val]
-        if (length(label_match) > 0) {
-          result[i] <- label_match[1]
-        } else {
-          result[i] <- as.character(val)
-        }
-      }
-      return(result)
-    }
-  }
-
-  # Check general labels attribute
-  labels_attr <- attr(var_data, "labels")
-  if (!is.null(labels_attr) && length(labels_attr) > 0) {
-    result <- character(length(values))
-    for (i in seq_along(values)) {
-      val <- values[i]
-      label_match <- names(labels_attr)[labels_attr == val]
-      if (length(label_match) > 0) {
-        result[i] <- label_match[1]
-      } else {
-        result[i] <- as.character(val)
-      }
-    }
-    return(result)
-  }
-
-  # Check dpdict for value labels if available
-  if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
-    var_row <- dpdict[dpdict$variable_names == var_name, ]
-    if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
-      value_labels <- var_row$value_labels[[1]]
-      result <- character(length(values))
-      for (i in seq_along(values)) {
-        val <- values[i]
-        val_char <- as.character(val)
-        if (val_char %in% names(value_labels)) {
-          result[i] <- value_labels[[val_char]]
-        } else {
-          result[i] <- val_char
-        }
-      }
-      return(result)
-    }
-  }
-
-  # Fall back to values as labels
-  return(as.character(values))
-}
-
-#' Ensure array has meta attribute with standard structure
 #' @param arr Numeric array
-#' @param ivar Variable label(s)
-#' @param ival Value label(s)
-#' @param label Display label
+#' @param dsl DSL expression (R call/symbol) or NULL for custom logic
+#' @param variables Variable name(s) involved (list or character vector)
+#' @param tags Arbitrary metadata as named list (for custom matching). Can include:
+#'   value, value_label, var_label, suffix
+#' @param label Display label. Should be explicitly provided. If NULL, will attempt
+#'   low-quality auto-derivation without dpdict (not recommended).
 #' @return Array with meta attribute attached
 #' @keywords internal
-.ensure_meta <- function(arr, ivar = NULL, ival = NULL, label = NULL) {
+set_array_meta <- function(arr, dsl = NULL, variables = NULL, tags = NULL, label = NULL) {
+  # Fallback: auto-derive label from DSL if not provided (low quality - no dpdict)
+  if (is.null(label) && !is.null(dsl)) {
+    # This produces inferior labels without variable/value labels from dpdict.
+    # Callers should derive labels themselves: derive_label_from_dsl(dsl_expr, dpdict)
+    label <- tryCatch(
+      derive_label_from_dsl(dsl, NULL),
+      error = function(e) ""
+    )
+  }
+  
   attr(arr, "meta") <- list(
-    ivar  = ivar,
-    ival  = ival,
+    dsl = dsl,
+    variables = variables,
+    tags = tags,
     label = label
   )
   arr
 }
 
-#' Resolve helper target (variable name, vector of names, or group name)
+#' Resolve helper target to variable names
+#'
+#' Normalizes different input types (single variable, stem pattern, group name,
+#' or explicit vector) into a validated character vector of variable names.
+#' Used internally by helpers like top_box(), bottom_box(), etc.
+#'
+#' @param name_or_names Single variable name, stem (e.g., "q1"), group name,
+#'   or character vector of explicit variable names
+#' @param data Data frame containing variables
+#' @param dpdict Optional data dictionary for resolving question groups
+#' @param error_context String to contextualize error messages (e.g., "top_box")
+#' @return Character vector of resolved variable names from data
 #' @keywords internal
+#' @examples
+#' # Resolves "q1" stem to c("q1_1", "q1_2", "q1_3")
+#' # Resolves "q1_a" to all vars in that question group
 resolve_helper_target <- function(name_or_names, data, dpdict = NULL, error_context = "helper target") {
   # Normalise to character vector
   to_chr <- function(x) {
@@ -190,50 +107,6 @@ top_box <- function(var, n = 1) {
 bottom_box <- function(var, n = 1) {
   match.call()
 }
-
-#' Index values relative to a base
-#'
-#' @param var Variable name or expression
-#' @param base Base for indexing (default is total)
-#' @return Expression for use in tab()
-#' @export
-index_to <- function(var, base = NULL) {
-  match.call()
-}
-
-#' Calculate change from baseline
-#'
-#' @param var Variable name or expression
-#' @param condition Condition defining baseline
-#' @return Expression for use in tab()
-#' @export
-change_from <- function(var, condition) {
-  match.call()
-}
-
-
-#' Expand a group to a matrix-friendly axis and auto-collapse
-#'
-#' Creates variable–value units (VVUs) for a question group, attaches a
-#' diagonal gate so only matching row/column VVUs compute when both axes
-#' use this helper, and hints the table to collapse back to variables or
-#' values after computation. Use in rows and/or columns.
-#'
-#' @param group Question group name (in dpdict) or vector of variables
-#' @param by Which dimension this axis represents: "variable" or "value"
-#' @return Expression for use in tab() rows/cols
-#' @export
-#' @examples
-#' # Brands on rows, frequencies on columns
-#' # rows = pull_to_matrix(A2_a, by = "variable")
-#' # cols = pull_to_matrix(A2,   by = "value")
-pull_to_matrix <- function(group, by = c("variable", "value")) {
-  match.call()
-}
-
-
-# User-accessible functions for surveydatar helpers
-# Add these to your R files (e.g., a new file like user_helpers.R)
 
 #' Check if any variable in a group is positive
 #'
@@ -394,96 +267,34 @@ banner <- function(outer_var, inner_spec, subtotals = FALSE, sep = ": ") {
   match.call()
 }
 
-
-
-#' Create a gate that matches on a metadata field
-#'
-#' Creates a gate function that allows cells to be computed only when
-#' the row and column share at least one value for the specified metadata field.
-#'
-#' @param key_field The metadata field name to match on (e.g., "ival", "ivar")
-#' @return A gate function that can be used with calc_if
-#' @export
-#' @examples
-#' # Use with calc_if to create orthogonal tables
-#' tab(data,
-#'     calc_if(no_mismatch("ival"), response_match(...)),
-#'     statistic = "count")
-no_mismatch <- function(key_field) {
-  # Try to get the gate factory
-  gate_factory <- get_gate("no_mismatch")
-
-  # If not found, ensure builtins are registered and try again
-  if (is.null(gate_factory)) {
-    ensure_builtins_registered()
-    gate_factory <- get_gate("no_mismatch")
-
-    if (is.null(gate_factory)) {
-      stop("no_mismatch gate not found in registry. This is likely a package initialization issue.")
-    }
-  }
-
-  gate_factory(key_field)
-}
-
-#' Apply a gate to an expression
-#'
-#' Restricts which cells in a table are computed based on a gate function.
-#' The gate function determines whether a cell should be calculated based on
-#' the metadata of the row and column.
-#'
-#' @param gate A gate function (e.g., from no_mismatch())
-#' @param expr The expression to be gated
-#' @return A gated expression for use in tab()
-#' @export
-#' @examples
-#' # Create orthogonal table where cells only computed when row/col share ival
-#' tab(data,
-#'     rows = calc_if(no_mismatch("ival"), response_match(...)),
-#'     cols = another_var)
-calc_if <- function(gate, expr) {
-  structure(
-    list(
-      expr = rlang::enquo(expr),   # quosure holding the original expression
-      gate = gate                   # a *fully-constructed* gate function
-    ),
-    class = "tab_helper",
-    id = "calc_if"
-  )
-}
-
-banner_processor <- function(helper_spec, data, dpdict = NULL, all_helpers = NULL) {
-  # Use components, not args
+# Banner spec generator - returns column specifications
+banner_spec_generator <- function(helper_spec, data, dpdict = NULL, all_helpers = NULL) {
   args <- helper_spec$components
 
   if (length(args) < 2) {
     stop("Banner requires at least two arguments: outer variable and inner specification")
   }
 
-  # Extract outer variable
+  # Extract parameters
   outer_var <- args[[1]]
+  inner_spec <- args[[2]]
+  subtotals <- if ("subtotals" %in% names(args)) args$subtotals else FALSE
+  sep <- if ("sep" %in% names(args)) args$sep else ": "
+
   if (!is.character(outer_var) || length(outer_var) != 1) {
     stop("First argument to banner must be a variable name")
   }
 
-  # Extract inner specification
-  inner_spec <- args[[2]]
+  if (!outer_var %in% names(data)) {
+    stop("Outer variable '", outer_var, "' not found in data")
+  }
 
   # Convert symbols to strings for simple variable references
   if (rlang::is_symbol(inner_spec)) {
     inner_spec <- as.character(inner_spec)
   }
 
-  # Extract additional parameters with defaults
-  subtotals <- if ("subtotals" %in% names(args)) args$subtotals else FALSE
-  sep <- if ("sep" %in% names(args)) args$sep else ": "
-
-  # Validate outer variable exists
-  if (!outer_var %in% names(data)) {
-    stop("Outer variable '", outer_var, "' not found in data")
-  }
-
-  # Get unique values of outer variable (excluding NA)
+  # Get unique values of outer variable
   outer_values <- unique(data[[outer_var]])
   outer_values <- outer_values[!is.na(outer_values)]
   outer_values <- sort(outer_values)
@@ -495,254 +306,143 @@ banner_processor <- function(helper_spec, data, dpdict = NULL, all_helpers = NUL
   # Get labels for outer variable
   outer_labels <- get_variable_labels(outer_var, outer_values, data, dpdict)
 
-  result <- list()
+  # Generate column specifications
+  col_specs <- list()
 
-  # Process inner specification based on its type
+  # Handle inner_spec based on its type
   if (is.character(inner_spec) && length(inner_spec) == 1) {
-    # Simple variable name - expand to all its values
-    if (!inner_spec %in% names(data)) {
-      stop("Inner variable '", inner_spec, "' not found in data")
+    # Simple variable - expand to all its values
+    inner_var <- inner_spec
+
+    if (!inner_var %in% names(data)) {
+      stop("Inner variable '", inner_var, "' not found in data")
     }
 
-    # Get unique values of inner variable
-    inner_values <- unique(data[[inner_spec]])
+    inner_values <- unique(data[[inner_var]])
     inner_values <- inner_values[!is.na(inner_values)]
     inner_values <- sort(inner_values)
+    inner_labels <- get_variable_labels(inner_var, inner_values, data, dpdict)
 
-    if (length(inner_values) == 0) {
-      stop("No valid values found for inner variable '", inner_spec, "'")
-    }
-
-    # Get labels for inner variable
-    inner_labels <- get_variable_labels(inner_spec, inner_values, data, dpdict)
-
-    # Create columns for each combination
+    # Create spec for each outer × inner combination
     for (i in seq_along(outer_values)) {
       outer_val <- outer_values[i]
       outer_label <- outer_labels[i]
-
-      outer_filter <- data[[outer_var]] == outer_val & !is.na(data[[outer_var]])
-
-      if (!any(outer_filter, na.rm = TRUE)) {
-        next
-      }
 
       for (j in seq_along(inner_values)) {
         inner_val <- inner_values[j]
         inner_label <- inner_labels[j]
 
-        # Create array: 1 where BOTH conditions are met
-        array <- as.numeric(outer_filter & data[[inner_spec]] == inner_val & !is.na(data[[inner_spec]]))
-
         col_label <- paste0(outer_label, sep, inner_label)
 
-        array <- .ensure_meta(
-          array,
-          ivar = c(outer_var, inner_spec),
-          ival = c(as.character(outer_val), as.character(inner_val)),
+        # Create intersection specification
+        col_specs[[col_label]] <- list(
+          type = "banner_intersection",
+          outer_var = outer_var,
+          outer_val = outer_val,
+          inner_var = inner_var,
+          inner_val = inner_val,
           label = col_label
         )
-
-        result[[col_label]] <- array
       }
+    }
 
-      if (subtotals) {
-        subtotal_array <- as.numeric(outer_filter)
-        subtotal_label <- paste0(outer_label, sep, "Total")
-
-        subtotal_array <- .ensure_meta(
-          subtotal_array,
-          ivar = outer_var,
-          ival = as.character(outer_val),
+    # Optionally add subtotals
+    if (subtotals) {
+      for (i in seq_along(outer_values)) {
+        subtotal_label <- paste0(outer_labels[i], sep, "Total")
+        col_specs[[subtotal_label]] <- list(
+          type = "banner_subtotal",
+          outer_var = outer_var,
+          outer_val = outer_values[i],
+          inner_var = inner_var,
           label = subtotal_label
         )
-
-        result[[subtotal_label]] <- subtotal_array
       }
     }
 
   } else if (rlang::is_call(inner_spec) || rlang::is_symbol(inner_spec)) {
-    # It's an unevaluated expression (like top_box(satisfaction, 2))
-    # We need to parse and evaluate it for each outer category
+    # Nested helper (e.g., top_box(satisfaction, 2))
 
-    if (is.null(all_helpers)) {
-      stop("Cannot process nested helpers in banner without access to helper registry")
-    }
-
-    # Parse the inner specification once to get its structure
-    inner_parsed <- parse_table_formula(rlang::enquo(inner_spec), data, dpdict, all_helpers)
-
-    # For each outer category, apply the inner specification to filtered data
     for (i in seq_along(outer_values)) {
       outer_val <- outer_values[i]
       outer_label <- outer_labels[i]
 
-      # Create filter for this outer category
-      outer_filter <- data[[outer_var]] == outer_val & !is.na(data[[outer_var]])
+      # We don't evaluate the inner spec yet - just capture the expression
+      # Create a label for this combination
+      inner_label_text <- deparse(inner_spec)
+      col_label <- paste0(outer_label, sep, inner_label_text)
 
-      if (!any(outer_filter, na.rm = TRUE)) {
-        next
-      }
-
-      # Create filtered dataset for this outer category
-      filtered_data <- data
-      # Zero out values where filter is FALSE (this maintains array lengths)
-      for (col in names(filtered_data)) {
-        if (is.numeric(filtered_data[[col]])) {
-          filtered_data[[col]][!outer_filter] <- NA
-        }
-      }
-
-      # Evaluate the inner specification on filtered data
-      inner_result <- formula_to_array(inner_parsed, filtered_data, dpdict, all_helpers)
-
-      # Check if it's multi-column
-      if (is.list(inner_result) && isTRUE(attr(inner_result, "is_multi_column"))) {
-        # Multi-column helper - create a column for each
-        for (arr_name in names(inner_result)) {
-          # The inner result already has the filter applied via filtered_data
-          # But we need to ensure it's properly masked
-          filtered_array <- inner_result[[arr_name]] * as.numeric(outer_filter)
-
-          col_label <- paste0(outer_label, sep, arr_name)
-
-          array <- .ensure_meta(
-            filtered_array,
-            ivar = outer_var,
-            ival = as.character(outer_val),
-            label = col_label
-          )
-
-          result[[col_label]] <- array
-        }
-      } else {
-        # Single array result
-        # Apply the outer filter
-        filtered_array <- inner_result * as.numeric(outer_filter)
-
-        inner_label <- if (inner_parsed$type == "helper") {
-          # Create a more readable label for helpers
-          helper_type <- inner_parsed$helper_type
-          if (helper_type == "top_box") {
-            n <- inner_parsed$args[[2]]
-            paste0("top_box(", as.character(inner_parsed$args[[1]]), ", ", n, ")")
-          } else if (helper_type == "bottom_box") {
-            n <- inner_parsed$args[[2]]
-            paste0("bottom_box(", as.character(inner_parsed$args[[1]]), ", ", n, ")")
-          } else if (helper_type == "value_range") {
-            min_val <- inner_parsed$args[[2]]
-            max_val <- inner_parsed$args[[3]]
-            paste0("Range ", min_val, "-", max_val)
-          } else if (helper_type == "pattern") {
-            "Pattern Match"
-          } else {
-            tools::toTitleCase(gsub("_", " ", helper_type))
-          }
-        } else if (!is.null(attr(inner_result, "meta")) && !is.null(attr(inner_result, "meta")$label)) {
-          attr(inner_result, "meta")$label
-        } else {
-          inner_parsed$label
-        }
-
-        col_label <- paste0(outer_label, sep, inner_label)
-
-        array <- .ensure_meta(
-          filtered_array,
-          ivar = outer_var,
-          ival = as.character(outer_val),
-          label = col_label
-        )
-
-        result[[col_label]] <- array
-      }
-
-      if (subtotals) {
-        subtotal_array <- as.numeric(outer_filter)
-        subtotal_label <- paste0(outer_label, sep, "Total")
-
-        subtotal_array <- .ensure_meta(
-          subtotal_array,
-          ivar = outer_var,
-          ival = as.character(outer_val),
-          label = subtotal_label
-        )
-
-        result[[subtotal_label]] <- subtotal_array
-      }
+      col_specs[[col_label]] <- list(
+        type = "banner_filtered_helper",
+        outer_var = outer_var,
+        outer_val = outer_val,
+        inner_spec = inner_spec,  # Unevaluated expression
+        label = col_label
+      )
     }
 
   } else {
-    stop("Invalid inner specification for banner helper. ",
-         "Expected variable name or helper expression, got: ",
-         class(inner_spec))
+    stop("Inner specification must be a variable name or helper expression")
   }
 
-  # Set multi-column attribute
-  attr(result, "is_multi_column") <- TRUE
-  attr(result, "helper_type") <- "banner"
+  if (length(col_specs) == 0) {
+    stop("Banner produced no column specifications")
+  }
 
-  return(result)
+  return(col_specs)
 }
 
-# Also ensure get_variable_labels handles numeric values properly
-get_variable_labels <- function(var_name, values, data, dpdict) {
-  var_data <- data[[var_name]]
-
-  # Handle factors
-  if (is.factor(var_data)) {
-    result <- character(length(values))
-    for (i in seq_along(values)) {
-      val <- values[i]
-      if (!is.na(val) && val <= length(levels(var_data))) {
-        result[i] <- levels(var_data)[val]
-      } else {
-        result[i] <- as.character(val)
-      }
-    }
-    return(result)
-  }
-
-  # Check for labels attribute (haven_labelled or regular labelled)
-  labels_attr <- attr(var_data, "labels")
-  if (!is.null(labels_attr) && length(labels_attr) > 0) {
-    result <- character(length(values))
-    for (i in seq_along(values)) {
-      val <- values[i]
-      # Match numeric values
-      label_match <- names(labels_attr)[labels_attr == val]
-      if (length(label_match) > 0) {
-        result[i] <- label_match[1]
-      } else {
-        result[i] <- as.character(val)
-      }
-    }
-    return(result)
-  }
-
-  # Check dpdict for value labels if available
+#' Get value label for a variable-value combination
+#'
+#' Looks up the label for a specific value of a variable, checking:
+#' 1. Value labels in dpdict (if available)
+#' 2. Common patterns (e.g., frequency scales)
+#' 3. Falls back to string representation
+#'
+#' @param var Variable name
+#' @param value The value to get a label for
+#' @param dpdict Data dictionary
+#' @return Character string label
+#' @keywords internal
+get_value_label <- function(var, value, dpdict = NULL) {
+  # First check if dpdict has value labels
   if (!is.null(dpdict) && "value_labels" %in% names(dpdict)) {
-    var_row <- dpdict[dpdict$variable_names == var_name, ]
+    var_row <- dpdict[dpdict$variable_names == var, ]
     if (nrow(var_row) > 0 && !is.null(var_row$value_labels[[1]])) {
-      value_labels <- var_row$value_labels[[1]]
-      result <- character(length(values))
-      for (i in seq_along(values)) {
-        val <- values[i]
-        val_char <- as.character(val)
-        if (val_char %in% names(value_labels)) {
-          result[i] <- value_labels[[val_char]]
-        } else {
-          result[i] <- val_char
-        }
+      labels <- var_row$value_labels[[1]]
+      if (as.character(value) %in% names(labels)) {
+        return(labels[[as.character(value)]])
       }
-      return(result)
     }
   }
 
-  # Fall back to values as labels
-  return(as.character(values))
+  # Common patterns for frequency scales
+  if (grepl("^(app_|A2_|A3_|freq_|frequency_)", var)) {
+    if (value %in% 1:4) {
+      return(c("Daily", "Weekly", "Monthly", "Never")[value])
+    } else if (value %in% 1:5) {
+      return(c("Daily", "Weekly", "Monthly", "Rarely", "Never")[value])
+    }
+  }
+
+  # Satisfaction scales
+  if (grepl("(satisf|satis)", var, ignore.case = TRUE) && value %in% 1:5) {
+    return(c("Very Dissatisfied", "Dissatisfied", "Neutral",
+             "Satisfied", "Very Satisfied")[value])
+  }
+
+  # Agreement scales
+  if (grepl("(agree|agreement)", var, ignore.case = TRUE) && value %in% 1:5) {
+    return(c("Strongly Disagree", "Disagree", "Neutral",
+             "Agree", "Strongly Agree")[value])
+  }
+
+  # Default: return as character
+  return(as.character(value))
 }
 
-# Also update get_variable_labels to be more robust
+# Extract value labels for a variable from multiple sources
+# Falls back to character representation if no labels found
 get_variable_labels <- function(var_name, values, data, dpdict) {
   var_data <- data[[var_name]]
 
@@ -838,7 +538,10 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      column_snapshot <- base_array * col_array
+      # Create mask to propagate NAs from row_array to denominator
+      # This ensures column total only counts respondents who answered this variable
+      row_mask <- ifelse(is.na(row_array), NA, 1)
+      column_snapshot <- base_array * col_array * row_mask
       final_array <- column_snapshot * row_array
 
       column_total <- sum(column_snapshot, na.rm = TRUE)
@@ -847,17 +550,23 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     }
 
     stat_column_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
-      col_totals <- colSums(base_array * col_matrix, na.rm = TRUE)
+      # For grid questions, each row needs its own column total based on its NA pattern
+      row_mask_matrix <- ifelse(is.na(row_matrix), NA, 1)
+      col_totals_per_row <- t(row_mask_matrix * base_array) %*% col_matrix
+      
+      # Compute cell counts
       cell_counts <- t(row_matrix * base_array) %*% col_matrix
-      result <- sweep(cell_counts, 2, col_totals, "/") * 100
-      result[is.nan(result)] <- NA_real_
+      
+      # Divide each cell by its row-specific column total
+      result <- cell_counts / col_totals_per_row * 100
+      result[is.nan(result) | is.infinite(result)] <- NA_real_
       result
     }
 
     create_statistic("column_pct", stat_column_pct,
                      base_calculator = base_column_total,
                      summary_row = "NET",
-                     summary_col = "NET",
+                     summary_col = "Total",
                      summary_row_calculator = calc_union,
                      summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
@@ -874,7 +583,10 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      row_snapshot <- base_array * row_array
+      # Create mask to propagate NAs from col_array to denominator
+      # This ensures row total only counts columns where this variable was answered
+      col_mask <- ifelse(is.na(col_array), NA, 1)
+      row_snapshot <- base_array * row_array * col_mask
       final_array <- row_snapshot * col_array
 
       row_total <- sum(row_snapshot, na.rm = TRUE)
@@ -882,16 +594,22 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       sum(final_array, na.rm = TRUE) / row_total * 100
     }
     stat_row_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
-      row_totals <- colSums(base_array * row_matrix, na.rm = TRUE)
+      # For grid questions, each column needs its own row total based on its NA pattern
+      col_mask_matrix <- ifelse(is.na(col_matrix), NA, 1)
+      row_totals_per_col <- colSums(base_array * row_matrix * col_mask_matrix, na.rm = TRUE)
+      
+      # Compute cell counts
       cell_counts <- t(row_matrix * base_array) %*% col_matrix
-      result <- sweep(cell_counts, 1, row_totals, "/") * 100
-      result[is.nan(result)] <- NA_real_
+      
+      # Divide each cell by its column-specific row total
+      result <- sweep(cell_counts, 2, row_totals_per_col, "/") * 100
+      result[is.nan(result) | is.infinite(result)] <- NA_real_
       result
     }
     create_statistic("row_pct", stat_row_pct,
                      base_calculator = base_row_total,
                      summary_row = "NET",
-                     summary_col = "NET",
+                     summary_col = "Total",
                      summary_row_calculator = calc_union,
                      summary_col_calculator = calc_union,
                      format_fn = function(x) sprintf("%.1f%%", x),
@@ -1071,7 +789,9 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       }
 
       # Calculate cell percentage
-      column_snapshot <- base_array * col_array
+      # Apply row_mask to ensure column total only counts respondents who answered this variable
+      row_mask <- ifelse(is.na(row_array), NA, 1)
+      column_snapshot <- base_array * col_array * row_mask
       final_array <- column_snapshot * row_array
 
       column_total <- sum(column_snapshot, na.rm = TRUE)
@@ -1079,11 +799,12 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       cell_pct <- sum(final_array, na.rm = TRUE) / column_total * 100
 
       # Calculate total percentage (all columns)
-      total_snapshot <- base_array  # All data
+      # Apply row_mask to ensure total only counts respondents who answered this variable
+      total_snapshot <- base_array * row_mask
       total_for_row <- total_snapshot * row_array
 
       total_n <- sum(total_snapshot, na.rm = TRUE)
-      if (is.na(column_total) || column_total == 0) return(NA_real_)
+      if (is.na(total_n) || total_n == 0) return(NA_real_)
       total_pct <- sum(total_for_row, na.rm = TRUE) / total_n * 100
 
       # Index = (cell % / total %) * 100
@@ -1173,8 +894,8 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
     # HELPERS -----------------------------------------------------------
 
-    # Banner helper
-    create_helper("banner", banner_processor)
+    # Banner helper - using spec generator for tab2() support
+    create_helper("banner", banner_spec_generator, returns_specs = TRUE)
 
     # Top box helper
     help_top_box <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
@@ -1190,17 +911,23 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
           lbls <- attr(var_data, "labels")
           ord_codes <- sort(as.numeric(lbls), decreasing = TRUE)
           top_values <- utils::head(ord_codes, n)
-          arr <- as.numeric(var_data %in% top_values)
-          ival <- top_values
         } else {
           uv <- sort(unique(na.omit(var_data)), decreasing = TRUE)
           top_values <- utils::head(uv, n)
-          arr <- as.numeric(var_data %in% top_values)
-          ival <- top_values
         }
 
-        label <- paste0(get_var_label(var_name, dpdict), " - Top ", n, " Box")
-        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = ival, label = label)
+        # Build DSL expression
+        dsl_expr <- substitute(VAR %in% VALUES, list(
+          VAR = as.symbol(var_name),
+          VALUES = top_values
+        ))
+        
+        # Evaluate DSL
+        arr <- eval_dsl(dsl_expr, data)
+        
+        # Set metadata with DSL and return (label auto-derived)
+        label <- derive_label_from_dsl(dsl_expr, dpdict)
+        set_array_meta(arr, dsl = dsl_expr, label = label)
       }
 
       if (length(vars) == 1) return(make_one(vars[1]))
@@ -1209,7 +936,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       for (i in seq_along(vars)) {
         one <- make_one(vars[i])
         out[[i]] <- one
-        names(out)[i] <- attr(one, "meta")$label
+        names(out)[i] <- attr(one, "meta")$label %||% derive_label_from_dsl(attr(one, "meta")$dsl, dpdict)
       }
       attr(out, "is_multi_column") <- TRUE
       out
@@ -1225,21 +952,26 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       make_one <- function(var_name) {
         var_data <- data[[var_name]]
 
+        # Determine bottom values by label order (haven_labelled) or code order
         if (inherits(var_data, "haven_labelled") && !is.null(attr(var_data, "labels"))) {
           lbls <- attr(var_data, "labels")
           ord_codes <- sort(as.numeric(lbls), decreasing = FALSE)
           bottom_values <- utils::head(ord_codes, n)
-          arr <- as.numeric(var_data %in% bottom_values)
-          ival <- bottom_values
         } else {
           uv <- sort(unique(na.omit(var_data)), decreasing = FALSE)
           bottom_values <- utils::head(uv, n)
-          arr <- as.numeric(var_data %in% bottom_values)
-          ival <- bottom_values
         }
 
-        label <- paste0(get_var_label(var_name, dpdict), " - Bottom ", n, " Box")
-        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = ival, label = label)
+        # Build DSL expression
+        dsl_expr <- substitute(VAR %in% VALUES, list(
+          VAR = as.symbol(var_name),
+          VALUES = bottom_values
+        ))
+        
+        # Evaluate and set metadata with label
+        arr <- eval_dsl(dsl_expr, data)
+        label <- derive_label_from_dsl(dsl_expr, dpdict)
+        set_array_meta(arr, dsl = dsl_expr, label = label)
       }
 
       if (length(vars) == 1) return(make_one(vars[1]))
@@ -1248,7 +980,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       for (i in seq_along(vars)) {
         one <- make_one(vars[i])
         out[[i]] <- one
-        names(out)[i] <- attr(one, "meta")$label
+        names(out)[i] <- attr(one, "meta")$label %||% derive_label_from_dsl(attr(one, "meta")$dsl, dpdict)
       }
       attr(out, "is_multi_column") <- TRUE
       out
@@ -1274,11 +1006,25 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       }
 
       make_one <- function(var_name) {
-        var_data <- data[[var_name]]
-        arr <- if (inclusive) as.numeric(var_data >= min_val & var_data <= max_val)
-        else as.numeric(var_data > min_val & var_data < max_val)
-        label <- paste0(get_var_label(var_name, dpdict), " - Range ", min_val, "-", max_val)
-        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = c(min_val, max_val), label = label)
+        # Build DSL expression
+        if (inclusive) {
+          dsl_expr <- substitute(VAR >= MIN & VAR <= MAX, list(
+            VAR = as.symbol(var_name),
+            MIN = min_val,
+            MAX = max_val
+          ))
+        } else {
+          dsl_expr <- substitute(VAR > MIN & VAR < MAX, list(
+            VAR = as.symbol(var_name),
+            MIN = min_val,
+            MAX = max_val
+          ))
+        }
+        
+        # Evaluate and set metadata with label
+        arr <- eval_dsl(dsl_expr, data)
+        label <- derive_label_from_dsl(dsl_expr, dpdict)
+        set_array_meta(arr, dsl = dsl_expr, label = label)
       }
 
       if (length(vars) == 1) return(make_one(vars[1]))
@@ -1287,7 +1033,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       for (i in seq_along(vars)) {
         one <- make_one(vars[i])
         out[[i]] <- one
-        names(out)[i] <- attr(one, "meta")$label
+        names(out)[i] <- attr(one, "meta")$label %||% derive_label_from_dsl(attr(one, "meta")$dsl, dpdict)
       }
       attr(out, "is_multi_column") <- TRUE
       out
@@ -1303,13 +1049,38 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
       make_one <- function(var_name) {
         var_data <- data[[var_name]]
-        if (!is.character(var_data) && !is.factor(var_data)) {
+        
+        # Check if variable is suitable for pattern matching
+        is_text_like <- is.character(var_data) || is.factor(var_data) || inherits(var_data, "haven_labelled")
+        
+        if (!is_text_like) {
           stop("pattern requires a character or factor variable: ", var_name)
         }
-        if (is.factor(var_data)) var_data <- as.character(var_data)
+        
+        # Convert to character for pattern matching
+        if (is.factor(var_data)) {
+          var_data <- as.character(var_data)
+        } else if (inherits(var_data, "haven_labelled")) {
+          # For haven_labelled, use the labels if available, otherwise values
+          labels_attr <- attr(var_data, "labels")
+          if (!is.null(labels_attr) && length(labels_attr) > 0) {
+            # Map values to their labels
+            var_data <- vapply(var_data, function(val) {
+              if (is.na(val)) return(NA_character_)
+              label_match <- names(labels_attr)[labels_attr == val]
+              if (length(label_match) > 0) label_match[1] else as.character(val)
+            }, character(1))
+          } else {
+            var_data <- as.character(var_data)
+          }
+        }
+        
         arr <- as.numeric(grepl(patt, var_data, ignore.case = ignore_case))
-        label <- paste0(get_var_label(var_name, dpdict), " - Pattern: ", patt)
-        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = patt, label = label)
+        
+        # Pattern matching on transformed data - mark as custom for now
+        set_array_meta(arr, dsl = NULL, variables = var_name,
+                       tags = list(pattern = patt, ignore_case = ignore_case),
+                       label = paste0(get_var_label(var_name, dpdict), " - Pattern: ", patt))
       }
 
       if (length(vars) == 1) return(make_one(vars[1]))
@@ -1340,12 +1111,26 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       make_one <- function(var_name) {
         var_data <- data[[var_name]]
         thr <- stats::quantile(var_data, probs = pct/100, na.rm = TRUE)
-        if (identical(position, "above")) arr <- as.numeric(var_data > thr)
-        else if (identical(position, "below")) arr <- as.numeric(var_data < thr)
-        else stop("position must be 'above' or 'below'")
-        suf <- if (identical(position, "above")) paste0("Above p", pct) else paste0("Below p", pct)
-        label <- paste0(get_var_label(var_name, dpdict), " - ", suf)
-        .ensure_meta(arr, ivar = get_var_label(var_name, dpdict), ival = c(position, pct), label = label)
+        
+        # Build DSL expression
+        if (identical(position, "above")) {
+          dsl_expr <- substitute(VAR > THRESHOLD, list(
+            VAR = as.symbol(var_name),
+            THRESHOLD = thr
+          ))
+        } else if (identical(position, "below")) {
+          dsl_expr <- substitute(VAR < THRESHOLD, list(
+            VAR = as.symbol(var_name),
+            THRESHOLD = thr
+          ))
+        } else {
+          stop("position must be 'above' or 'below'")
+        }
+        
+        # Evaluate and set metadata with label
+        arr <- eval_dsl(dsl_expr, data)
+        label <- derive_label_from_dsl(dsl_expr, dpdict)
+        set_array_meta(arr, dsl = dsl_expr, label = label)
       }
 
       if (length(vars) == 1) return(make_one(vars[1]))
@@ -1354,7 +1139,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       for (i in seq_along(vars)) {
         one <- make_one(vars[i])
         out[[i]] <- one
-        names(out)[i] <- attr(one, "meta")$label
+        names(out)[i] <- attr(one, "meta")$label %||% derive_label_from_dsl(attr(one, "meta")$dsl, dpdict)
       }
       attr(out, "is_multi_column") <- TRUE
       out
@@ -1574,10 +1359,18 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
       # Helper function to attach meta
       attach_meta <- function(arr, meta) {
-        arr <- .ensure_meta(
+        # Convert to DSL metadata structure
+        # For aggregated arrays, we don't have a clean DSL expression
+        vars <- if (!is.null(meta$ivar)) list(meta$ivar) else NULL
+        tags <- list(
+          value = meta$ival,
+          value_label = if (!is.null(meta$ival)) as.character(meta$ival) else NULL
+        )
+        arr <- set_array_meta(
           arr,
-          ivar = meta$ivar,
-          ival = meta$ival,
+          dsl = NULL,  # Aggregated patterns don't have clean DSL
+          variables = vars,
+          tags = tags,
           label = meta$label
         )
         arr
@@ -1754,19 +1547,25 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         warning("Negative values found in variables for any_positive() helper. Only positive values will be treated as TRUE.")
       }
 
-      # Calculate result: 1 if any variable is positive (>0) and non-NA, 0 otherwise
-      result <- apply(vars_data, 1, function(row) {
-        # Check if any value in the row is positive (greater than 0)
-        any_positive <- any(row > 0, na.rm = TRUE)
-        # Return 1 if true, 0 if false or all NA
-        as.numeric(any_positive)
+      # Build DSL: OR chain of var > 0 conditions
+      var_conditions <- lapply(existing_vars, function(v) {
+        call(">", as.symbol(v), 0)
       })
-
+      
+      if (length(var_conditions) == 1) {
+        dsl_expr <- var_conditions[[1]]
+      } else {
+        dsl_expr <- Reduce(function(a, b) call("|", a, b), var_conditions)
+      }
+      
+      # Evaluate DSL
+      result <- eval_dsl(dsl_expr, data)
+      
       # Ensure NAs become 0
       result[is.na(result)] <- 0
-
-      # Add label attribute
-      attr(result, "label") <- label
+      
+      # Set metadata (label already provided)
+      set_array_meta(result, dsl = dsl_expr, label = label)
 
       return(result)
     }
@@ -1776,8 +1575,8 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       # Return an array of 1s for all respondents
       result <- rep(1, nrow(data))
 
-      # Add label attribute
-      attr(result, "label") <- "Total"
+      # DSL: TRUE (matches all)
+      set_array_meta(result, dsl = quote(TRUE), label = "Total")
 
       return(result)
     }
@@ -1884,18 +1683,16 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
           next
         }
 
+        # DSL: Identity (just the variable reference)
+        dsl_expr <- as.symbol(v)
+        
         # Create display label based on label_mode
         display_label <- get_display_label(v, dpdict, label_mode, NULL, data)
 
-        # Create the array with metadata
-        array <- .ensure_meta(
-          array_data,
-          ivar = get_var_lab(v),
-          ival = NULL,
-          label = display_label
-        )
+        # Set metadata with DSL (label provided)
+        array_data <- set_array_meta(array_data, dsl = dsl_expr, label = display_label)
 
-        out[[display_label]] <- array
+        out[[display_label]] <- array_data
       }
 
       # Final check for empty results
@@ -2224,155 +2021,11 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         ))
       }
     )
-    # GATE FUNCTIONS
-    create_gate(
-      "no_mismatch",
-      factory_fn = function(key_field) {
-        force(key_field)                    # capture the field name
-        function(row_meta, col_meta, ...) {   # gate takes row & col meta lists
-          rv <- row_meta[[key_field]]
-          cv <- col_meta[[key_field]]
-          if (is.null(rv) || is.null(cv)) return(TRUE)
-          # Treat meta fields as character vectors and look for any overlap
-          rv <- as.character(rv);  cv <- as.character(cv)
-          length(intersect(rv, cv)) > 0
-        }
-      }
-    )
-
-    # calc_if processor
-    help_calc_if <- function(formula_spec, data, dpdict = NULL, helpers = NULL, ...) {
-
-      inner_spec <- parse_table_formula(
-        formula_spec$expr,
-        data,
-        dpdict,
-        helpers
-      )
-
-      inner_spec$gate <- formula_spec$gate
-
-      inner_spec
-    }
-    create_helper("calc_if", help_calc_if)
-
-    # Decorator helpers: index_to and change_from
-    # These are parsed and expanded in expand_variables; their processors
-    # should never be called in normal flow. We register them so the parser
-    # recognises them as helpers.
-    help_index_to <- function(formula_spec, ...) {
-      stop("index_to is a decorator and should not be evaluated directly.")
-    }
-    create_helper("index_to", help_index_to, role = "decorator", ref_arg = "base", op = "index")
-
-    help_change_from <- function(formula_spec, ...) {
-      stop("change_from is a decorator and should not be evaluated directly.")
-    }
-    create_helper("change_from", help_change_from, role = "decorator", ref_arg = "condition", op = "delta")
-
-    # pull_to_matrix helper ---------------------------------------------------
-    # Expands a group into variable–value units (VVUs); attaches a diagonal
-    # gate and collapse hints so that the final table collapses back to
-    # variables (rows) or values (cols) as appropriate.
-    help_pull_to_matrix <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
-      # Unpack args
-      group_input <- formula_spec$components[[1]]
-      by_input <- if (length(formula_spec$components) >= 2) formula_spec$components[[2]] else "variable"
-
-      # Normalize 'by'
-      if (!is.character(by_input) || length(by_input) != 1) {
-        stop("pull_to_matrix: 'by' must be a single character value: 'variable' or 'value'")
-      }
-      by_input <- match.arg(by_input, c("variable", "value"))
-
-      # Resolve variables in the group
-      group_vars <- resolve_to_variables(group_input, data, dpdict,
-                                         allow_patterns = TRUE,
-                                         error_context  = "question-group")
-      if (length(group_vars) == 0) {
-        stop("pull_to_matrix: no variables resolved for group input")
-      }
-
-      # Diagonal gate: compute only when both ivar and ival match
-      diag_gate <- function(row_meta, col_meta, ...) {
-        # If either side lacks meta, do not restrict computation
-        if (is.null(row_meta) || is.null(col_meta)) return(TRUE)
-        rv <- row_meta$ivar;  cv <- col_meta$ivar
-        rvl <- row_meta$ival;  cvl <- col_meta$ival
-        if (is.null(rv) || is.null(cv) || is.null(rvl) || is.null(cvl)) return(TRUE)
-        # Compare as character for robustness
-        identical(as.character(rv), as.character(cv)) &&
-          identical(as.character(rvl), as.character(cvl))
-      }
-
-      # Build VVU arrays
-      out <- list()
-
-      for (v in group_vars) {
-        if (!v %in% names(data)) next
-        var_data <- data[[v]]
-
-        # Determine categorical codes and labels
-        codes <- NULL
-        labels <- NULL
-
-        # Prefer labelled values
-        lbls <- attr(var_data, "labels")
-        if (!is.null(lbls) && length(lbls) > 0) {
-          codes <- as.numeric(unname(lbls))
-          labels <- names(lbls)
-        } else if (is.factor(var_data)) {
-          # Factors: levels are the display labels; codes are 1..n
-          labels <- levels(var_data)
-          codes <- seq_along(labels)
-        } else {
-          # Fallback to unique non-NA numeric codes
-          uv <- sort(unique(na.omit(var_data)))
-          if (!is.numeric(uv) && !is.integer(uv)) {
-            stop("pull_to_matrix: variable '", v, "' is not categorical or labelled")
-          }
-          codes <- as.numeric(uv)
-          # Derive simple labels via get_value_label if possible
-          labels <- vapply(codes, function(code) get_value_label(v, code, dpdict), character(1))
-        }
-
-        # Create one array per code (VVU)
-        var_lab <- get_var_label(v, dpdict)
-
-        for (i in seq_along(codes)) {
-          code <- codes[i]
-          val_lab <- labels[i]
-          arr <- as.numeric(var_data == code & !is.na(var_data))
-
-          # Compose display label for the VVU
-          vvu_label <- paste0(var_lab, ": ", val_lab)
-
-          arr <- .ensure_meta(
-            arr,
-            ivar = var_lab,
-            ival = val_lab,
-            label = vvu_label
-          )
-
-          # Attach diagonal gate (only restricts when both axes use VVU meta)
-          attr(arr, "cell_gate") <- diag_gate
-
-          # Hint collapse target for this axis
-          # Rows: by = "variable" -> collapse VVUs by ivar back to variables
-          # Cols: by = "value"    -> collapse VVUs by ival back to values
-          collapse_by <- if (identical(by_input, "variable")) "ivar" else "ival"
-          attr(arr, "collapse_by") <- collapse_by
-
-          out[[vvu_label]] <- arr
-        }
-      }
-
-      # Mark as multi-column helper
-      attr(out, "is_multi_column") <- TRUE
-      attr(out, "helper_type") <- "pull_to_matrix"
-      out
-    }
-    create_helper("pull_to_matrix", help_pull_to_matrix)
+  }
+  
+  # Register derive operations (if derive_operations.R is loaded)
+  if (exists("register_builtin_derive_operations")) {
+    register_builtin_derive_operations()
   }
 }
 
@@ -2387,5 +2040,3 @@ ensure_builtins_registered <- function() {
   # Call the same registration logic as .onLoad
   .onLoad(NULL, NULL)
 }
-
-

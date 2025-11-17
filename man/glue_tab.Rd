@@ -2,37 +2,33 @@
 % Please edit documentation in R/tab.R
 \name{glue_tab}
 \alias{glue_tab}
-\title{Glue two tab results together}
+\title{Glue two tab() results together}
 \usage{
 glue_tab(tab1, tab2, direction = c("cols", "rows"), sep = ": ", prefix = NULL)
 }
 \arguments{
-\item{tab1}{First tab_result object}
+\item{tab1}{First tab_cell_collection object}
 
-\item{tab2}{Second tab_result object to glue onto the first}
+\item{tab2}{Second tab_cell_collection object}
 
-\item{direction}{"cols" (side-by-side) or "rows" (stacked)}
+\item{direction}{Direction to glue: "cols" (side-by-side) or "rows" (stacked)}
 
-\item{sep}{Separator between prefix and original labels}
+\item{sep}{Separator for combining labels}
 
-\item{prefix}{Optional prefix for tab2's columns/rows. If NULL, uses existing labels}
+\item{prefix}{Optional prefix for tab2 labels}
 }
 \value{
-Combined tab_result object
+A tab_cell_collection object with merged cells
 }
 \description{
-Combines two tab_result objects either side-by-side (columns) or
-stacked (rows). When gluing columns, rows are matched by row_label.
-When gluing rows, columns are matched by name.
+Combine two tab_cell_collection objects by merging their cell stores and layouts.
+Preserves the cell-based architecture throughout.
 }
 \examples{
-# Glue two country results side by side
-uk_tab <- tab(uk_data, gender, age)
-us_tab <- tab(us_data, gender, age)
-combined <- glue_tab(uk_tab, us_tab, prefix = "US")
-
-# Stack time periods vertically
-q1_tab <- tab(q1_data, satisfaction, product)
-q2_tab <- tab(q2_data, satisfaction, product)
-trend <- glue_tab(q1_tab, q2_tab, direction = "rows", prefix = "Q2")
+\dontrun{
+# Glue two tables side-by-side
+tab1 <- tab(data, gender, region)
+tab2_obj <- tab(data, gender, brand)
+result <- glue_tab(tab1, tab2_obj, direction = "cols")
+}
 }

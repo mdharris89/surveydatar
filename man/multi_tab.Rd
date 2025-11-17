@@ -4,7 +4,7 @@
 \alias{multi_tab}
 \alias{multi_tab_cols}
 \alias{multi_tab_rows}
-\title{Create multiple tabs and glue them together}
+\title{Run tab() multiple times with different filters and combine results}
 \usage{
 multi_tab(
   data,
@@ -24,48 +24,44 @@ multi_tab_cols(data, rows, cols = NULL, by, ...)
 multi_tab_rows(data, rows, cols = NULL, by, ...)
 }
 \arguments{
-\item{data}{Data frame or survey_data object}
+\item{data}{Survey data (data.frame or survey_data object)}
 
-\item{rows}{Row specification (same as tab())}
+\item{rows}{Row specification (passed to tab)}
 
-\item{cols}{Column specification (same as tab())}
+\item{cols}{Column specification (passed to tab)}
 
-\item{by}{Variable or specification for splitting data:
-\itemize{
-\item Variable name: splits by all unique values
-\item Named list: list("Europe" = country \%in\% c("UK", "FR"), "Asia" = country == "JP")
-}}
+\item{by}{Grouping specification (see Details)}
 
-\item{direction}{"cols" (side-by-side) or "rows" (stacked)}
+\item{direction}{Direction to combine tables: "cols" or "rows"}
 
-\item{include_total}{Include a total group with all data?}
+\item{include_total}{Whether to include a total (unfiltered) table}
 
-\item{total_name}{Name for the total group}
+\item{total_name}{Label for the total column/row}
 
-\item{sep}{Separator between group name and column labels}
+\item{sep}{Separator for combining group names with labels}
 
-\item{statistic}{Statistic to compute (passed to tab())}
+\item{statistic}{Statistic to compute (passed to tab)}
 
 \item{...}{Additional arguments passed to tab()}
 }
 \value{
-Combined tab_result object
+A tab_cell_collection object with combined results
 }
 \description{
-Runs tab() on subsets of data defined by the 'by' parameter and combines
-the results using glue_tab(). This is a convenience function for the common
-pattern of creating similar tables for different groups.
+This function creates multiple tab() results filtered by different groups
+and combines them using glue_tab(). The \code{by} parameter specifies how to
+split the data into groups.
 }
 \examples{
-# Split by all countries
-multi_tab(data, gender, age, by = country)
+\dontrun{
+# Split by gender
+result <- multi_tab(data, satisfaction, by = gender, direction = "cols")
 
-# Specific countries only
-multi_tab(data, gender, age, by = country[c("UK", "US")])
-
-# Custom groups
-multi_tab(data, brand, rating, by = list(
-  "Satisfied" = satisfaction >= 4,
-  "Dissatisfied" = satisfaction < 4
+# Split by age groups
+result <- multi_tab(data, brand, by = list(
+  "Young" = age < 35,
+  "Middle" = age >= 35 & age < 55,
+  "Older" = age >= 55
 ))
+}
 }

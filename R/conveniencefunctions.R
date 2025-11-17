@@ -708,7 +708,7 @@ concatenate_by_group <- function(temp_dat, group_var){
     dplyr::ungroup()
 
   # Arrange by row_id and remove temporary columns
-  temp_dat <- temp_dat %>% dplyr::arrange(.data$first_row_id) %>% dplyr::select(-.data$first_row_id)
+  temp_dat <- temp_dat %>% dplyr::arrange(first_row_id) %>% dplyr::select(-first_row_id)
 
   return(temp_dat)
 

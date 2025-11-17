@@ -2,7 +2,7 @@
 % Please edit documentation in R/tab.R
 \name{tab}
 \alias{tab}
-\title{Create cross-tabulation tables with flexible formula syntax}
+\title{Cell-Based Tab Function}
 \usage{
 tab(
   data,
@@ -15,19 +15,18 @@ tab(
   show_row_nets = TRUE,
   show_col_nets = TRUE,
   show_base = TRUE,
-  low_base_threshold = 0,
-  label_mode = "full",
-  sum_by = FALSE,
+  low_base_threshold = NULL,
+  label_mode = c("smart", "full", "suffix"),
   helpers = NULL,
   stats = NULL,
-  resolve_report = FALSE,
+  fuzzy_match = FALSE,
   ...
 )
 }
 \arguments{
 \item{data}{Data frame or survey_data object}
 
-\item{rows}{Row specification (variable name, expression, or named list)}
+\item{rows}{Row specification (variable, expression, or helper)}
 
 \item{cols}{Column specification (optional)}
 
@@ -37,73 +36,129 @@ tab(
 
 \item{statistic}{Type of statistic: "column_pct", "count", "row_pct", "mean"}
 
-\item{values}{Variable name to aggregate for value-based statistics like mean (optional)}
+\item{values}{Variable name to aggregate for value-based statistics}
 
-\item{show_row_nets}{Whether to show NET of rows (NET row for column_pct, NET column for row_pct)}
+\item{show_row_nets}{Whether to display NET/summary rows (NET row for column_pct, Avg for mean, etc.). Summary rows are always computed, this controls visibility.}
 
-\item{show_col_nets}{Whether to show Base row/column}
+\item{show_col_nets}{Whether to display NET/summary columns (NET column for row_pct, Total for count, etc.). Summary columns are always computed, this controls visibility.}
 
-\item{low_base_threshold}{Numeric, minimum base size required to show a column}
+\item{show_base}{Whether to display Base row/column. Base is always computed, this controls visibility.}
 
-\item{label_mode}{Character string specifying how labels should be displayed:
-\itemize{
-\item \code{"smart"}: Show suffixes for multi-item questions, full labels
-for single items
-\item \code{"full"}: Always show full variable labels (default)
-\item \code{"suffix"}: Show question suffixes when available, otherwise
-extract from label
-}}
+\item{low_base_threshold}{Minimum base count threshold - cells/rows/cols with base below this are filtered out}
 
-\item{sum_by}{Controls intelligent collapsing of rows and columns.
-Can be:
-\itemize{
-\item \code{FALSE} or \code{NULL}: No collapsing (default)
-\item \code{TRUE}: Auto-detect and collapse both rows and columns based on
-metadata patterns (backward compatible with smart_collapse_row_labels)
-\item Character string: Collapse rows only by the specified metadata field.
-Common values are "ival" (collapse by value) or "ivar" (collapse by variable).
-\item List with \code{rows} and/or \code{cols} elements: Separate control for
-rows and columns. Each element can be:
-\itemize{
-\item \code{FALSE} or \code{NULL}: No collapsing for that dimension
-\item \code{TRUE}: Auto-detect collapsing for that dimension
-\item Character string: Collapse by specified field ("ival" or "ivar")
-}
-}}
+\item{label_mode}{How to display labels: "smart" (default - suffix for multi-item, full for single-item),
+"full" (complete variable label), or "suffix" (extract suffix after separator). Can be overridden
+in as.data.frame(). Stored in result for use during materialization.}
 
 \item{helpers}{List of custom tab_helper objects}
 
 \item{stats}{List of custom tab_stat objects}
 
-\item{resolve_report}{Whether to return variable resolution details}
+\item{fuzzy_match}{Whether to enable fuzzy matching for variable names}
 
 \item{...}{Additional arguments}
 }
 \value{
-Cross-tabulation table as data.frame
+A tab_result object with class \code{tab_cell_collection}
 }
 \description{
-Create cross-tabulation tables with flexible formula syntax
+Create cross-tabulation tables using the cell-based architecture. This function
+implements the complete unified tab architecture with position-independent cells,
+semantic references, and full metadata preservation.
 }
-\details{
-Base (n) Calculation:
-For statistics that use the 'values' parameter (like mean), the base (n)
-represents the count of non-NA values actually used in calculations.
-When different rows have varying numbers of valid values within a column
-(or vice versa for row-oriented statistics), the base will display NA
-and issue a warning. The full base matrix is stored as an attribute
-'base_matrix' on the result object.
+\section{Architecture}{
+
+tab() implements the complete parse → expand → compute pipeline and returns
+a cell-based tab_result object. The function returns a bundle of cells with
+an explicit layout grid that imposes 2D structure. Use as.data.frame() to
+materialize the result into a standard data.frame when needed.
+
+\strong{Cell-Native Computation}:
+tab() computes cells directly from array intersections rather than computing
+a full matrix first. This avoids intermediate 2D structures and maintains
+position-independence throughout the pipeline. Cells are created with their
+values, bases, and full metadata in a single pass, enabling true
+dimension-agnostic operations.
+
+\strong{Key Features}:
+\itemize{
+\item Returns \code{tab_cell_collection} (use as.data.frame() to materialize)
+\item Cells stored with stable sequential IDs (c_000001, c_000002, ...)
+\item Each cell preserves full specification (base_expr, row_expr, col_expr)
+\item Hierarchical metadata enables semantic operations
+\item Derive operations are truly additive (add cells, never modify)
+\item Layout operations manipulate grid structure, not data
+\item Computation is cell-native (no intermediate matrices)
 }
+
+\strong{Core Functionality}:
+\itemize{
+\item Macro support: Detects and expands tab_macro objects
+\item Variable resolution: Fuzzy matching for column names (when fuzzy_match=TRUE)
+\item Validation: Checks statistic requirements and label collisions
+\item Label control: Smart, full, or suffix label modes at creation and display time
+\item Low base filtering: Automatic threshold-based filtering
+\item All helper functions and custom statistics fully supported
+}
+
+\strong{Cell Structure}:
+Each cell contains:
+\itemize{
+\item value: Computed statistic value
+\item base: Base count for this cell
+\item specification: What this cell represents (expressions + metadata)
+\item computation: How it was computed (statistic, array references)
+\item derivation: NULL for compute cells, tracks source cells for derived cells
+}
+}
+
+\section{Usage}{
+
+Basic usage for cross-tabulation:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Basic crosstab
+result <- tab(data, satisfaction, gender)
+
+# With filter and weight
+result <- tab(data, satisfaction, gender, filter = age > 18, weight = "wgt")
+
+# Materialize to data.frame when needed
+df <- as.data.frame(result)
+
+# Pipe with derive operations
+result <- tab(data, satisfaction, gender) \%>\%
+  derive(delta_vs("Male", "Female")) \%>\%
+  arrange_rows(.by = "Male", .sort = "desc") \%>\%
+  as.data.frame()
+}\if{html}{\out{</div>}}
+}
+
+\section{Compatibility}{
+
+Cell-based results can be materialized to data.frame using \code{as.data.frame()}.
+The materialized data.frame is compatible with all utility functions
+including \code{add_sig()}, \code{copy_tab()}, \code{sort_tab()}, \code{modify_labels()},
+\code{tab_to_reactable()}, etc.
+}
+
 \examples{
-# String syntax
-tab(data, "q1", "gender")
+\dontrun{
+# Basic usage
+result <- tab(mtcars, factor(cyl), factor(gear))
+df <- as.data.frame(result)
 
-# Formula syntax
-tab(data, q1 * (age > 30), gender)
+# With derive operations
+result <- tab(data, satisfaction, gender) \%>\%
+  derive(delta_vs("Male", "Female")) \%>\%
+  derive(index_vs("Total")) \%>\%
+  hide_cols_except("Male|Female|Difference") \%>\%
+  as.data.frame()
 
-# With table-wide filter
-tab(data, q1, gender, filter = age > 18)
-
-# Multiple row groups
-tab(data, rows = rows_list("Total" = q1, "Young" = q1 * (age < 30)))
+# Full pipeline
+result <- tab(data, satisfaction, region, filter = age > 18, weight = "wgt") \%>\%
+  derive(sum_if("ival", dimension = "cols")) \%>\%
+  arrange_rows(.by = "North", .sort = "desc") \%>\%
+  hide_rows("Don't know") \%>\%
+  as.data.frame()
+}
 }

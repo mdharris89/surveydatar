@@ -1,3 +1,7 @@
+# Tab to Reactable Conversion
+#
+# Functions for converting tab results to reactable tables with styling.
+
 #' Convert a surveydatar tab_result into a reactable-ready object
 #'
 #' @param tab_result A tab_result produced by surveydatar::tab()
@@ -11,6 +15,7 @@
 #' @param color_top_n Integer: number of top values to highlight (required when color_mode = "top_n")
 #' @param sig_comparison Character: name of significance comparison to use (auto-selects if only one exists)
 #' @param sig_symbol Logical: whether to append significance symbols (default TRUE)
+#' @param show_tooltips Logical: whether to show hover tooltips with cell information (default TRUE)
 #' @param freeze_headers Logical: freeze table headers when scrolling (default TRUE)
 #' @param freeze_first_column Logical: freeze first column when scrolling (default TRUE)
 #' @param enable_sorting Logical: enable column sorting (default TRUE)
@@ -84,6 +89,7 @@ tab_to_reactable <- function(tab_result,
                              color_top_n = NULL,
                              sig_comparison = NULL,
                              sig_symbol = TRUE,
+                             show_tooltips = TRUE,
                              freeze_headers = TRUE,
                              freeze_first_column = TRUE,
                              enable_sorting = TRUE,
@@ -92,6 +98,7 @@ tab_to_reactable <- function(tab_result,
                              decimal_places = 1,
                              font_family = "Consolas, Monaco, 'Courier New', Courier, monospace",
                              font_size = "12px",
+                             label_mode = "full",
                              ...) {
   
   # Validate input
@@ -106,8 +113,59 @@ tab_to_reactable <- function(tab_result,
     stop("color_top_n must be specified when color_mode = 'top_n'")
   }
   
-  # Extract metadata
+  # Extract metadata first (before any modifications)
   metadata <- .extract_reactable_metadata(tab_result)
+  
+  # Store cell_store and layout for tooltip generation (if available)
+  if (inherits(tab_result, "tab_cell_collection")) {
+    metadata$cell_store <- tab_result$cell_store
+    metadata$layout <- tab_result$layout
+  }
+  
+  # Apply native operations if cell-based
+  if (inherits(tab_result, "tab_cell_collection")) {
+    # Unlike Flourish, reactable CAN show base - respect show_base parameter
+    if (!show_base) {
+      tab_result <- hide_base(tab_result)
+    }
+    
+    # Strip summaries if requested
+    if (strip_summary_rows || strip_summary_cols) {
+      tab_result <- hide_summary(tab_result, 
+                                 rows = strip_summary_rows,
+                                 cols = strip_summary_cols)
+    }
+    
+    # Materialize with class preservation
+    # Pass show_base to control whether base row is added during materialization
+    tab_result <- .materialize_for_export(tab_result, 
+                                         show_base = show_base, 
+                                         label_mode = label_mode)
+    
+  } else {
+    # Data.frame-based path (existing implementation)
+    # Apply layout ordering before export
+    layout <- attr(tab_result, "layout")
+    if (!is.null(layout) && !is.null(layout$row_order)) {
+      tab_result <- tab_result[layout$row_order, , drop = FALSE]
+    }
+    if (!is.null(layout) && !is.null(layout$col_order)) {
+      col_order_with_label <- c(1, layout$col_order + 1)
+      tab_result <- tab_result[, col_order_with_label, drop = FALSE]
+    }
+    
+    # Apply visibility filtering before export
+    visibility <- attr(tab_result, "visibility")
+    if (!is.null(visibility)) {
+      if (!is.null(visibility$rows)) {
+        tab_result <- tab_result[visibility$rows, , drop = FALSE]
+      }
+      if (!is.null(visibility$cols)) {
+        visible_cols <- c(TRUE, visibility$cols)
+        tab_result <- tab_result[, visible_cols, drop = FALSE]
+      }
+    }
+  }
   
   # Validate sig_comparison
   if (color_mode == "significance" || sig_symbol) {
@@ -129,6 +187,7 @@ tab_to_reactable <- function(tab_result,
     color_midpoint = color_midpoint,
     color_top_n = color_top_n,
     sig_symbol = sig_symbol,
+    show_tooltips = show_tooltips,
     freeze_headers = freeze_headers,
     freeze_first_column = freeze_first_column,
     enable_sorting = enable_sorting,
@@ -153,16 +212,16 @@ tab_to_reactable <- function(tab_result,
 #' Extract metadata from tab_result for reactable display
 #' @keywords internal
 .extract_reactable_metadata <- function(tab_result) {
-  # Reuse extract_stat_info from tab_to_flourish
-  stat_info <- .extract_stat_info(tab_result)
+  # Use the safe version from export_helpers
+  stat_info <- .extract_stat_info_safe(tab_result)
   
   list(
     stat_info = stat_info,
-    base_label = attr(tab_result, "statistic")$base_label,
+    base_label = stat_info$base_label,
     base_orientation = attr(tab_result, "base_orientation"),
     base_matrix = attr(tab_result, "base_matrix"),
-    summary_row_label = attr(tab_result, "summary_row_label"),
-    summary_col_label = attr(tab_result, "summary_col_label"),
+    summary_row_label = stat_info$summary_row,
+    summary_col_label = stat_info$summary_col,
     significance = attr(tab_result, "significance"),
     sig_comparison = NULL  # Will be set by validation
   )
@@ -252,8 +311,7 @@ tab_to_reactable <- function(tab_result,
   }
   
   # Identify summary elements using metadata from tab
-  # Summary labels come from attr(tab_result, "summary_row_label") and
-  # attr(tab_result, "summary_col_label"), which may be custom labels
+  # Summary labels come from the statistic (e.g., "NET", "Avg", "Total")
   if (!is.null(metadata$summary_row_label) && 
       metadata$summary_row_label %in% df$row_label) {
     summary_rows <- metadata$summary_row_label
@@ -455,7 +513,8 @@ display_reactable <- function(x,
       cell = .build_footer_cell_render_fn(x, col_name, footer_data),
       style = .build_footer_cell_style_fn(x, col_name, footer_data),
       headerStyle = list(fontWeight = "bold"),
-      sortable = FALSE
+      sortable = FALSE,
+      html = TRUE  # Allow HTML rendering for tooltips
     )
   }
   
@@ -469,6 +528,8 @@ display_reactable <- function(x,
   settings <- x$settings
   special <- x$special_elements
   stat_info <- metadata$stat_info
+  is_base_col <- col_name %in% special$base_cols
+  is_summary_col <- col_name %in% special$summary_cols
   
   function(value, index) {
     # Handle NA
@@ -479,9 +540,9 @@ display_reactable <- function(x,
     # Get row label for this row in the footer
     row_label <- footer_data$row_label[index]
     
-    # Check if this is a base row or column
+    # Check if this is a base row or summary row
     is_base_row <- row_label %in% special$base_rows
-    is_base_col <- col_name %in% special$base_cols
+    is_summary_row <- row_label %in% special$summary_rows
     
     # Format base values as integers
     if (is_base_row || is_base_col) {
@@ -489,7 +550,33 @@ display_reactable <- function(x,
     }
     
     # Format regular values with controlled decimal places
-    .format_value_with_decimals(value, settings$decimal_places, stat_info$stat$format_fn)
+    formatted <- .format_value_with_decimals(value, settings$decimal_places, stat_info$stat$format_fn)
+    
+    # Add tooltip for data cells (not base or summary) if enabled
+    if (settings$show_tooltips && !is_base_row && !is_base_col && !is_summary_row && !is_summary_col) {
+      # Map footer row index to original data row index
+      # Footer data is a subset of x$data, need to find the original row index
+      original_index <- which(x$data$row_label == row_label)[1]
+      
+      if (!is.na(original_index)) {
+        # Get cell specification for this position
+        cell_info <- .get_cell_spec_for_position(x, original_index, col_name)
+        
+        if (!is.null(cell_info)) {
+          # Build tooltip text
+          tooltip_text <- .build_tooltip_text(
+            cell_info$specification,
+            stat_info$id,
+            cell_info$base
+          )
+          
+          # Wrap with tooltip
+          formatted <- .wrap_with_tooltip(formatted, tooltip_text)
+        }
+      }
+    }
+    
+    formatted
   }
 }
 
@@ -573,6 +660,70 @@ display_reactable <- function(x,
         background-color: #F0F0F0 !important;
         cursor: pointer;
       }
+      .cell-with-tooltip {
+        position: relative;
+      }
+      .cell-with-tooltip::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        bottom: 50%;
+        right: 100%;
+        transform: translateY(50%);
+        margin-right: 8px;
+        padding: 8px 12px;
+        background-color: #fff;
+        color: #333;
+        font-size: 11px;
+        line-height: 1.4;
+        text-align: left;
+        white-space: pre-line;
+        max-width: 300px;
+        width: max-content;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s, visibility 0.2s;
+        pointer-events: none;
+        z-index: 1000;
+      }
+      .cell-with-tooltip:hover::after {
+        opacity: 1;
+        visibility: visible;
+      }
+      .cell-with-tooltip::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        right: 100%;
+        transform: translateY(-50%);
+        margin-right: 2px;
+        border: 6px solid transparent;
+        border-left-color: #ccc;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s, visibility 0.2s;
+      }
+      .cell-with-tooltip:hover::before {
+        opacity: 1;
+        visibility: visible;
+      }
+      .tooltip-row {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .tooltip-row:last-child {
+        margin-bottom: 0;
+      }
+      .tooltip-label {
+        font-weight: bold;
+        margin-right: 6px;
+        display: inline-block;
+      }
+      .tooltip-value {
+        display: inline;
+      }
     ")))
 
     htmltools::browsable(htmltools::tagList(font_css, table))
@@ -629,6 +780,55 @@ display_reactable <- function(x,
     .rt-thead .rt-th:hover {
       background-color: #F0F0F0 !important;
       cursor: pointer;
+    }
+    .cell-with-tooltip {
+      position: relative;
+    }
+    .cell-with-tooltip::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 50%;
+      right: 100%;
+      transform: translateY(50%);
+      margin-right: 8px;
+      padding: 8px 12px;
+      background-color: #fff;
+      color: #333;
+      font-size: 11px;
+      line-height: 1.4;
+      text-align: left;
+      white-space: pre-line;
+      max-width: 300px;
+      width: max-content;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s, visibility 0.2s;
+      pointer-events: none;
+      z-index: 1000;
+    }
+    .cell-with-tooltip:hover::after {
+      opacity: 1;
+      visibility: visible;
+    }
+    .cell-with-tooltip::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      right: 100%;
+      transform: translateY(-50%);
+      margin-right: 2px;
+      border: 6px solid transparent;
+      border-left-color: #ccc;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s, visibility 0.2s;
+    }
+    .cell-with-tooltip:hover::before {
+      opacity: 1;
+      visibility: visible;
     }
   ")))
   
@@ -764,7 +964,8 @@ display_reactable <- function(x,
       cell = .build_cell_render_fn(x, col_name),
       style = .build_cell_style_fn(x, col_name),
       headerStyle = list(fontWeight = "bold"),
-      sortable = settings$enable_sorting
+      sortable = settings$enable_sorting,
+      html = TRUE  # Allow HTML rendering for tooltips
     )
   }
   
@@ -779,11 +980,13 @@ display_reactable <- function(x,
   special <- x$special_elements
   stat_info <- metadata$stat_info
   is_base_col <- col_name %in% special$base_cols
+  is_summary_col <- col_name %in% special$summary_cols
   
   function(value, index) {
     df <- x$data
     row_label <- df$row_label[index]
     is_base_row <- row_label %in% special$base_rows
+    is_summary_row <- row_label %in% special$summary_rows
     
     # Handle NA
     if (is.na(value)) {
@@ -810,6 +1013,24 @@ display_reactable <- function(x,
       if (!is.null(sig_result) && sig_result$significant) {
         symbol <- .format_sig_symbol(sig_result)
         formatted <- paste0(formatted, symbol)
+      }
+    }
+    
+    # Add tooltip for data cells (not base or summary) if enabled
+    if (settings$show_tooltips && !is_base_row && !is_base_col && !is_summary_row && !is_summary_col) {
+      # Get cell specification for this position
+      cell_info <- .get_cell_spec_for_position(x, index, col_name)
+      
+      if (!is.null(cell_info)) {
+        # Build tooltip text
+        tooltip_text <- .build_tooltip_text(
+          cell_info$specification,
+          stat_info$id,
+          cell_info$base
+        )
+        
+        # Wrap with tooltip
+        formatted <- .wrap_with_tooltip(formatted, tooltip_text)
       }
     }
     
@@ -1236,6 +1457,230 @@ display_reactable <- function(x,
   
   # Convert back to hex
   rgb(rgb_blend[1], rgb_blend[2], rgb_blend[3], maxColorValue = 255)
+}
+
+#' Get cell specification for a given row/column position
+#' 
+#' Maps row index and column name to the underlying cell specification
+#' by looking up the cell in the cell_store via the layout grid.
+#' 
+#' @param x A reactable_tab object
+#' @param row_index Integer row index in the data frame
+#' @param col_name Character column name
+#' @return List with cell specification and base n, or NULL if unavailable
+#' @keywords internal
+.get_cell_spec_for_position <- function(x, row_index, col_name) {
+  # Check if we have cell metadata available
+  if (is.null(x$metadata$cell_store) || is.null(x$metadata$layout)) {
+    return(NULL)
+  }
+  
+  cell_store <- x$metadata$cell_store
+  layout <- x$metadata$layout
+  grid <- layout$grid
+  
+  if (is.null(grid)) {
+    return(NULL)
+  }
+  
+  # Map column name to column index
+  # Column names in data frame exclude row_label, but grid includes all columns
+  data_col_names <- setdiff(names(x$data), "row_label")
+  col_index <- match(col_name, data_col_names)
+  
+  if (is.na(col_index)) {
+    return(NULL)
+  }
+  
+  # Check bounds
+  if (row_index < 1 || row_index > nrow(grid) || 
+      col_index < 1 || col_index > ncol(grid)) {
+    return(NULL)
+  }
+  
+  # Get cell ID from grid
+  cell_id <- grid[row_index, col_index]
+  
+  if (is.na(cell_id)) {
+    return(NULL)
+  }
+  
+  # Retrieve cell from store
+  cell <- get_cell(cell_store, cell_id)
+  
+  if (is.null(cell)) {
+    return(NULL)
+  }
+  
+  list(
+    specification = cell$specification,
+    base = cell$base
+  )
+}
+
+#' Build tooltip text for a cell
+#' 
+#' Constructs a tooltip string describing what the cell represents.
+#' Tailors the message based on the statistic type.
+#' 
+#' @param specification Cell specification list
+#' @param statistic_name Character name of the statistic
+#' @param base_n Numeric base count
+#' @return Character tooltip text (with HTML)
+#' @keywords internal
+.build_tooltip_text <- function(specification, statistic_name, base_n) {
+  if (is.null(specification)) {
+    return("")
+  }
+  
+  # Extract expressions
+  row_expr <- specification$row_expr
+  col_expr <- specification$col_expr
+  base_expr <- specification$base_expr
+  
+  # Format row expression
+  row_text <- if (!is.null(row_expr)) {
+    deparse(row_expr, width.cutoff = 500L)
+  } else {
+    "all"
+  }
+  row_text <- paste(row_text, collapse = " ")
+  
+  # Format column expression
+  col_text <- if (!is.null(col_expr)) {
+    deparse(col_expr, width.cutoff = 500L)
+  } else {
+    "all"
+  }
+  col_text <- paste(col_text, collapse = " ")
+  
+  # Format filter expression
+  # Only include if not TRUE or NULL (i.e., there's an actual filter)
+  filter_text <- ""
+  if (!is.null(base_expr)) {
+    # Check if it's just TRUE
+    is_true_filter <- FALSE
+    if (is.symbol(base_expr) && as.character(base_expr) == "TRUE") {
+      is_true_filter <- TRUE
+    } else if (is.logical(base_expr) && length(base_expr) == 1 && base_expr == TRUE) {
+      is_true_filter <- TRUE
+    }
+    
+    if (!is_true_filter) {
+      filter_part <- deparse(base_expr, width.cutoff = 500L)
+      filter_text <- paste(filter_part, collapse = " ")
+    }
+  }
+  
+  # Format base n
+  base_text <- if (!is.na(base_n)) {
+    as.character(round(base_n))
+  } else {
+    "NA"
+  }
+  
+  # Tailor message based on statistic type
+  parts <- .format_tooltip_for_statistic(
+    statistic_name, 
+    row_text, 
+    col_text, 
+    filter_text, 
+    base_text
+  )
+  
+  paste(parts, collapse = "\n")
+}
+
+#' Format tooltip text based on statistic type
+#' 
+#' @param stat_id Character statistic identifier
+#' @param row_text Character formatted row expression
+#' @param col_text Character formatted column expression
+#' @param filter_text Character formatted filter expression (may be empty)
+#' @param base_text Character formatted base count
+#' @return Character vector of tooltip lines
+#' @keywords internal
+.format_tooltip_for_statistic <- function(stat_id, row_text, col_text, filter_text, base_text) {
+  
+  # Determine statistic category and create appropriate message
+  parts <- character()
+  
+  if (stat_id == "count") {
+    # Count statistic
+    parts <- c(
+      paste("Statistic:", stat_id),
+      paste("Count of respondents with:", row_text),
+      paste("And:", col_text)
+    )
+    
+  } else if (stat_id == "correlation") {
+    # Correlation statistic
+    parts <- c(
+      paste("Statistic:", stat_id),
+      paste("Correlation between:", row_text),
+      paste("And:", col_text)
+    )
+    
+  } else if (stat_id %in% c("mean", "median", "sd", "cv", "p25", "p75")) {
+    # Value-based statistics
+    stat_label <- switch(stat_id,
+                         mean = "Mean",
+                         median = "Median",
+                         sd = "Standard deviation",
+                         cv = "Coefficient of variation",
+                         p25 = "25th percentile",
+                         p75 = "75th percentile",
+                         stat_id)
+    
+    parts <- c(
+      paste("Statistic:", stat_id),
+      paste(stat_label, "of values for respondents with:", sep = " "),
+      paste("  ", row_text),
+      paste("And:", col_text)
+    )
+    
+  } else {
+    # Default case for percentage and other statistics (column_pct, row_pct, index, etc.)
+    parts <- c(
+      paste("Statistic:", stat_id),
+      paste("Showing:", row_text),
+      paste("Amongst:", col_text)
+    )
+  }
+  
+  # Add filter if present
+  if (nzchar(filter_text)) {
+    parts <- c(parts, paste("Filtered by:", filter_text))
+  }
+  
+  # Add base n
+  parts <- c(parts, paste("Base n:", base_text))
+  
+  parts
+}
+
+#' Wrap cell value with custom tooltip HTML
+#' 
+#' Creates HTML structure with tooltip as a plain string.
+#' Uses actual HTML elements for rich formatting support.
+#' 
+#' @param value Character formatted value to display
+#' @param tooltip_text Character tooltip text (can include HTML)
+#' @return HTML string
+#' @keywords internal
+.wrap_with_tooltip <- function(value, tooltip_text) {
+  # Check if htmltools is available
+  if (!requireNamespace("htmltools", quietly = TRUE)) {
+    return(value)
+  }
+  
+  span_element <- htmltools::span(
+    class = "cell-with-tooltip",
+    `data-tooltip` = tooltip_text,
+    value
+  )
+  
+  as.character(span_element)
 }
 
 #' Print method for reactable_tab objects

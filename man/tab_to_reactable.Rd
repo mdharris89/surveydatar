@@ -16,6 +16,7 @@ tab_to_reactable(
   color_top_n = NULL,
   sig_comparison = NULL,
   sig_symbol = TRUE,
+  show_tooltips = TRUE,
   freeze_headers = TRUE,
   freeze_first_column = TRUE,
   enable_sorting = TRUE,
@@ -24,6 +25,7 @@ tab_to_reactable(
   decimal_places = 1,
   font_family = "Consolas, Monaco, 'Courier New', Courier, monospace",
   font_size = "12px",
+  label_mode = "full",
   ...
 )
 }
@@ -49,6 +51,8 @@ tab_to_reactable(
 \item{sig_comparison}{Character: name of significance comparison to use (auto-selects if only one exists)}
 
 \item{sig_symbol}{Logical: whether to append significance symbols (default TRUE)}
+
+\item{show_tooltips}{Logical: whether to show hover tooltips with cell information (default TRUE)}
 
 \item{freeze_headers}{Logical: freeze table headers when scrolling (default TRUE)}
 

@@ -33,6 +33,5 @@ realiselabelled_vec(
 A labelled vector (from haven/sjlabelled), or x unchanged if ineligible
 }
 \description{
-This is the workhorse that "realises" labels for one variable.
-It handles logical, character, factor, and numeric (incl. 0/1-coded) vectors.
+Converts logical, character, factor, and numeric vectors to labelled format.
 }

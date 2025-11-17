@@ -1,3 +1,14 @@
+# HELPER FUNCTIONS ------------------------------------------------------------
+
+#' Check if weighting debug mode is enabled
+#' @return Logical indicating if debug mode is active
+#' @noRd
+is_debug <- function() {
+  getOption("surveydatar.weighting.debug", default = FALSE)
+}
+
+# DOCUMENTATION ----------------------------------------------------------------
+
 #' @title Unified survey weighting with quadratic optimisation
 #'
 #' @description
@@ -1172,15 +1183,15 @@ constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data =
 
   # Create sparse matrix
   if (length(i_indices) > 0) {
-    X <- sparseMatrix(
+    X <- Matrix::sparseMatrix(
       i = i_indices,
       j = j_indices,
       x = x_values,
       dims = c(n_constraints, n_resp)
     )
   } else {
-    X <- sparseMatrix(i = integer(0), j = integer(0), x = numeric(0),
-                      dims = c(n_constraints, n_resp))
+    X <- Matrix::sparseMatrix(i = integer(0), j = integer(0), x = numeric(0),
+                              dims = c(n_constraints, n_resp))
   }
 
   # Return list with all components
@@ -1211,6 +1222,7 @@ constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data =
 #' @param max_weight Cap on individual target weights
 #' @param verbose Print diagnostic information
 #' @return Vector of target weights
+#' @export
 calculate_target_weights <- function(
     n,
     selection_probs = NULL,
@@ -1236,8 +1248,7 @@ calculate_target_weights <- function(
   if (any(is.na(selection_probs))) {
     n_missing <- sum(is.na(selection_probs))
     stop(sprintf(
-      "Selection probabilities contain %d missing values.\n",
-      "All respondents must have selection probabilities for bias correction.",
+      "Selection probabilities contain %d missing values. All respondents must have selection probabilities for bias correction.",
       n_missing
     ))
   }
@@ -1440,7 +1451,7 @@ build_survey_weights <- function(dat_clean,
   }
 
   # Objective: minimize squared distance from target weights
-  objective <- Minimize(sum((w - w_target)^2))
+  objective <- CVXR::Minimize(sum((w - w_target)^2))
 
   # Constraint assessment -----------------------------------------------------
   if (verbose) {
@@ -1511,31 +1522,31 @@ build_survey_weights <- function(dat_clean,
 
   result <- tryCatch({
     if (solver == "OSQP") {
-      solve(problem, solver = "OSQP",
-            verbose = FALSE,
-            eps_abs = 1e-6,
-            eps_rel = 1e-6,
-            max_iter = 10000)
+      CVXR::solve(problem, solver = "OSQP",
+                  verbose = FALSE,
+                  eps_abs = 1e-6,
+                  eps_rel = 1e-6,
+                  max_iter = 10000)
     } else if (solver == "ECOS") {
-      solve(problem, solver = "ECOS",
-            verbose = FALSE,
-            abstol = 1e-7,
-            reltol = 1e-6)
+      CVXR::solve(problem, solver = "ECOS",
+                  verbose = FALSE,
+                  abstol = 1e-7,
+                  reltol = 1e-6)
     } else if (solver == "SCS") {
-      solve(problem, solver = "SCS",
-            verbose = FALSE,
-            eps = 1e-6,
-            max_iters = 5000)
+      CVXR::solve(problem, solver = "SCS",
+                  verbose = FALSE,
+                  eps = 1e-6,
+                  max_iters = 5000)
     } else {
-      solve(problem, verbose = FALSE)
+      CVXR::solve(problem, verbose = FALSE)
     }
   }, error = function(e) {
     if (solver != "SCS"){
       message("Primary solver failed. Trying SCS...")
-      solve(problem, solver = "SCS",
-            verbose = verbose,
-            eps = 1e-6,
-            max_iters = 5000)
+      CVXR::solve(problem, solver = "SCS",
+                  verbose = verbose,
+                  eps = 1e-6,
+                  max_iters = 5000)
     } else {
       stop(e)
     }
@@ -1633,13 +1644,15 @@ build_survey_weights <- function(dat_clean,
   # Only extract weights if we have an optimal solution -----------------------
   if (result$status %in% c("optimal", "optimal_inaccurate")) {
     weights_raw <- tryCatch({
-      as.vector(result$getValue(w))
+      as.numeric(result$getValue(w))
     }, error = function(e) {
       stop(sprintf(
         "Failed to extract weights despite optimal status.\n",
         "Solver status: %s\n",
+        "Error: %s\n",
         "This is unexpected - please report this issue.",
-        result$status
+        result$status,
+        e$message
       ))
     })
   } else {
@@ -1656,10 +1669,10 @@ build_survey_weights <- function(dat_clean,
 
   # Additional reporting to return with the weights ---------------------------
   # Extract slack values for reporting
-  slack_lower_vals <- as.vector(result$getValue(s_lower))
-  slack_upper_vals <- as.vector(result$getValue(s_upper))
+  slack_lower_vals <- as.numeric(result$getValue(s_lower))
+  slack_upper_vals <- as.numeric(result$getValue(s_upper))
 
-  achieved <- as.vector(X %*% weights_raw)
+  achieved <- as.numeric(X %*% weights_raw)
 
   # Create detailed constraint report -----------------------------------------
 
@@ -2073,7 +2086,7 @@ run_unified_weighting <- function(raw_data,
       )
 
       # Add sum constraint
-      sum_row <- sparseMatrix(
+      sum_row <- Matrix::sparseMatrix(
         i = rep(1, nrow(dat_clean)),
         j = 1:nrow(dat_clean),
         x = rep(1, nrow(dat_clean)),
@@ -2129,8 +2142,6 @@ run_unified_weighting <- function(raw_data,
       # Handle weighting target (bias correction) -----------------------------
       if (!is.null(stage_weighting_target)) {
         message("Processing weighting target for bias correction...")
-
-        # TO DO: this whole section on bias correction needs fixing and testing
 
         # Weighting target can be set either with a weighting_target_function
         # which provides selection probabilities (with stage_weighting_target()),

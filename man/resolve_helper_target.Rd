@@ -2,7 +2,7 @@
 % Please edit documentation in R/builtins.R
 \name{resolve_helper_target}
 \alias{resolve_helper_target}
-\title{Resolve helper target (variable name, vector of names, or group name)}
+\title{Resolve helper target to variable names}
 \usage{
 resolve_helper_target(
   name_or_names,
@@ -11,7 +11,26 @@ resolve_helper_target(
   error_context = "helper target"
 )
 }
+\arguments{
+\item{name_or_names}{Single variable name, stem (e.g., "q1"), group name,
+or character vector of explicit variable names}
+
+\item{data}{Data frame containing variables}
+
+\item{dpdict}{Optional data dictionary for resolving question groups}
+
+\item{error_context}{String to contextualize error messages (e.g., "top_box")}
+}
+\value{
+Character vector of resolved variable names from data
+}
 \description{
-Resolve helper target (variable name, vector of names, or group name)
+Normalizes different input types (single variable, stem pattern, group name,
+or explicit vector) into a validated character vector of variable names.
+Used internally by helpers like top_box(), bottom_box(), etc.
+}
+\examples{
+# Resolves "q1" stem to c("q1_1", "q1_2", "q1_3")
+# Resolves "q1_a" to all vars in that question group
 }
 \keyword{internal}

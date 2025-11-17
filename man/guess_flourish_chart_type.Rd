@@ -4,7 +4,7 @@
 \alias{guess_flourish_chart_type}
 \title{Guess a sensible Flourish chart_type from a tab_result}
 \usage{
-guess_flourish_chart_type(tab)
+guess_flourish_chart_type(tab_result)
 }
 \description{
 Guess a sensible Flourish chart_type from a tab_result

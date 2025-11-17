@@ -358,7 +358,7 @@ test_that("bind_cols works with survey_data and updates dpdict", {
   newvec <- sjlabelled::set_labels(newvec, labels = c("X" = 1, "Y" = 2))
   attr(newvec, "label") <- "New Var"
 
-  res <- surveydatar:::bind_cols(s, data.frame(newvar = newvec))
+  res <- suppressWarnings(surveydatar:::bind_cols(s, data.frame(newvar = newvec)))
 
   expect_true(is.survey_data(res))
   expect_true("newvar" %in% names(res$dat))

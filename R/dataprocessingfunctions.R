@@ -148,8 +148,7 @@ character_to_labelled_via_dict <- function(character_vector, new_variable_label 
 
 #' Convert a single atomic vector to a labelled vector
 #'
-#' This is the workhorse that "realises" labels for one variable.
-#' It handles logical, character, factor, and numeric (incl. 0/1-coded) vectors.
+#' Converts logical, character, factor, and numeric vectors to labelled format.
 #'
 #' @param x A logical, character, factor or numeric vector to convert
 #' @param max_labels Maximum number of distinct values to auto-label

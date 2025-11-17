@@ -17,8 +17,6 @@
 Named list of column bindings suitable for Flourish charts
 }
 \description{
-Creates appropriate column bindings based on chart type and data format.
-This is a simple helper function that provides generic heuristics for
-binding data columns to chart aesthetics.
+Creates column bindings based on chart type and data format.
 }
 \keyword{internal}

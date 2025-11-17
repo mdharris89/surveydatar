@@ -1,85 +1,275 @@
-#' Create cross-tabulation tables with flexible formula syntax
+# Main Tab Interface
+#
+# The tab() function and its core pipeline:
+# 1. Macro detection and expansion
+# 2. Variable resolution (fuzzy matching via resolve_vars)
+# 3. Parsing and expansion (via tab_parsing.R functions)
+# 4. Validation (via tab_utilities.R functions)
+# 5. Cell-native computation via compute_cells_as_bundle()
+# 6. Layout grid construction with semantic cell matching
+# 7. Low base filtering if specified
+#
+# Returns a tab_cell_collection with cells in store and explicit layout grid.
+
+#' Cell-Based Tab Function
+#'
+#' Create cross-tabulation tables using the cell-based architecture. This function
+#' implements the complete unified tab architecture with position-independent cells,
+#' semantic references, and full metadata preservation.
+#'
+#' @section Architecture:
+#' tab() implements the complete parse → expand → compute pipeline and returns
+#' a cell-based tab_result object. The function returns a bundle of cells with 
+#' an explicit layout grid that imposes 2D structure. Use as.data.frame() to 
+#' materialize the result into a standard data.frame when needed.
+#'
+#' **Cell-Native Computation**:
+#' tab() computes cells directly from array intersections rather than computing
+#' a full matrix first. This avoids intermediate 2D structures and maintains 
+#' position-independence throughout the pipeline. Cells are created with their 
+#' values, bases, and full metadata in a single pass, enabling true
+#' dimension-agnostic operations.
+#'
+#' **Key Features**:
+#' - Returns `tab_cell_collection` (use as.data.frame() to materialize)
+#' - Cells stored with stable sequential IDs (c_000001, c_000002, ...)
+#' - Each cell preserves full specification (base_expr, row_expr, col_expr)
+#' - Hierarchical metadata enables semantic operations
+#' - Derive operations are truly additive (add cells, never modify)
+#' - Layout operations manipulate grid structure, not data
+#' - Computation is cell-native (no intermediate matrices)
+#'
+#' **Core Functionality**:
+#' - Macro support: Detects and expands tab_macro objects
+#' - Variable resolution: Fuzzy matching for column names (when fuzzy_match=TRUE)
+#' - Validation: Checks statistic requirements and label collisions
+#' - Label control: Smart, full, or suffix label modes at creation and display time
+#' - Low base filtering: Automatic threshold-based filtering
+#' - All helper functions and custom statistics fully supported
+#'
+#' **Cell Structure**:
+#' Each cell contains:
+#' - value: Computed statistic value
+#' - base: Base count for this cell
+#' - specification: What this cell represents (expressions + metadata)
+#' - computation: How it was computed (statistic, array references)
+#' - derivation: NULL for compute cells, tracks source cells for derived cells
+#'
+#' @section Usage:
+#' Basic usage for cross-tabulation:
+#'
+#' ```r
+#' # Basic crosstab
+#' result <- tab(data, satisfaction, gender)
+#'
+#' # With filter and weight
+#' result <- tab(data, satisfaction, gender, filter = age > 18, weight = "wgt")
+#'
+#' # Materialize to data.frame when needed
+#' df <- as.data.frame(result)
+#'
+#' # Pipe with derive operations
+#' result <- tab(data, satisfaction, gender) %>%
+#'   derive(delta_vs("Male", "Female")) %>%
+#'   arrange_rows(.by = "Male", .sort = "desc") %>%
+#'   as.data.frame()
+#' ```
+#'
+#' @section Compatibility:
+#' Cell-based results can be materialized to data.frame using `as.data.frame()`.
+#' The materialized data.frame is compatible with all utility functions
+#' including `add_sig()`, `copy_tab()`, `sort_tab()`, `modify_labels()`, 
+#' `tab_to_reactable()`, etc.
 #'
 #' @param data Data frame or survey_data object
-#' @param rows Row specification (variable name, expression, or named list)
+#' @param rows Row specification (variable, expression, or helper)
 #' @param cols Column specification (optional)
 #' @param filter Table-wide filter expression (optional)
 #' @param weight Weight variable name (optional)
 #' @param statistic Type of statistic: "column_pct", "count", "row_pct", "mean"
-#' @param values Variable name to aggregate for value-based statistics like mean (optional)
-#' @param show_row_nets Whether to show NET of rows (NET row for column_pct, NET column for row_pct)
-#' @param show_col_nets Whether to show NET of columns (NET column for column_pct, NET row for row_pct)
-#' @param show_col_nets Whether to show Base row/column
-#' @param low_base_threshold Numeric, minimum base size required to show a column
-#' @param label_mode Character string specifying how labels should be displayed:
-#'   \itemize{
-#'     \item \code{"smart"}: Show suffixes for multi-item questions, full labels
-#'           for single items
-#'     \item \code{"full"}: Always show full variable labels (default)
-#'     \item \code{"suffix"}: Show question suffixes when available, otherwise
-#'           extract from label
-#'   }
-#' @param sum_by Controls intelligent collapsing of rows and columns.
-#'   Can be:
-#'   \itemize{
-#'     \item \code{FALSE} or \code{NULL}: No collapsing (default)
-#'     \item \code{TRUE}: Auto-detect and collapse both rows and columns based on
-#'           metadata patterns (backward compatible with smart_collapse_row_labels)
-#'     \item Character string: Collapse rows only by the specified metadata field.
-#'           Common values are "ival" (collapse by value) or "ivar" (collapse by variable).
-#'     \item List with \code{rows} and/or \code{cols} elements: Separate control for
-#'           rows and columns. Each element can be:
-#'           \itemize{
-#'             \item \code{FALSE} or \code{NULL}: No collapsing for that dimension
-#'             \item \code{TRUE}: Auto-detect collapsing for that dimension
-#'             \item Character string: Collapse by specified field ("ival" or "ivar")
-#'           }
-#'   }
+#' @param values Variable name to aggregate for value-based statistics
+#' @param show_row_nets Whether to display NET/summary rows (NET row for column_pct, Avg for mean, etc.). Summary rows are always computed, this controls visibility.
+#' @param show_col_nets Whether to display NET/summary columns (NET column for row_pct, Total for count, etc.). Summary columns are always computed, this controls visibility.
+#' @param show_base Whether to display Base row/column. Base is always computed, this controls visibility.
+#' @param low_base_threshold Minimum base count threshold - cells/rows/cols with base below this are filtered out
+#' @param label_mode How to display labels: "smart" (default - suffix for multi-item, full for single-item), 
+#'   "full" (complete variable label), or "suffix" (extract suffix after separator). Can be overridden 
+#'   in as.data.frame(). Stored in result for use during materialization.
 #' @param helpers List of custom tab_helper objects
 #' @param stats List of custom tab_stat objects
-#' @param resolve_report Whether to return variable resolution details
+#' @param fuzzy_match Whether to enable fuzzy matching for variable names
 #' @param ... Additional arguments
-#' @details
-#' Base (n) Calculation:
-#' For statistics that use the 'values' parameter (like mean), the base (n)
-#' represents the count of non-NA values actually used in calculations.
-#' When different rows have varying numbers of valid values within a column
-#' (or vice versa for row-oriented statistics), the base will display NA
-#' and issue a warning. The full base matrix is stored as an attribute
-#' 'base_matrix' on the result object.
-#'
-#' @return Cross-tabulation table as data.frame
+#' @return A tab_result object with class `tab_cell_collection`
 #' @export
 #' @examples
-#' # String syntax
-#' tab(data, "q1", "gender")
+#' \dontrun{
+#' # Basic usage
+#' result <- tab(mtcars, factor(cyl), factor(gear))
+#' df <- as.data.frame(result)
 #'
-#' # Formula syntax
-#' tab(data, q1 * (age > 30), gender)
+#' # With derive operations
+#' result <- tab(data, satisfaction, gender) %>%
+#'   derive(delta_vs("Male", "Female")) %>%
+#'   derive(index_vs("Total")) %>%
+#'   hide_cols_except("Male|Female|Difference") %>%
+#'   as.data.frame()
 #'
-#' # With table-wide filter
-#' tab(data, q1, gender, filter = age > 18)
-#'
-#' # Multiple row groups
-#' tab(data, rows = rows_list("Total" = q1, "Young" = q1 * (age < 30)))
+#' # Full pipeline
+#' result <- tab(data, satisfaction, region, filter = age > 18, weight = "wgt") %>%
+#'   derive(sum_if("ival", dimension = "cols")) %>%
+#'   arrange_rows(.by = "North", .sort = "desc") %>%
+#'   hide_rows("Don't know") %>%
+#'   as.data.frame()
+#' }
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
                 show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
-                low_base_threshold = 0,
-                label_mode = "full",
-                sum_by = FALSE,
-                helpers = NULL, stats = NULL, resolve_report = FALSE,
+                low_base_threshold = NULL,
+                label_mode = c("smart", "full", "suffix"),
+                helpers = NULL, stats = NULL, fuzzy_match = FALSE,
                 ...) {
-
-  # Store original call for later use
-  original_call <- match.call()
-
+  
+  # Store original call
+  original_call <- match.call(expand.dots = FALSE)
+  caller_env <- parent.frame()
+  
   ensure_builtins_registered()
-
+  
+  # Extract data and dpdict if survey_data object
+  if (inherits(data, "survey_data")) {
+    dpdict <- data$dpdict
+    data <- data$dat
+  } else {
+    dpdict <- NULL
+  }
+  
+  # Check for empty data
+  if (nrow(data) == 0) {
+    stop("Data has 0 rows.")
+  }
+  
+  cols_missing <- missing(cols)
+  filter_missing <- missing(filter)
+  
+  rows_quo <- rlang::enquo(rows)
+  cols_quo <- if (!cols_missing) rlang::enquo(cols) else NULL
+  filter_quo <- if (!filter_missing) rlang::enquo(filter) else NULL
+  
+  has_cols <- !is.null(cols_quo)
+  has_filter <- !is.null(filter_quo)
+  
+  ## Macro detection and processing (parity with tab()) -----------------------
+  
+  # Track user-supplied arguments for macro processing
+  formal_names <- names(formals(tab))
+  call_args <- as.list(original_call)[-1]
+  arg_names <- names(call_args)
+  if (is.null(arg_names)) {
+    arg_names <- character(length(call_args))
+  }
+  
+  expr_label_safe <- function(expr) {
+    tryCatch(
+      rlang::expr_label(expr),
+      error = function(e) {
+        if (is.null(expr)) {
+          "NULL"
+        } else {
+          paste(deparse(expr), collapse = " ")
+        }
+      }
+    )
+  }
+  
+  user_arg_labels <- list()
+  
+  for (i in seq_along(call_args)) {
+    name_i <- arg_names[i]
+    if (is.null(name_i) || !nzchar(name_i)) {
+      if (i <= length(formal_names)) {
+        name_i <- formal_names[i]
+        arg_names[i] <- name_i
+      }
+    }
+    if (!is.null(name_i) && nzchar(name_i)) {
+      user_arg_labels[[name_i]] <- expr_label_safe(call_args[[i]])
+    }
+  }
+  user_supplied_args <- unique(arg_names[nzchar(arg_names)])
+  
+  # Save original quosures before macro processing
+  rows_quo_original <- rows_quo
+  cols_quo_original <- cols_quo
+  filter_quo_original <- filter_quo
+  
+  # Build params list for macro processing
+  params <- list(
+    rows = rows_quo_original,
+    cols = if (!cols_missing) cols_quo_original else NULL,
+    filter = if (!filter_missing) filter_quo_original else NULL,
+    weight = weight,
+    statistic = statistic,
+    values = values,
+    show_row_nets = show_row_nets,
+    show_col_nets = show_col_nets,
+    show_base = show_base,
+    helpers = helpers,
+    stats = stats,
+    fuzzy_match = fuzzy_match
+  )
+  
+  # Detect and process macros (reuses functions from tab.R)
+  macro_rows <- detect_tab_macro(rows_quo_original, caller_env)
+  if (!is.null(macro_rows)) {
+    params$rows <- macro_rows
+  }
+  
+  if (!cols_missing) {
+    macro_cols <- detect_tab_macro(cols_quo_original, caller_env)
+    if (!is.null(macro_cols)) {
+      params$cols <- macro_cols
+    }
+  }
+  
+  if (!filter_missing) {
+    macro_filter <- detect_tab_macro(filter_quo_original, caller_env)
+    if (!is.null(macro_filter)) {
+      params$filter <- macro_filter
+    }
+  }
+  
+  # Process macros
+  params <- process_tab_macros(
+    params = params,
+    user_supplied = user_supplied_args,
+    data = data,
+    dpdict = dpdict,
+    user_arg_labels = user_arg_labels
+  )
+  
+  # Convert macro results back to quosures
+  rows_quo <- convert_macro_result(params$rows, caller_env)
+  cols_quo <- if (!is.null(params$cols)) convert_macro_result(params$cols, caller_env) else NULL
+  filter_quo <- if (!is.null(params$filter)) convert_macro_result(params$filter, caller_env) else NULL
+  
+  # Update other parameters that might have been modified by macros
+  weight <- params$weight
+  statistic <- params$statistic
+  values <- params$values
+  show_row_nets <- params$show_row_nets
+  show_col_nets <- params$show_col_nets
+  show_base <- params$show_base
+  helpers <- params$helpers
+  stats <- params$stats
+  fuzzy_match <- params$fuzzy_match
+  
+  # Update has_cols and has_filter based on potentially modified quosures
+  has_cols <- !is.null(cols_quo)
+  has_filter <- !is.null(filter_quo)
+  
   ## Statistics validation and setup ------------------------------------------
-
-  # Handle custom stats registry first to create effective registry
+  
   effective_stats <- .tab_registry$stats
   if (!is.null(stats)) {
     if (!is.list(stats)) {
@@ -88,160 +278,126 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     if (!all(vapply(stats, inherits, logical(1), "tab_stat"))) {
       stop("All items in stats list must be tab_stat objects")
     }
-    # Create temporary registry with overrides
     effective_stats <- c(stats, .tab_registry$stats)
     names(effective_stats) <- c(
       vapply(stats, `[[`, character(1), "id"),
       names(.tab_registry$stats)
     )
-    # Remove duplicates, keeping first (custom) version
     effective_stats <- effective_stats[!duplicated(names(effective_stats))]
   }
-
-  # Resolve statistic to object
+  
   if (is.character(statistic)) {
-    # Handle default arguments
     if (length(statistic) > 1) {
       statistic <- match.arg(statistic)
     }
-    # Look up in registry
     if (!statistic %in% names(effective_stats)) {
       stop("Unknown statistic: '", statistic, "'. Available: ",
            paste(names(effective_stats), collapse = ", "))
     }
-    statistic <- effective_stats[[statistic]]
+    statistic_obj <- effective_stats[[statistic]]
   } else if (!inherits(statistic, "tab_stat")) {
     stop("statistic must be a character string or tab_stat object")
+  } else {
+    statistic_obj <- statistic
   }
-
-  # Validate values parameter
-  if (statistic$requires_values && is.null(values)) {
-    stop(statistic$id, " statistic requires 'values' parameter")
+  
+  if (statistic_obj$requires_values && is.null(values)) {
+    stop(statistic_obj$id, " statistic requires 'values' parameter")
   }
-  if (!is.null(values) && !statistic$requires_values) {
-    warning("Values parameter ignored for ", statistic$id, " statistic")
+  if (!is.null(values) && !statistic_obj$requires_values) {
+    warning("Values parameter ignored for ", statistic_obj$id, " statistic")
   }
-
+  
+  ## Label mode validation ----------------------------------------------------
+  if (length(label_mode) > 1) {
+    label_mode <- match.arg(label_mode)
+  }
+  
   ## Custom helpers validation and setup --------------------------------------
-  # Merge custom helpers and stats with built-ins
   all_helpers <- .tab_registry$helpers
   if (!is.null(helpers)) {
     if (!is.list(helpers)) {
       stop("helpers must be a list of tab_helper objects")
     }
-    # Check that all items are tab_helper objects
     helper_check <- vapply(helpers, inherits, logical(1), "tab_helper")
     if (!all(helper_check)) {
       stop("All items in helpers list must be tab_helper objects")
     }
-    # Add to registry (with potential overwrites)
     for (helper in helpers) {
       all_helpers[[helper$id]] <- helper
     }
   }
-
-  ## Data validation and setup ------------------------------------------------
-  # Extract data and dpdict if survey_data object
-  if (inherits(data, "survey_data")) {
-    dpdict <- data$dpdict
-    data <- data$dat
-  } else {
-    dpdict <- NULL
-  }
-
-  # Check for empty data
-  if (nrow(data) == 0) {
-    stop("Data has 0 rows.")
-  }
-
-  ## Expression handling ------------------------------------------------------
-  if (resolve_report) {
-    message("Starting variable resolution...")
-  }
-
+  
+  ## Variable resolution (fuzzy matching) -------------------------------------
+  
   # Extract variable names from expressions for resolution
   var_candidates <- character(0)
-
+  
   # Extract from rows
-  rows_quo <- rlang::enquo(rows)
   rows_expr <- rlang::quo_get_expr(rows_quo)
   if (rlang::is_string(rows_expr)) {
     var_candidates <- c(var_candidates, rows_expr)
   }
-
+  
   # Extract from cols if provided
-  if (!missing(cols)) {
-    cols_quo <- rlang::enquo(cols)
+  if (has_cols) {
     cols_expr <- rlang::quo_get_expr(cols_quo)
     if (rlang::is_string(cols_expr)) {
       var_candidates <- c(var_candidates, cols_expr)
     }
   }
-
+  
   # Extract from weight if provided
   if (!is.null(weight) && is.character(weight)) {
     var_candidates <- c(var_candidates, weight)
   }
-
+  
   # Extract from values if provided
   if (!is.null(values) && is.character(values)) {
     var_candidates <- c(var_candidates, values)
   }
-
-  ## Variable resolution ------------------------------------------------------
+  
   # Resolve variable names if any string candidates found
-  if (length(var_candidates) > 0 && resolve_report) {
+  if (length(var_candidates) > 0 && fuzzy_match) {
     tryCatch({
       resolved_vars <- resolve_vars(
         data = data,
         dpdict = dpdict,
         var_names = var_candidates,
         threshold = 0.75,
-        report = resolve_report
+        report = FALSE
       )
-
-      if (resolve_report) {
-        message("Variable resolution completed:")
-        resolution_log <- attr(resolved_vars, "resolution_log")
-        if (!is.null(resolution_log)) {
-          for (orig_name in names(resolution_log)) {
-            log_entry <- resolution_log[[orig_name]]
-            message(sprintf("  %s -> %s (via %s)", orig_name, log_entry$result, log_entry$method))
-          }
-        }
+      
+      if (length(resolved_vars) > 0) {
+        message("Fuzzy matching applied to ", length(resolved_vars), " variable(s)")
       }
-
+  
       # Update variable references with resolved names
       if (rlang::is_string(rows_expr) && rows_expr %in% names(resolved_vars)) {
         rows_expr <- resolved_vars[[rows_expr]]
         rows_quo <- rlang::quo(!!rlang::sym(rows_expr))
       }
-
-      if (!missing(cols) && rlang::is_string(cols_expr) && cols_expr %in% names(resolved_vars)) {
+  
+      if (has_cols && rlang::is_string(cols_expr) && cols_expr %in% names(resolved_vars)) {
         cols_expr <- resolved_vars[[cols_expr]]
         cols_quo <- rlang::quo(!!rlang::sym(cols_expr))
       }
-
+  
       if (!is.null(weight) && weight %in% names(resolved_vars)) {
         weight <- resolved_vars[[weight]]
       }
-
+  
       if (!is.null(values) && values %in% names(resolved_vars)) {
         values <- resolved_vars[[values]]
       }
     }, error = function(e){
-      # If resolution fails, fall back to original behavior
-      # This preserves backward compatibility and existing error messages
-      if (resolve_report) {
-        message("Variable resolution failed: ", e$message)
-        message("Falling back to original variable handling")
-      }
+      # If resolution fails, fall back to original behavior silently
     })
   }
-
+  
   ## Prep base array, weights and whole-table filter ---------------------------
   base_array <- rep(1, nrow(data))
-
+  
   # Apply weights
   if (!is.null(weight)) {
     if (!weight %in% names(data)) {
@@ -249,68 +405,57 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
     base_array <- base_array * data[[weight]]
   }
-
+  
   # Apply whole-table filter
-  if (!missing(filter)) {
-    filter_quo <- rlang::enquo(filter)
-
-    # Try to evaluate first (like we do for rows) to allow helpers to execute
+  base_filter_spec <- NULL
+  base_filter_expr <- quote(TRUE)
+  
+  if (has_filter) {
     filter_eval <- tryCatch(
       rlang::eval_tidy(filter_quo, data),
       error = function(e) NULL
     )
-
+    
     if (inherits(filter_eval, "tab_helper")) {
-      # Successfully evaluated to a helper
       filter_to_parse <- filter_eval
     } else {
-      # Evaluation failed (e.g., undefined symbols) or returned non-helper
-      # Parse the original quosure
       filter_to_parse <- filter_quo
     }
-
+    
     filter_parsed <- parse_table_formula(filter_to_parse, data, dpdict, all_helpers)
     filter_logic <- formula_to_array(filter_parsed, data, dpdict, all_helpers)
     base_array <- base_array * filter_logic
+    
+    # Store filter specification for cell metadata
+    base_filter_spec <- filter_parsed
+    base_filter_expr <- rlang::quo_get_expr(filter_quo)
   }
-
+  
   ## Parse row and column specs ------------------------------------------------
-  # Parse row specifications
-  rows_quo <- rlang::enquo(rows)
   rows_expr <- rlang::quo_get_expr(rows_quo)
-
-  # Check if it's string syntax
+  
   if (rlang::is_string(rows_expr)) {
     rows_parsed <- list(parse_table_formula(rows_quo, data, dpdict, all_helpers))
   } else {
-    # Try to evaluate to see if it's a rows_list
     rows_eval <- tryCatch(
       rlang::eval_tidy(rows_quo),
       error = function(e) NULL
     )
-
-    # Check for tab_helper before checking is_list (since tab_helper inherits from list)
+    
     if (inherits(rows_eval, "tab_helper")) {
-
-      # It's a single helper function
       rows_parsed <- list(parse_table_formula(rows_eval, data, dpdict, all_helpers))
     } else if (rlang::is_list(rows_eval)) {
-      # It's a rows_list
       rows_parsed <- lapply(seq_along(rows_eval), function(i) {
         if (rlang::is_quosure(rows_eval[[i]])) {
           expr <- rlang::quo_get_expr(rows_eval[[i]])
-          # Only evaluate if it's a function call that might be a helper
           if (rlang::is_call(expr)) {
             fn_name <- as.character(expr[[1]])
             if (fn_name %in% names(all_helpers)) {
-              # It's a helper function - evaluate it
               item_eval <- rlang::eval_tidy(rows_eval[[i]], data)
             } else {
-              # It's some other function call - pass the quosure
               item_eval <- rows_eval[[i]]
             }
           } else {
-            # It's a simple variable or other expression - pass the quosure
             item_eval <- rows_eval[[i]]
           }
         } else {
@@ -324,45 +469,35 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
         parsed
       })
     } else {
-      # It's a formula expression
       rows_parsed <- list(parse_table_formula(rows_quo, data, dpdict, all_helpers))
     }
   }
-
+  
   # Parse column specifications
-  if (!missing(cols)) {
-    cols_quo <- rlang::enquo(cols)
+  if (has_cols) {
     cols_expr <- rlang::quo_get_expr(cols_quo)
-
+    
     if (rlang::is_string(cols_expr)) {
       cols_parsed <- list(parse_table_formula(cols_quo, data, dpdict, all_helpers))
     } else {
-      # Try to evaluate safely (in case there are column helper functions in future)
       cols_eval <- tryCatch(
         rlang::eval_tidy(cols_quo),
         error = function(e) NULL
       )
-      # Check for tab_helper before checking is_list (since tab_helper inherits from list)
       if (inherits(cols_eval, "tab_helper")) {
-        # It's a single helper function
         cols_parsed <- list(parse_table_formula(cols_eval, data, dpdict, all_helpers))
       } else if (rlang::is_list(cols_eval)) {
-        # Handle list-based column specs if implemented in future
         cols_parsed <- lapply(seq_along(cols_eval), function(i) {
           if (rlang::is_quosure(cols_eval[[i]])) {
             expr <- rlang::quo_get_expr(cols_eval[[i]])
-            # Only evaluate if it's a function call that might be a helper
             if (rlang::is_call(expr)) {
               fn_name <- as.character(expr[[1]])
               if (fn_name %in% names(all_helpers)) {
-                # It's a helper function - evaluate it
                 item_eval <- rlang::eval_tidy(cols_eval[[i]], data)
               } else {
-                # It's some other function call - pass the quosure
                 item_eval <- cols_eval[[i]]
               }
             } else {
-              # It's a simple variable or other expression - pass the quosure
               item_eval <- cols_eval[[i]]
             }
           } else {
@@ -376,19 +511,18 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
           parsed
         })
       } else {
-        # It's a formula expression
         cols_parsed <- list(parse_table_formula(cols_quo, data, dpdict, all_helpers))
       }
     }
   } else {
     cols_parsed <- NULL
   }
-
+  
   ## Variable expansion -------------------------------------------------------
   # Expand variables for rows
   rows_expanded <- list()
   for (row_spec in rows_parsed) {
-    expanded <- expand_variables(row_spec, data, dpdict, statistic$id, values,
+    expanded <- expand_variables(row_spec, data, dpdict, statistic_obj$id, values,
                                  label_mode = label_mode, all_helpers = all_helpers)
     for (exp in expanded) {
       if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
@@ -397,58 +531,99 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       rows_expanded <- append(rows_expanded, list(exp))
     }
   }
-
+  
   # Expand variables for columns
   if (!is.null(cols_parsed)) {
     cols_expanded <- list()
     for (col_spec in cols_parsed) {
-      expanded <- expand_variables(col_spec, data, dpdict, statistic$id, values_var = NULL, label_mode = label_mode, all_helpers = all_helpers)
+      # Check if this is a spec generator (banner)
+      if (col_spec$type == "helper") {
+        helper_obj <- .tab_registry$helpers[[col_spec$helper_type]]
+        if (!is.null(helper_obj) && isTRUE(helper_obj$returns_specs)) {
+          # This helper returns specifications, not arrays
+          # First, process the helper to get components populated
+          processed_spec <- process_helper_for_specs(col_spec, data, dpdict, all_helpers)
+          
+          # Call the spec generator to get column specs
+          col_specs <- helper_obj$processor(processed_spec, data, dpdict, all_helpers)
+          
+          # col_specs is now a list of specifications
+          # Each spec will be converted to array during compute stage
+          for (spec in col_specs) {
+            # Normalize the spec to ensure it has an expr field for matching
+            normalized_spec <- normalize_spec_expression(spec)
+            cols_expanded <- append(cols_expanded, list(normalized_spec))
+          }
+          next
+        }
+      }
+      
+      # Normal expansion
+      expanded <- expand_variables(col_spec, data, dpdict, statistic_obj$id, values_var = NULL, 
+                                   label_mode = label_mode, all_helpers = all_helpers)
       cols_expanded <- append(cols_expanded, expanded)
     }
   } else {
-    cols_expanded <- list(list(type = "total", label = "Total"))
+    cols_expanded <- list(normalize_spec_expression(list(type = "total", label = "Total")))
   }
-
-  # validate rows and columns for value statistics
-  if(!is.null(statistic) && statistic$requires_values){
+  
+  ## Validate variables for statistics (parity with tab()) --------------------
+  
+  # Validate rows and columns for value statistics
+  if (!is.null(statistic_obj) && statistic_obj$requires_values) {
     # Throws error if variables inappropriate for statistic, else continues
-    validate_statistic_variables(statistic, rows_expanded, cols_expanded, data, dpdict)
+    validate_statistic_variables(statistic_obj, rows_expanded, cols_expanded, data, dpdict)
   }
-
+  
   ## Create row, column and value arrays ---------------------------------------
   # Create arrays for each specification
+  
   row_arrays <- list()
   rows_expanded_final <- list()
-
+  
   for (spec in rows_expanded) {
     array_result <- formula_to_array(spec, data, dpdict, all_helpers = all_helpers)
-
+    
     # Check if helper returned multiple arrays
     if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
-      # Multi-column helper - expand to multiple rows
-      for (row_name in names(array_result)) {
-        row_arrays <- append(row_arrays, list(array_result[[row_name]]))
-
-        # Create a new spec for each row
-        new_spec <- spec
-        new_spec$label <- row_name
-        new_spec$original_helper <- spec$helper_type
+      for (i in seq_along(names(array_result))) {
+        row_name <- names(array_result)[i]
+        member_array <- array_result[[row_name]]
+        row_arrays <- append(row_arrays, list(member_array))
+        
+        # Add .member_index to original expression for uniqueness
+        specialized_expr <- if (is.call(spec$expr)) {
+          expr_copy <- spec$expr
+          expr_copy[[length(expr_copy) + 1]] <- i
+          names(expr_copy)[length(expr_copy)] <- ".member_index"
+          expr_copy
+        } else {
+          # Wrap non-call expressions
+          call("_identity_", spec$expr, .member_index = i)
+        }
+        
+        new_spec <- list(
+          type = spec$type,
+          helper_type = spec$helper_type,
+          label = row_name,
+          expr = specialized_expr,
+          dsl = attr(member_array, "meta")$dsl
+        )
+        
         rows_expanded_final <- append(rows_expanded_final, list(new_spec))
       }
     } else {
-      # Single array
       row_arrays <- append(row_arrays, list(array_result))
       rows_expanded_final <- append(rows_expanded_final, list(spec))
     }
   }
-
-  # Update rows_expanded to reflect any expansion from multi-column helpers
+  
   rows_expanded <- rows_expanded_final
-
+  
   col_arrays <- if (!is.null(cols_parsed)) {
     arrays_list <- list()
     expanded_specs <- list()
-
+    
     for (spec in cols_expanded) {
       if (spec$type == "total") {
         array <- rep(1, nrow(data))
@@ -456,43 +631,71 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
         expanded_specs <- append(expanded_specs, list(spec))
       } else {
         array_result <- formula_to_array(spec, data, dpdict, all_helpers = all_helpers)
-
-        # Check if helper returned multiple arrays
+        
         if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
-          # Multi-column helper - add each array separately
-          for (col_name in names(array_result)) {
-            arrays_list <- append(arrays_list, list(array_result[[col_name]]))
-            # Create a new spec for each column
-            new_spec <- spec
-            new_spec$label <- col_name
-            new_spec$original_helper <- spec$helper_type
+          for (i in seq_along(names(array_result))) {
+            col_name <- names(array_result)[i]
+            member_array <- array_result[[col_name]]
+            arrays_list <- append(arrays_list, list(member_array))
+            
+            # Add .member_index to original expression for uniqueness
+            specialized_expr <- if (is.call(spec$expr)) {
+              expr_copy <- spec$expr
+              expr_copy[[length(expr_copy) + 1]] <- i
+              names(expr_copy)[length(expr_copy)] <- ".member_index"
+              expr_copy
+            } else {
+              call("_identity_", spec$expr, .member_index = i)
+            }
+            
+            new_spec <- list(
+              type = spec$type,
+              helper_type = spec$helper_type,
+              label = col_name,
+              expr = specialized_expr,
+              dsl = attr(member_array, "meta")$dsl
+            )
+            
             expanded_specs <- append(expanded_specs, list(new_spec))
           }
         } else {
-          # Single array
           arrays_list <- append(arrays_list, list(array_result))
           expanded_specs <- append(expanded_specs, list(spec))
         }
       }
     }
-
-    # Update cols_expanded to reflect any expansion from multi-column helpers
+    
     cols_expanded <- expanded_specs
     arrays_list
   } else {
     array <- rep(1, nrow(data))
     list(array)
   }
-
+  
+  # Create values array if needed
+  values_array <- NULL
+  if (!is.null(values)) {
+    if (!values %in% names(data)) {
+      stop("Values variable '", values, "' not found in data")
+    }
+    values_array <- data[[values]]
+    
+    if (!is.numeric(values_array)) {
+      stop("Values variable must be numeric for mean calculations")
+    }
+  }
+  
+  ## Check for label collisions (parity with tab()) ---------------------------
+  
   # Check for label collisions with Base or summary rows and columns
-  meta_labels <- c(statistic$base_label)
-  if (!is.null(statistic$summary_row)) {
-    meta_labels <- c(meta_labels, statistic$summary_row)
+  meta_labels <- c(statistic_obj$base_label)
+  if (!is.null(statistic_obj$summary_row)) {
+    meta_labels <- c(meta_labels, statistic_obj$summary_row)
   }
-  if (!is.null(statistic$summary_col)) {
-    meta_labels <- c(meta_labels, statistic$summary_col)
+  if (!is.null(statistic_obj$summary_col)) {
+    meta_labels <- c(meta_labels, statistic_obj$summary_col)
   }
-
+  
   # Check row labels
   for (spec in rows_expanded) {
     if (spec$label %in% meta_labels) {
@@ -502,4048 +705,549 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
            "Please rename your data or use a custom label in rows specification.")
     }
   }
-
+  
   # Check column labels if they exist
   if (!is.null(cols_parsed) && exists("cols_expanded")) {
-    for (spec in cols_expanded) {
-      if (spec$label %in% meta_labels) {
-        stop("Label collision detected: Column label '", spec$label,
+    for (i in seq_along(cols_expanded)) {
+      spec <- cols_expanded[[i]]
+      spec_label <- spec$label
+      if (spec_label %in% meta_labels) {
+        stop("Label collision detected: Column label '", spec_label,
              "' matches a reserved meta-category label. ",
              "Reserved labels are: ", paste(meta_labels, collapse = ", "), ". ",
              "Please rename your data or use a custom label in cols specification.")
       }
     }
   }
-
-  # Create values array if needed
-  values_array <- NULL
-  if (!is.null(values)) {
-    if (!values %in% names(data)) {
-      stop("Values variable '", values, "' not found in data")
-    }
-    values_array <- data[[values]]
-
-    # Validate that values variable is numeric
-    if (!is.numeric(values_array)) {
-      stop("Values variable must be numeric for mean calculations")
-    }
-  }
-
-  ## Calculate table ----------------------------------------------------------
-  # Build the table
-  n_rows <- length(row_arrays)
-  n_cols <- length(col_arrays)
-
-  # Initialize result matrix
-  result_matrix <- matrix(NA, nrow = n_rows, ncol = n_cols)
-
-  # Compute each cell
-  result_matrix <- compute_cells_vectorized(
+  
+  ## Create cell bundle directly from arrays ----------------------------------
+  # Cell-native computation: create cells directly from array intersections
+  # without intermediate matrix structures. This maintains position-independence
+  # and enables dimension-agnostic operations.
+  compute_result <- compute_cells_as_bundle(
     base_array = base_array,
     row_arrays = row_arrays,
     col_arrays = col_arrays,
-    statistic = statistic,
-    values = values_array
+    rows_expanded = rows_expanded,
+    cols_expanded = cols_expanded,
+    base_filter_spec = base_filter_spec,
+    base_filter_expr = base_filter_expr,
+    statistic_obj = statistic_obj,
+    values_array = values_array,
+    values_var = values
   )
-
-  ## Add row and column labels ------------------------------------------------
-  # Add row labels
-  row_labels <- vapply(rows_expanded, function(x) {
-    if (!is.null(x$group_label) && x$group_label != x$label) {
-      paste(x$group_label, x$label, sep = " - ")
-    } else {
-      x$label
-    }
-  }, character(1))
-
-  result_df <- as.data.frame(result_matrix, stringsAsFactors = FALSE)
-  result_df <- cbind(
-    data.frame(row_label = row_labels, stringsAsFactors = FALSE),
-    result_df
-  )
-
-  # Add column labels
-  col_labels <- vapply(cols_expanded, function(x) {
-    if (!is.null(x$group_label) && x$group_label != x$label) {
-      paste(x$group_label, x$label, sep = " - ")
-    } else {
-      x$label
-    }
-  }, character(1))
-
-  names(result_df)[-1] <- col_labels
-
-  # Initial base matrix calculation with gates
-  base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
-                                  values_array, statistic)
-
-  # smart collapse if requested
-  # Parse sum_by parameter
-  if (is.null(sum_by) || isFALSE(sum_by)) {
-    collapse_rows <- FALSE
-    collapse_cols <- FALSE
-    row_field <- NULL
-    col_field <- NULL
-  } else if (isTRUE(sum_by)) {
-    # Backward compatibility - auto-detect
-    collapse_rows <- TRUE
-    collapse_cols <- TRUE
-    row_field <- NULL  # Auto-detect
-    col_field <- NULL  # Auto-detect
-  } else if (is.character(sum_by)) {
-    # String means collapse rows only by that field
-    collapse_rows <- TRUE
-    collapse_cols <- FALSE
-    row_field <- sum_by
-    col_field <- NULL
-  } else if (is.list(sum_by)) {
-    # List gives full control
-    collapse_rows <- !is.null(sum_by$rows) && sum_by$rows != FALSE
-    collapse_cols <- !is.null(sum_by$cols) && sum_by$cols != FALSE
-
-    # Extract field names or use auto-detect
-    row_field <- if (is.character(sum_by$rows)) sum_by$rows else NULL
-    col_field <- if (is.character(sum_by$cols)) sum_by$cols else NULL
-  } else {
-    stop("sum_by must be FALSE, TRUE, a character string, or a list")
-  }
-
-  # Apply collapses
-  if (collapse_rows) {
-    collapse_result <- smart_collapse_rows(result_df, row_arrays,
-                                           field = row_field)
-    result_df <- collapse_result$df
-    row_arrays <- collapse_result$row_arrays
-
-    # Resync base matrix after row collapse
-    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
-                                    values_array, statistic)
-  }
-
-  if (collapse_cols) {
-    col_collapse <- smart_collapse_cols(result_df, col_arrays,
-                                        field = col_field)
-    result_df <- col_collapse$df
-    col_arrays <- col_collapse$col_arrays
-
-    # Resync base matrix after column collapse
-    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
-                                    values_array, statistic)
-  }
-
-
-  ## Remove low-base rows/columns based on threshold ----
-  kept_row_indices <- seq_len(nrow(result_df))
-  kept_col_indices <- seq_len(ncol(result_df) - 1)  # Excluding row_label column
-
-  if (!is.null(low_base_threshold) && !is.null(base_matrix)) {
-    # Summary rows and columns are added AFTER this filtering step,
-    # so they are automatically excluded from the low_base_threshold check
-
-    # Apply threshold to each cell in the result matrix
-    # First, create a mask of which cells meet the threshold
-    if (low_base_threshold == 0) {
-      adequate_base <- base_matrix > 0
-    } else {
-      adequate_base <- base_matrix >= low_base_threshold
-    }
-
-    # Replace inadequate cells with NA in result_df
-    for (i in seq_len(nrow(result_df))) {
-      for (j in seq_len(ncol(result_df) - 1)) {  # Skip row_label column
-        if (!adequate_base[i, j]) {
-          result_df[i, j + 1] <- NA  # +1 to account for row_label column
-        }
-      }
-    }
-
-    # Identify rows that have at least one non-NA value
-    rows_with_data <- logical(nrow(result_df))
-    for (i in seq_len(nrow(result_df))) {
-      row_values <- result_df[i, -1, drop = TRUE]  # Exclude row_label
-      rows_with_data[i] <- any(!is.na(row_values))
-    }
-
-    # Identify columns that have at least one non-NA value
-    cols_with_data <- logical(ncol(result_df) - 1)
-    for (j in seq_len(ncol(result_df) - 1)) {
-      col_values <- result_df[, j + 1, drop = TRUE]
-      cols_with_data[j] <- any(!is.na(col_values))
-    }
-
-    # Remove rows with all NA values
-    if (any(rows_with_data)) {
-      kept_row_indices <- which(rows_with_data)
-      result_df <- result_df[kept_row_indices, , drop = FALSE]
-      row_arrays <- row_arrays[kept_row_indices]
-    } else {
-      # All rows have inadequate base
-      result_df <- result_df[0, , drop = FALSE]
-      row_arrays <- list()
-    }
-
-    # Remove columns with all NA values
-    if (any(cols_with_data)) {
-      cols_to_keep <- c(1, which(cols_with_data) + 1)  # +1 for row_label, +1 for 1-based indexing
-      result_df <- result_df[, cols_to_keep, drop = FALSE]
-      kept_col_indices <- which(cols_with_data)
-      col_arrays <- col_arrays[kept_col_indices]
-    } else if (length(col_arrays) > 0) {
-      # All columns have inadequate base
-      result_df <- result_df[, 1, drop = FALSE]
-      col_arrays <- list()
-    }
-
-    # Final resync after low-base filtering
-    if (length(row_arrays) > 0 && length(col_arrays) > 0) {
-      base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
-                                      values_array, statistic)
-    } else {
-      base_matrix <- NULL
-    }
-  }
-
-  ## Build summary rows and columns -------------------------------------------
-
-  # Continue with remaining logic based on remaining data
-  summary_row_label <- NULL
-  summary_row_array <- NULL
-
-  # Add summary column if specified and we have multiple remaining columns
-  summary_col_label <- NULL
-  summary_col_array <- NULL
-
-  show_summary_col <- show_col_nets
-  show_summary_row <- show_row_nets
-
-  if (length(col_arrays) > 1 && !is.null(statistic$summary_col) && show_summary_col) {
-    summary_col_label <- statistic$summary_col
-
-    if (is.null(statistic$summary_col_calculator)) {
-      stop("Statistic '", statistic$id, "' has summary_col='", summary_col_label,
-           "' but no summary_col_calculator defined")
-    }
-
-    summary_col_array <- statistic$summary_col_calculator(
-      arrays = col_arrays,
-      base_array = base_array
-    )
-
-    # Extract labels from the column arrays being summarized
-    col_labels <- sapply(col_arrays, function(arr) {
-      meta <- attr(arr, "meta")
-      if (!is.null(meta) && !is.null(meta$label)) {
-        meta$label
-      } else {
-        "unknown"
-      }
-    })
-
-    summary_col_array <- .ensure_meta(
-      summary_col_array,
-      ivar = "_SUMMARY",
-      ival = summary_col_label,  # "Total", "NET", etc.
-      label = paste0(summary_col_label, " (", paste(col_labels, collapse = " + "), ")")
-    )
-
-    # calculate the statistic for every row
-    summary_values <- numeric(nrow(result_df))
-    current_row_arrays <- row_arrays
-    for (i in seq_len(nrow(result_df))) {
-      summary_values[i] <- compute_cell(
-        base_array = base_array,
-        row_array = current_row_arrays[[i]],
-        col_array  = summary_col_array,
-        statistic  = statistic,
-        values     = values_array
-      )
-    }
-
-    # Add summary col to result
-    result_df[[summary_col_label]] <- summary_values
-    col_arrays <- c(col_arrays, list(summary_col_array))
-
-    # Resync base matrix to include summary column
-    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
-                                    values_array, statistic)
-  }
-
-  if (!is.null(statistic$summary_row) && length(row_arrays) > 1 && show_summary_row) {
-    # Calculate summary row using the statistic's row calculator
-    if (is.null(statistic$summary_row_calculator)) {
-      stop("Statistic '", statistic$id, "' has summary_row='", statistic$summary_row,
-           "' but no summary_row_calculator defined")
-    }
-
-    summary_row_array <- statistic$summary_row_calculator(
-      arrays = row_arrays,
-      base_array = base_array
-    )
-
-    # Extract labels from the row arrays being summarized
-    row_labels <- sapply(row_arrays, function(arr) {
-      meta <- attr(arr, "meta")
-      if (!is.null(meta) && !is.null(meta$label)) {
-        meta$label
-      } else {
-        "unknown"
-      }
-    })
-
-    summary_row_label <- statistic$summary_row  # "NET", "Avg", etc.
-    summary_row_array <- .ensure_meta(
-      summary_row_array,
-      ivar = "_SUMMARY",
-      ival = summary_row_label,
-      label = paste0(summary_row_label, " (", paste(row_labels, collapse = " + "), ")")
-    )
-
-    # Calculate summary values for each column
-    summary_values <- numeric(length(col_arrays))
-    for (j in seq_along(col_arrays)) {
-      summary_values[j] <- compute_cell(
-        base_array = base_array,
-        row_array = summary_row_array,
-        col_array = col_arrays[[j]],
-        statistic = statistic,
-        values = values_array
-      )
-    }
-
-    # Add summary row to result
-    summary_row_df <- data.frame(
-      row_label = statistic$summary_row,
-      stringsAsFactors = FALSE
-    )
-    for (i in seq_along(summary_values)) {
-      summary_row_df[[names(result_df)[i + 1]]] <- summary_values[i]
-    }
-
-    result_df <- rbind(result_df, summary_row_df)
-    row_arrays <- c(row_arrays, list(summary_row_array))
-
-    # Final resync to include summary row
-    base_matrix <- sync_base_matrix(row_arrays, col_arrays, base_array,
-                                    values_array, statistic)
-  }
-
-  ## Add visible base (using pre-calculated base matrix) ------------------------------
-  base_orientation <- NULL
-  if (show_base && !is.null(base_matrix)) {
-    # Determine orientation from the base_matrix structure
-    display_as_row <- TRUE
-    display_as_column <- TRUE
-
-    if (ncol(base_matrix) > 1) {
-      # Check if bases are constant within columns
-      for (j in seq_len(ncol(base_matrix))) {
-        if (length(unique(base_matrix[, j])) > 1) {
-          display_as_row <- FALSE
-          break
-        }
-      }
-    }
-
-    if (nrow(base_matrix) > 1) {
-      # Check if bases are constant within rows
-      for (i in seq_len(nrow(base_matrix))) {
-        if (length(unique(base_matrix[i, ])) > 1) {
-          display_as_column <- FALSE
-          break
-        }
-      }
-    }
-
-    # Decide on display format
-    if (display_as_row && !display_as_column) {
-      # Bases are constant within columns - display as row
-      base_orientation <- "column"
-    } else if (display_as_column && !display_as_row) {
-      # Bases are constant within rows - display as column
-      base_orientation <- "row"
-    } else if (display_as_row && display_as_column) {
-      # All bases are the same - default to row display
-      base_orientation <- "column"
-    } else {
-      # Bases vary in both dimensions - default to row but show warning
-      base_orientation <- "column"
-      warning("Base values vary within both rows and columns. Displaying as row.", call. = FALSE)
-    }
-
-    if (base_orientation == "row") {
-      # Display base as a column
-      row_base_values <- numeric(nrow(result_df))
-
-      # Extract base values for each row from pre-calculated matrix
-      for (i in seq_len(nrow(base_matrix))) {
-        if (ncol(base_matrix) > 0) {
-          # Get the common base for this row
-          row_bases_unique <- unique(base_matrix[i, ])
-          if (length(row_bases_unique) == 1) {
-            row_base_values[i] <- as.integer(row_bases_unique)
-          } else {
-            # This shouldn't happen given our detection logic
-            row_base_values[i] <- as.integer(base_matrix[i, 1])
-          }
-        } else {
-          row_base_values[i] <- as.integer(base_matrix[i, 1])
-        }
-      }
-
-      result_df[[statistic$base_label]] <- row_base_values
-
-    } else {
-      # Display base as a row
-      col_base_values <- numeric(ncol(base_matrix))
-
-      # Extract base values for each column from pre-calculated matrix
-      for (j in seq_len(ncol(base_matrix))) {
-        # Check if all rows have same base for this column
-        col_bases_unique <- unique(base_matrix[, j])
-        col_bases_unique <- col_bases_unique[!is.na(col_bases_unique)]
-        if (length(col_bases_unique) == 1) {
-          col_base_values[j] <- as.integer(col_bases_unique)
-        } else {
-          col_base_values[j] <- NA_integer_
-          base_varies_warning <- TRUE
-        }
-      }
-
-      # Create base row
-      base_row <- data.frame(
-        row_label = statistic$base_label,
-        stringsAsFactors = FALSE
-      )
-
-      # Add values for each column (including summary column if present)
-      for (i in seq_along(col_base_values)) {
-        base_row[[names(result_df)[i + 1]]] <- col_base_values[i]
-      }
-
-      # Add base row
-      result_df <- rbind(result_df, base_row)
-    }
-  }
-
-  ## Store arrays for significance testing ------------------------------------
-  # Only include arrays for actual data rows (not summary rows)
-  # Determine how many row arrays to keep (exclude summary row if present)
-  n_data_row_arrays <- length(row_arrays)
-  if (!is.null(statistic$summary_row) && length(row_arrays) > 1 && show_summary_row &&
-      !is.null(summary_row_array)) {
-    # The last row array is the summary row array, exclude it
-    n_data_row_arrays <- n_data_row_arrays - 1
-  }
-
-  # Only keep data row arrays, then add base array
-  data_row_arrays <- row_arrays[seq_len(n_data_row_arrays)]
-  final_row_arrays <- c(data_row_arrays, list(base_array))
-
-  # Build final_col_arrays - only include data column arrays
-  n_data_col_arrays <- length(col_arrays)
-  if (!is.null(summary_col_label) && !is.null(summary_col_array)) {
-    # The last col array is the summary col array, exclude it
-    n_data_col_arrays <- n_data_col_arrays - 1
-  }
-
-  # Only keep data column arrays
-  data_col_arrays <- col_arrays[seq_len(n_data_col_arrays)]
-  final_col_arrays <- data_col_arrays
-
-  # Include real base_array for base column if it was displayed as a column
-  if (show_base && !is.null(base_orientation) && base_orientation == "row") {
-    final_col_arrays <- c(final_col_arrays, list(base_array))
-  }
-
-  # Store arrays for later significance testing
-  attr(result_df, "arrays") <- list(
-    base_array = base_array,
-    row_arrays = final_row_arrays,
-    col_arrays = final_col_arrays,
-    values_array = values_array
-  )
-
-  # Store metadata as attributes
-  attr(result_df, "statistic") <- statistic
-  attr(result_df, "weight") <- weight
-  attr(result_df, "values_variable") <- values
-  attr(result_df, "base_orientation") <- base_orientation
-
-  # Store information about which rows/columns are summary rows/columns
-  attr(result_df, "summary_row_label") <- summary_row_label
-  attr(result_df, "summary_col_label") <- summary_col_label
-
-  # Store the base matrix as an attribute for potential future use
-  attr(result_df, "base_matrix") <- base_matrix
-
-  # Store the original call for sourcing when using copy_tab
-  attr(result_df, "call") <- original_call
-
-  class(result_df) <- c("tab_result", "data.frame")
-
-  # Store original order for potential restoration via sort_tab
-  result_df <- store_original_order(result_df)
-
-  return(result_df)
-}
-
-
-#' Sync base matrix with current row and column arrays
-#'
-#' This function recalculates the base matrix whenever the dimensions change,
-#' ensuring consistency between arrays and bases. It applies gates during
-#' base calculation to maintain orthogonal structure.
-#'
-#' @param row_arrays List of row arrays
-#' @param col_arrays List of column arrays
-#' @param base_array Base array for filtering
-#' @param values_array Optional values array for mean calculations
-#' @param statistic The statistic object containing base_calculator
-#' @return Matrix of base values with dimensions matching row/col arrays
-#' @keywords internal
-sync_base_matrix <- function(row_arrays, col_arrays, base_array,
-                             values_array, statistic) {
-
-  n_r <- length(row_arrays)
-  n_c <- length(col_arrays)
-
-  if (n_r == 0 || n_c == 0) {
-    return(NULL)
-  }
-
-  base_matrix <- matrix(NA_real_, n_r, n_c)
-
-  for (i in seq_len(n_r)) {
-    r_arr <- row_arrays[[i]]
-    r_gate <- attr(r_arr, "cell_gate")
-    r_meta <- attr(r_arr, "meta")
-
-    if (is.null(r_gate)) r_gate <- always_true_gate
-    if (is.null(r_meta)) r_meta <- list()
-
-    for (j in seq_len(n_c)) {
-      c_arr <- col_arrays[[j]]
-      c_gate <- attr(c_arr, "cell_gate")
-      c_meta <- attr(c_arr, "meta")
-
-      if (is.null(c_gate)) c_gate <- always_true_gate
-      if (is.null(c_meta)) c_meta <- list()
-
-      # Create cell context with all required information
-      cell_ctx <- list(
-        stat_id = statistic$id,
-        base_array = base_array,
-        values_array = values_array
-      )
-
-      # Apply gates: both row and column gates must pass
-      cell_ok <- r_gate(r_meta, c_meta, cell_ctx) && c_gate(r_meta, c_meta, cell_ctx)
-
-      if (!cell_ok) {
-        base_matrix[i, j] <- 0
-      } else {
-        base_matrix[i, j] <- statistic$base_calculator(
-          base_array = base_array,
-          row_array = r_arr,
-          col_array = c_arr,
-          values_array = values_array
-        )
-      }
-    }
-  }
-
-  base_matrix
-}
-
-
-#' Calculate base array applying filter and weights
-#'
-#' @param data Data frame
-#' @param filter_expr Filter expression
-#' @param weight_var Weight variable name
-#' @param parent_env Parent environment for filter evaluation
-#' @return Numeric array with 1s for included rows, 0s for excluded
-#' @keywords internal
-calculate_base_array <- function(data, filter_expr, weight_var, parent_env) {
-  n_rows <- nrow(data)
-  base_array <- rep(1, n_rows)
-
-  # Apply filter if specified
-  if (!is.null(filter_expr) && !is.symbol(filter_expr) ||
-      (is.symbol(filter_expr) && as.character(filter_expr) != "")) {
-    filter_result <- eval(filter_expr, data, parent_env)
-    if (!is.logical(filter_result) || length(filter_result) != n_rows) {
-      stop("Filter expression must return a logical vector of length nrow(data)")
-    }
-    filter_result[is.na(filter_result)] <- FALSE
-    base_array <- base_array * as.numeric(filter_result)
-  }
-
-  # Apply weights if specified
-  if (!is.null(weight_var)) {
-    if (!weight_var %in% names(data)) {
-      stop("Weight variable '", weight_var, "' not found in data")
-    }
-    weight_values <- data[[weight_var]]
-    if (!is.numeric(weight_values)) {
-      stop("Weight variable must be numeric")
-    }
-    if (any(weight_values < 0, na.rm = TRUE)) {
-      stop("Weight values must be non-negative")
-    }
-    # Replace NA weights with 0
-    weight_values[is.na(weight_values)] <- 0
-    base_array <- base_array * weight_values
-  }
-
-  base_array
-}
-
-.is_orthogonal <- function(mat, by = c("row","col")) {
-  by <- match.arg(by)
-  if (by == "row")  all(rowSums(mat != 0 & !is.na(mat)) <= 1)
-  else              all(colSums(mat != 0 & !is.na(mat)) <= 1)
-}
-
-#' Find groups of rows that can be collapsed based on meta attributes
-#'
-#' @param row_labels Character vector of row labels
-#' @param data_cols Data frame of numeric columns
-#' @param row_arrays List of row arrays with meta attributes
-#' @param common_separators Separators for fallback string matching
-#' @param field Optional field to collapse by (e.g., "ival", "ivar")
-#' @return List of collapsible groups
-#' @keywords internal
-find_collapsible_groups_meta <- function(row_labels, data_cols, row_arrays,
-                                         common_separators = c(" - ", ": ", " | ", " / "),
-                                         field = NULL) {
-  groups <- list()
-
-  # Skip if no arrays provided
-  if (is.null(row_arrays) || length(row_arrays) == 0) {
-    # Fallback to string-based grouping
-    return(find_collapsible_groups(row_labels, data_cols, common_separators))
-  }
-
-  # If field is specified, only do that pass
-  if (!is.null(field)) {
-    if (field == "ival") {
-      # Only group by ival
-      ivals <- vapply(row_arrays, function(arr) {
-        meta <- attr(arr, "meta")
-        if (!is.null(meta) && !is.null(meta$ival)) {
-          if (length(meta$ival) > 1) meta$ival[1] else meta$ival
-        } else {
-          NA_character_
-        }
-      }, character(1))
-
-      unique_ivals <- unique(ivals[!is.na(ivals)])
-
-      for (ival in unique_ivals) {
-        ival_indices <- which(ivals == ival)
-
-        if (length(ival_indices) >= 2) {
-          # Check if this group is orthogonal
-          group_data <- data_cols[ival_indices, , drop = FALSE]
-
-          # Check orthogonality: at most one non-zero per column
-          is_orthogonal <- TRUE
-          for (j in seq_len(ncol(group_data))) {
-            col_values <- group_data[, j]
-            non_zero_count <- sum(col_values != 0 & !is.na(col_values))
-            if (non_zero_count > 1) {
-              is_orthogonal <- FALSE
-              break
-            }
-          }
-
-          if (is_orthogonal) {
-            groups[[length(groups) + 1]] <- list(
-              indices = ival_indices,
-              common_prefix = ival,
-              separator = NA,
-              type = "ival"
-            )
-          }
-        }
-      }
-
-      # Return early when field is specified
-      return(groups)
-
-    } else if (field == "ivar") {
-      # Only group by ivar
-      ivars <- vapply(row_arrays, function(arr) {
-        meta <- attr(arr, "meta")
-        if (!is.null(meta) && !is.null(meta$ivar)) {
-          # For multiple ivars, create a key by sorting and pasting
-          if (length(meta$ivar) > 1) {
-            paste(sort(meta$ivar), collapse = "|")
-          } else {
-            meta$ivar
-          }
-        } else {
-          NA_character_
-        }
-      }, character(1))
-
-      unique_ivars <- unique(ivars[!is.na(ivars)])
-
-      for (ivar_key in unique_ivars) {
-        ivar_indices <- which(ivars == ivar_key)
-
-        if (length(ivar_indices) >= 2) {
-          # Check orthogonality
-          group_data <- data_cols[ivar_indices, , drop = FALSE]
-
-          is_orthogonal <- TRUE
-          for (j in seq_len(ncol(group_data))) {
-            col_values <- group_data[, j]
-            non_zero_count <- sum(col_values != 0 & !is.na(col_values))
-            if (non_zero_count > 1) {
-              is_orthogonal <- FALSE
-              break
-            }
-          }
-
-          if (is_orthogonal) {
-            # Extract a sensible label for the group
-            first_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
-
-            groups[[length(groups) + 1]] <- list(
-              indices = ivar_indices,
-              common_prefix = first_label,
-              separator = NA,
-              type = "ivar"
-            )
-          }
-        }
-      }
-
-      # Return early when field is specified
-      return(groups)
-
-    } else {
-      warning("Unknown field '", field, "' for collapsing. Using auto-detect.")
-      # Fall through to auto-detect
-    }
-  }
-
-  # AUTO-DETECT MODE (when field is NULL or unknown)
-
-  # PASS 1: Group by ival (for value-mode expansions like "Daily", "Weekly")
-  # Extract ival from each array's meta
-  ivals <- vapply(row_arrays, function(arr) {
-    meta <- attr(arr, "meta")
-    if (!is.null(meta) && !is.null(meta$ival)) {
-      # Return first ival if multiple (for merged arrays)
-      if (length(meta$ival) > 1) meta$ival[1] else meta$ival
-    } else {
-      NA_character_
-    }
-  }, character(1))
-
-  # Group by unique ival values (excluding NAs)
-  unique_ivals <- unique(ivals[!is.na(ivals)])
-
-  for (ival in unique_ivals) {
-    ival_indices <- which(ivals == ival)
-
-    if (length(ival_indices) >= 2) {
-      # Check if this group is orthogonal
-      group_data <- data_cols[ival_indices, , drop = FALSE]
-
-      # Check orthogonality: at most one non-zero per column
-      is_orthogonal <- TRUE
-      for (j in seq_len(ncol(group_data))) {
-        col_values <- group_data[, j]
-        non_zero_count <- sum(col_values != 0 & !is.na(col_values))
-        if (non_zero_count > 1) {
-          is_orthogonal <- FALSE
-          break
-        }
-      }
-
-      if (is_orthogonal) {
-        groups[[length(groups) + 1]] <- list(
-          indices = ival_indices,
-          common_prefix = ival,  # Use ival as the collapsed label
-          separator = NA,  # Not string-based
-          type = "ival"
-        )
-      }
-    }
-  }
-
-  # Track which rows have been grouped
-  grouped_indices <- unlist(lapply(groups, `[[`, "indices"))
-  remaining_indices <- setdiff(seq_along(row_arrays), grouped_indices)
-
-  # PASS 2: For ungrouped rows, try grouping by ivar
-  if (length(remaining_indices) > 0) {
-    remaining_ivars <- vapply(row_arrays[remaining_indices], function(arr) {
-      meta <- attr(arr, "meta")
-      if (!is.null(meta) && !is.null(meta$ivar)) {
-        # For multiple ivars, create a key by sorting and pasting
-        if (length(meta$ivar) > 1) {
-          paste(sort(meta$ivar), collapse = "|")
-        } else {
-          meta$ivar
-        }
-      } else {
-        NA_character_
-      }
-    }, character(1))
-
-    # Group remaining rows by ivar
-    unique_ivars <- unique(remaining_ivars[!is.na(remaining_ivars)])
-
-    for (ivar_key in unique_ivars) {
-      ivar_rel_indices <- which(remaining_ivars == ivar_key)
-      ivar_indices <- remaining_indices[ivar_rel_indices]
-
-      if (length(ivar_indices) >= 2) {
-        # Check orthogonality
-        group_data <- data_cols[ivar_indices, , drop = FALSE]
-
-        is_orthogonal <- TRUE
-        for (j in seq_len(ncol(group_data))) {
-          col_values <- group_data[, j]
-          non_zero_count <- sum(col_values != 0 & !is.na(col_values))
-          if (non_zero_count > 1) {
-            is_orthogonal <- FALSE
-            break
-          }
-        }
-
-        if (is_orthogonal) {
-          # For ivar groups, use a sensible label
-          # Extract the common part from the first label
-          first_label <- row_labels[ivar_indices[1]]
-          common_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
-
-          groups[[length(groups) + 1]] <- list(
-            indices = ivar_indices,
-            common_prefix = common_label,
-            separator = NA,
-            type = "ivar"
-          )
-        }
-      }
-    }
-  }
-
-  # Update remaining indices after second pass
-  grouped_indices <- unlist(lapply(groups, `[[`, "indices"))
-  final_remaining <- setdiff(seq_along(row_arrays), grouped_indices)
-
-  # PASS 3: Fallback to string prefix matching for remaining rows
-  if (length(final_remaining) > 0) {
-    remaining_labels <- row_labels[final_remaining]
-    remaining_data <- data_cols[final_remaining, , drop = FALSE]
-
-    # Use original string-based logic on remaining rows
-    string_groups <- find_collapsible_groups(remaining_labels, remaining_data, common_separators)
-
-    # Adjust indices to match original positions
-    for (sg in string_groups) {
-      adjusted_indices <- final_remaining[sg$indices]
-      groups[[length(groups) + 1]] <- list(
-        indices = adjusted_indices,
-        common_prefix = sg$common_prefix,
-        separator = sg$separator,
-        type = "string"
-      )
-    }
-  }
-
-  # Remove overlapping groups (keep the ones with most rows)
-  if (length(groups) > 1) {
-    groups <- remove_overlapping_groups(groups)
-  }
-
-  return(groups)
-}
-
-# Update the existing find_collapsible_groups to use meta when available
-find_collapsible_groups <- function(row_labels, data_cols, common_separators) {
-  # This is now just the string-based fallback logic
-  # (Keep the existing implementation for backward compatibility)
-  groups <- list()
-
-  # Try each separator
-  for (sep in common_separators) {
-    # Find labels containing this separator
-    has_sep <- grepl(sep, row_labels, fixed = TRUE)
-
-    if (sum(has_sep) < 2) next
-
-    # Extract prefixes for labels with this separator
-    labels_with_sep <- row_labels[has_sep]
-    indices_with_sep <- which(has_sep)
-
-    prefixes <- sapply(labels_with_sep, function(label) {
-      parts <- strsplit(label, sep, fixed = TRUE)[[1]]
-      if (length(parts) >= 2) {
-        trimws(parts[1])
-      } else {
-        NA_character_
-      }
-    })
-
-    # Group by prefix
-    unique_prefixes <- unique(na.omit(prefixes))
-
-    for (prefix in unique_prefixes) {
-      prefix_indices <- indices_with_sep[!is.na(prefixes) & prefixes == prefix]
-
-      if (length(prefix_indices) < 2) next
-
-      # Check if this group is collapsible
-      group_data <- data_cols[prefix_indices, , drop = FALSE]
-
-      # For each column, check if at most one row has non-zero
-      is_collapsible <- TRUE
-      for (j in seq_len(ncol(group_data))) {
-        col_values <- group_data[, j]
-        non_zero_count <- sum(col_values != 0 & !is.na(col_values))
-        if (non_zero_count > 1) {
-          is_collapsible <- FALSE
-          break
-        }
-      }
-
-      if (is_collapsible) {
-        groups[[length(groups) + 1]] <- list(
-          indices = prefix_indices,
-          common_prefix = prefix,
-          separator = sep
-        )
-      }
-    }
-  }
-
-  # Remove overlapping groups (keep the ones with most rows)
-  if (length(groups) > 1) {
-    groups <- remove_overlapping_groups(groups)
-  }
-
-  return(groups)
-}
-
-
-#' Smart collapse rows using meta attributes
-#'
-#' @param result_df The result data frame from tab
-#' @param row_arrays List of row arrays with meta attributes
-#' @param common_separators Character vector of separators for fallback
-#' @return List with collapsed data frame and updated row arrays
-#' @keywords internal
-smart_collapse_rows <- function(result_df, row_arrays = NULL,
-                                field = NULL,  # New parameter
-                                common_separators = c(" - ", ": ", " | ", " / ")) {
-
-  if (nrow(result_df) < 2) {
-    return(list(df = result_df, row_arrays = row_arrays))
-  }
-
-  # Get row labels and data columns
-  row_labels <- result_df$row_label
-  data_cols <- result_df[, -1, drop = FALSE]
-
-  # Find groups using meta-based logic with field hint
-  row_groups <- find_collapsible_groups_meta(row_labels, data_cols, row_arrays,
-                                             common_separators, field = field)
-
-  if (length(row_groups) == 0) {
-    return(list(df = result_df, row_arrays = row_arrays))
-  }
-
-  # Process each group
-  new_rows <- list()
-  new_row_arrays <- list()
-  processed_indices <- integer(0)
-
-  for (group in row_groups) {
-    group_indices <- group$indices
-    group_label <- group$common_prefix
-
-    # Sum values across rows in the group
-    group_data <- data_cols[group_indices, , drop = FALSE]
-    collapsed_values <- colSums(group_data, na.rm = TRUE)
-
-    # Create new row
-    new_row <- data.frame(
-      row_label = group_label,
-      t(collapsed_values),
-      stringsAsFactors = FALSE
-    )
-    names(new_row) <- names(result_df)
-
-    new_rows[[length(new_rows) + 1]] <- new_row
-
-    # Update row arrays if provided
-    if (!is.null(row_arrays)) {
-      # Combine arrays (OR logic)
-      collapsed_array <- Reduce(function(x, y) pmax(x, y, na.rm = TRUE),
-                                row_arrays[group_indices])
-
-      # Merge metadata
-      row_metas <- lapply(row_arrays[group_indices],
-                          \(a) attr(a, "meta") %||% list())
-
-      # Use .ensure_meta() to create merged meta
-      collapsed_array <- .ensure_meta(
-        collapsed_array,
-        ivar = unique(unlist(lapply(row_metas, `[[`, "ivar"))),
-        ival = unique(unlist(lapply(row_metas, `[[`, "ival"))),
-        label = group_label
-      )
-
-      # Copy the gate from the first row in the group
-      # If that row had no gate, attach the appropriate default gate
-      gate <- attr(row_arrays[[group_indices[1]]], "cell_gate")
-      if (is.null(gate)) {
-        gate_factory <- get_gate("no_mismatch")
-        if (!is.null(gate_factory)) {
-          # Determine gate type based on what was collapsed
-          if (group$type == "ival") {
-            gate <- gate_factory("ival")
-          } else if (group$type == "ivar") {
-            gate <- gate_factory("ivar")
-          }
-          # For string type, don't add a gate
-        }
-      }
-      if (!is.null(gate)) {
-        attr(collapsed_array, "cell_gate") <- gate
-      }
-
-      new_row_arrays[[length(new_row_arrays) + 1]] <- collapsed_array
-    }
-
-    processed_indices <- c(processed_indices, group_indices)
-  }
-
-  # Add uncollapsed rows
-  remaining_indices <- setdiff(seq_len(nrow(result_df)), processed_indices)
-
-  if (length(remaining_indices) > 0) {
-    remaining_rows <- result_df[remaining_indices, , drop = FALSE]
-    rownames(remaining_rows) <- NULL
-
-    if (!is.null(row_arrays)) {
-      remaining_arrays <- row_arrays[remaining_indices]
-      new_row_arrays <- c(new_row_arrays, remaining_arrays)
-    }
-
-    # Combine collapsed and remaining rows
-    collapsed_df <- rbind(do.call(rbind, new_rows), remaining_rows)
-  } else {
-    collapsed_df <- do.call(rbind, new_rows)
-  }
-
-  # Reset row names
-  rownames(collapsed_df) <- NULL
-
-  return(list(df = collapsed_df, row_arrays = new_row_arrays))
-}
-
-#' Find groups of rows that can be collapsed
-#'
-#' @param row_labels Character vector of row labels
-#' @param data_cols Data frame of numeric columns
-#' @param common_separators Separators to check
-#' @return List of collapsible groups
-#' @keywords internal
-find_collapsible_groups <- function(row_labels, data_cols, common_separators) {
-  groups <- list()
-
-  # Try each separator
-  for (sep in common_separators) {
-    # Find labels containing this separator
-    has_sep <- grepl(sep, row_labels, fixed = TRUE)
-
-    if (sum(has_sep) < 2) next
-
-    # Extract prefixes for labels with this separator
-    labels_with_sep <- row_labels[has_sep]
-    indices_with_sep <- which(has_sep)
-
-    prefixes <- sapply(labels_with_sep, function(label) {
-      parts <- strsplit(label, sep, fixed = TRUE)[[1]]
-      if (length(parts) >= 2) {
-        trimws(parts[1])
-      } else {
-        NA_character_
-      }
-    })
-
-    # Group by prefix
-    unique_prefixes <- unique(na.omit(prefixes))
-
-    for (prefix in unique_prefixes) {
-      prefix_indices <- indices_with_sep[!is.na(prefixes) & prefixes == prefix]
-
-      if (length(prefix_indices) < 2) next
-
-      # Check if this group is collapsible
-      group_data <- data_cols[prefix_indices, , drop = FALSE]
-
-      # For each column, check if at most one row has non-zero
-      is_collapsible <- TRUE
-      for (j in seq_len(ncol(group_data))) {
-        col_values <- group_data[, j]
-        non_zero_count <- sum(col_values != 0 & !is.na(col_values))
-        if (non_zero_count > 1) {
-          is_collapsible <- FALSE
-          break
-        }
-      }
-
-      if (is_collapsible) {
-        groups[[length(groups) + 1]] <- list(
-          indices = prefix_indices,
-          common_prefix = prefix,
-          separator = sep
-        )
-      }
-    }
-  }
-
-  # Remove overlapping groups (keep the ones with most rows)
-  if (length(groups) > 1) {
-    groups <- remove_overlapping_groups(groups)
-  }
-
-  return(groups)
-}
-
-#' Remove overlapping groups, keeping those with most rows
-#'
-#' @param groups List of groups
-#' @return List of non-overlapping groups
-#' @keywords internal
-remove_overlapping_groups <- function(groups) {
-  if (length(groups) <= 1) return(groups)
-
-  # Sort by number of indices (descending)
-  group_sizes <- sapply(groups, function(g) length(g$indices))
-  groups <- groups[order(group_sizes, decreasing = TRUE)]
-
-  # Keep track of used indices
-  used_indices <- integer(0)
-  kept_groups <- list()
-
-  for (group in groups) {
-    if (!any(group$indices %in% used_indices)) {
-      kept_groups[[length(kept_groups) + 1]] <- group
-      used_indices <- c(used_indices, group$indices)
-    }
-  }
-
-  return(kept_groups)
-}
-
-#' Find groups of columns that can be collapsed based on meta attributes
-#'
-#' @param col_labels Character vector of column labels
-#' @param data_matrix Matrix of data values
-#' @param col_arrays List of column arrays with meta attributes
-#' @param common_separators Separators for fallback string matching
-#' @param field Optional field to collapse by (e.g., "ival", "ivar")
-#' @return Named list of column groups
-#' @keywords internal
-find_collapsible_col_groups_meta <- function(col_labels, data_matrix, col_arrays,
-                                             common_separators = c(" - ", ": ", " | ", " / "),
-                                             field = NULL) {
-
-  if (is.null(col_arrays) || length(col_arrays) == 0) {
-    # Fallback to string-based grouping
-    return(find_collapsible_col_groups_string(col_labels, data_matrix, common_separators))
-  }
-
-  groups <- list()
-
-  # If field is specified, only do that pass
-  if (!is.null(field)) {
-    if (field == "ival") {
-      # Only group by ival
-      ivals <- vapply(col_arrays, function(arr) {
-        meta <- attr(arr, "meta")
-        if (!is.null(meta) && !is.null(meta$ival)) {
-          if (length(meta$ival) > 1) meta$ival[1] else meta$ival
-        } else {
-          NA_character_
-        }
-      }, character(1))
-
-      unique_ivals <- unique(ivals[!is.na(ivals)])
-
-      for (ival in unique_ivals) {
-        col_indices <- which(ivals == ival)
-
-        if (length(col_indices) >= 2) {
-          # Check orthogonality across rows
-          is_orthogonal <- TRUE
-          for (i in seq_len(nrow(data_matrix))) {
-            row_values <- data_matrix[i, col_indices]
-            non_zero_count <- sum(row_values != 0 & !is.na(row_values))
-            if (non_zero_count > 1) {
-              is_orthogonal <- FALSE
-              break
-            }
-          }
-
-          if (is_orthogonal) {
-            # Use ival as the group key
-            groups[[ival]] <- col_indices
-          }
-        }
-      }
-
-      # Return early when field is specified
-      return(groups)
-
-    } else if (field == "ivar") {
-      # Only group by ivar
-      ivars <- vapply(col_arrays, function(arr) {
-        meta <- attr(arr, "meta")
-        if (!is.null(meta) && !is.null(meta$ivar)) {
-          if (length(meta$ivar) > 1) {
-            paste(sort(meta$ivar), collapse = "|")
-          } else {
-            meta$ivar
-          }
-        } else {
-          NA_character_
-        }
-      }, character(1))
-
-      unique_ivars <- unique(ivars[!is.na(ivars)])
-
-      for (ivar_key in unique_ivars) {
-        ivar_indices <- which(ivars == ivar_key)
-
-        if (length(ivar_indices) >= 2) {
-          # Check orthogonality
-          is_orthogonal <- TRUE
-          for (i in seq_len(nrow(data_matrix))) {
-            row_values <- data_matrix[i, ivar_indices]
-            non_zero_count <- sum(row_values != 0 & !is.na(row_values))
-            if (non_zero_count > 1) {
-              is_orthogonal <- FALSE
-              break
-            }
-          }
-
-          if (is_orthogonal) {
-            # Extract a sensible label for the group
-            first_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
-            groups[[first_label]] <- ivar_indices
-          }
-        }
-      }
-
-      # Return early when field is specified
-      return(groups)
-
-    } else {
-      warning("Unknown field '", field, "' for collapsing. Using auto-detect.")
-      # Fall through to auto-detect
-    }
-  }
-
-  # AUTO-DETECT MODE (when field is NULL or unknown)
-
-  # PASS 1: Group by ival (for columns grouped by value)
-  ivals <- vapply(col_arrays, function(arr) {
-    meta <- attr(arr, "meta")
-    if (!is.null(meta) && !is.null(meta$ival)) {
-      if (length(meta$ival) > 1) meta$ival[1] else meta$ival
-    } else {
-      NA_character_
-    }
-  }, character(1))
-
-  unique_ivals <- unique(ivals[!is.na(ivals)])
-
-  for (ival in unique_ivals) {
-    col_indices <- which(ivals == ival)
-
-    if (length(col_indices) >= 2) {
-      # Check orthogonality across rows
-      is_orthogonal <- TRUE
-      for (i in seq_len(nrow(data_matrix))) {
-        row_values <- data_matrix[i, col_indices]
-        non_zero_count <- sum(row_values != 0 & !is.na(row_values))
-        if (non_zero_count > 1) {
-          is_orthogonal <- FALSE
-          break
-        }
-      }
-
-      if (is_orthogonal) {
-        # Use ival as the group key
-        groups[[ival]] <- col_indices
-      }
-    }
-  }
-
-  # Track which columns have been grouped
-  grouped_indices <- unlist(groups)
-  remaining_indices <- setdiff(seq_along(col_arrays), grouped_indices)
-
-  # PASS 2: For ungrouped columns, try grouping by ivar
-  if (length(remaining_indices) > 0) {
-    remaining_ivars <- vapply(col_arrays[remaining_indices], function(arr) {
-      meta <- attr(arr, "meta")
-      if (!is.null(meta) && !is.null(meta$ivar)) {
-        if (length(meta$ivar) > 1) {
-          paste(sort(meta$ivar), collapse = "|")
-        } else {
-          meta$ivar
-        }
-      } else {
-        NA_character_
-      }
-    }, character(1))
-
-    unique_ivars <- unique(remaining_ivars[!is.na(remaining_ivars)])
-
-    for (ivar_key in unique_ivars) {
-      ivar_rel_indices <- which(remaining_ivars == ivar_key)
-      ivar_indices <- remaining_indices[ivar_rel_indices]
-
-      if (length(ivar_indices) >= 2) {
-        # Check orthogonality
-        is_orthogonal <- TRUE
-        for (i in seq_len(nrow(data_matrix))) {
-          row_values <- data_matrix[i, ivar_indices]
-          non_zero_count <- sum(row_values != 0 & !is.na(row_values))
-          if (non_zero_count > 1) {
-            is_orthogonal <- FALSE
-            break
-          }
-        }
-
-        if (is_orthogonal) {
-          # Extract a sensible label for the group
-          first_label <- strsplit(ivar_key, "|", fixed = TRUE)[[1]][1]
-          groups[[first_label]] <- ivar_indices
-        }
-      }
-    }
-  }
-
-  # PASS 3: Fallback to string matching for remaining columns
-  final_grouped <- unlist(groups)
-  final_remaining <- setdiff(seq_along(col_arrays), final_grouped)
-
-  if (length(final_remaining) > 0) {
-    remaining_labels <- col_labels[final_remaining]
-    remaining_data <- data_matrix[, final_remaining, drop = FALSE]
-
-    # Use string-based grouping on remaining
-    string_groups <- find_collapsible_col_groups_string(
-      remaining_labels,
-      remaining_data,
-      common_separators
-    )
-
-    # Adjust indices and merge
-    for (prefix in names(string_groups)) {
-      adjusted_indices <- final_remaining[string_groups[[prefix]]]
-      # Don't overwrite if prefix already exists from meta grouping
-      if (!prefix %in% names(groups)) {
-        groups[[prefix]] <- adjusted_indices
-      }
-    }
-  }
-
-  return(groups)
-}
-
-#' Helper to do string-based column grouping (fallback)
-#' @keywords internal
-find_collapsible_col_groups_string <- function(col_labels, data_matrix, common_separators) {
-  split_prefix <- function(lbl) {
-    # Returns text before the *last* recognised separator
-    locs <- unlist(lapply(common_separators,
-                          function(sep) gregexpr(sep, lbl, fixed = TRUE)))
-    locs <- locs[locs > 0]
-    if (length(locs))
-      trimws(substr(lbl, 1, max(locs) - 1))
-    else
-      lbl
-  }
-
-  prefixes <- vapply(col_labels, split_prefix, character(1))
-  groups <- split(seq_along(col_labels), prefixes)
-
-  # Only keep groups that are orthogonal
-  collapsible_groups <- list()
-
-  for (pref in names(groups)) {
-    idx <- groups[[pref]]
-
-    if (length(idx) < 2) next
-
-    # Check orthogonality
-    is_orthogonal <- TRUE
-    for (i in seq_len(nrow(data_matrix))) {
-      row_values <- data_matrix[i, idx]
-      non_zero_count <- sum(row_values != 0 & !is.na(row_values))
-      if (non_zero_count > 1) {
-        is_orthogonal <- FALSE
-        break
-      }
-    }
-
-    if (is_orthogonal) {
-      collapsible_groups[[pref]] <- idx
-    }
-  }
-
-  return(collapsible_groups)
-}
-
-#' Smart collapse columns using meta attributes
-#'
-#' @param result_df The result data frame from tab
-#' @param col_arrays List of column arrays with meta attributes
-#' @param common_separators Character vector of separators for fallback
-#' @return List with collapsed data frame and updated column arrays
-#' @keywords internal
-smart_collapse_cols <- function(result_df, col_arrays = NULL,
-                                field = NULL,  # New parameter
-                                common_separators = c(" - ", ": ", " | ", " / ")) {
-
-  # Nothing to do if we have ≤ 1 data column
-  if (ncol(result_df) <= 2) {
-    return(list(df = result_df, col_arrays = col_arrays))
-  }
-
-  label_col <- names(result_df)[1]  # usually "row_label"
-  data_part <- result_df[, -1, drop = FALSE]
-  col_labels <- names(data_part)
-  data_matrix <- as.matrix(data_part)
-
-  # Find collapsible groups using meta with field hint
-  groups <- find_collapsible_col_groups_meta(col_labels, data_matrix, col_arrays,
-                                             common_separators, field = field)
-
-  # New containers
-  new_df <- result_df[label_col]  # Start with label column
-  new_col_arrays <- list()
-
-  # Process each group
-  for (group_label in names(groups)) {
-    idx <- groups[[group_label]]
-
-    if (length(idx) == 1) {
-      # Single column - keep as is
-      new_df[[col_labels[idx]]] <- data_part[[idx]]
-      if (!is.null(col_arrays)) {
-        new_col_arrays <- c(new_col_arrays, col_arrays[idx])
-      }
-    } else {
-      # Multiple columns - collapse
-      block <- as.matrix(data_part[, idx, drop = FALSE])
-      new_df[[group_label]] <- rowSums(block, na.rm = TRUE)
-
-      if (!is.null(col_arrays)) {
-        # Merge arrays
-        merged <- Reduce(function(x, y) pmax(x, y, na.rm = TRUE), col_arrays[idx])
-
-        # Merge metadata
-        col_metas <- lapply(col_arrays[idx],
-                            \(a) attr(a, "meta") %||% list())
-
-        merged <- .ensure_meta(
-          merged,
-          ivar = unique(unlist(lapply(col_metas, `[[`, "ivar"))),
-          ival = unique(unlist(lapply(col_metas, `[[`, "ival"))),
-          label = group_label
-        )
-
-        # Handle gate
-        gate <- attr(col_arrays[[idx[1]]], "cell_gate")
-        if (is.null(gate)) {
-          gate_factory <- get_gate("no_mismatch")
-          if (!is.null(gate_factory)) {
-            # Determine appropriate gate based on what was collapsed
-            # For columns, often we want to match on ivar
-            if (all(!is.na(sapply(col_metas, function(m) m$ivar)))) {
-              gate <- gate_factory("ivar")
-            } else if (all(!is.na(sapply(col_metas, function(m) m$ival)))) {
-              gate <- gate_factory("ival")
-            }
-          }
-        }
-        if (!is.null(gate)) {
-          attr(merged, "cell_gate") <- gate
-        }
-
-        new_col_arrays <- c(new_col_arrays, list(merged))
-      }
-    }
-  }
-
-  # Ensure column order is deterministic
-  new_df <- new_df[, c(label_col, setdiff(names(new_df), label_col)), drop = FALSE]
-
-  return(list(
-    df = new_df,
-    col_arrays = if (is.null(col_arrays)) NULL else new_col_arrays
-  ))
-}
-
-#' Validate Variable Types for Statistics
-#'
-#' Validates that variables used in cross-tabulation rows and columns are
-#' appropriate for the specified statistic. For value-based statistics like
-#' mean, ensures variables are categorical rather than continuous numeric.
-#'
-#' @param statistic A tab_stat object containing statistic metadata
-#' @param rows_expanded List of expanded row variable specifications
-#' @param cols_expanded List of expanded column variable specifications
-#' @param data Data frame being analyzed
-#'
-#' @return NULL if validation passes, throws error with helpful suggestions if not
-#' @keywords internal
-#'
-#' @details
-#' For statistics requiring values (like mean), this function prevents users from
-#' accidentally creating meaningless cross-tabs with many numeric categories.
-#' Variables with >15 unique values trigger errors with suggestions to use
-#' factor(), cut(), add value labels, or use correlation statistics instead.
-validate_statistic_variables <- function(statistic, rows_expanded, cols_expanded, data, dpdict = NULL) {
-  if (statistic$requires_values) {
-    # For value-based statistics (like mean), require categorical rows/columns
-
-    # Check rows
-    for (row_spec in rows_expanded) {
-      if (row_spec$type == "simple") {
-        var_name <- row_spec$components$var
-        if (var_name %in% names(data)) {
-          var_data <- data[[var_name]]
-
-          # Check questiontype first if available
-          if (!is.null(dpdict) && "questiontype" %in% names(dpdict) && var_name %in% dpdict$variable_names) {
-            questiontype <- dpdict$questiontype[dpdict$variable_names == var_name]
-            if (questiontype %in% c("numeric", "multinumeric")) {
-              stop("Cannot use numeric variable '", var_name, "' (questiontype: ", questiontype, ") in rows for '", statistic$id, "' statistic")
-            }
-          } else {
-            # Fallback to R class checking
-            if (is.numeric(var_data) &&
-                is.null(attr(var_data, "labels")) &&
-                !is.factor(var_data) &&
-                length(unique(na.omit(var_data))) > 15) {
-              stop("Cannot use numeric variable '", var_name, "' with ", length(unique(na.omit(var_data))), " unique values in rows for '", statistic$id, "' statistic")
-            }
-          }
-        }
-      }
-    }
-
-    # Check columns (if not just "Total")
-    if (length(cols_expanded) > 1 || cols_expanded[[1]]$type != "total") {
-      for (col_spec in cols_expanded) {
-        if (col_spec$type == "simple") {
-          var_name <- col_spec$components$var
-          if (var_name %in% names(data)) {
-            var_data <- data[[var_name]]
-
-            if (is.numeric(var_data) &&
-                is.null(attr(var_data, "labels")) &&
-                !is.factor(var_data) &&
-                length(unique(na.omit(var_data))) > 15) {
-
-              stop("Cannot use numeric variable '", var_name, ") in columns for '", statistic$id, "' statistic.\n")
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-
-#' Print method for tab_result
-#' @export
-print.tab_result <- function(x, ...) {
-  statistic <- attr(x, "statistic")
-
-  # Get values variable name if available
-  values_var <- attr(x, "values_variable")
-
-  # Get all significance results
-  all_sig <- attr(x, "significance")
-
-  # Construct header
-  if (statistic$id == "mean" && !is.null(values_var)) {
-    cat("\nCross-tabulation (mean of ", values_var, ")\n", sep = "")
-  } else {
-    cat("\nCross-tabulation (", statistic$id, ")\n", sep = "")
-  }
-  cat(rep("-", 50), "\n", sep = "")
-
-  # Create column letter mapping
-  col_names <- names(x)[-1]
-
-  non_base_cols <- col_names[col_names != statistic$base_label]
-
-  col_letters <- LETTERS[seq_along(non_base_cols)]
-  names(col_letters) <- non_base_cols
-
-  # Create a copy for formatting to avoid modifying the original
-  x_formatted        <- x
-  base_row_idx <- which(x_formatted$row_label == statistic$base_label)
-
-  # Identify data rows (exclude base and summary rows) for proper indexing
-  exclude_row_labels <- c(statistic$base_label)
-  if (!is.null(statistic$summary_row)) {
-    exclude_row_labels <- c(exclude_row_labels, statistic$summary_row)
-  }
-  data_row_mask <- !(x$row_label %in% exclude_row_labels)
-
-  for (col in names(x_formatted)[-1]) {
-    orig <- x[[col]]
-    col_idx <- which(names(x)[-1] == col)
-
-    # Check if this column is the base column
-    base_orientation <- attr(x_formatted, "base_orientation")
-    is_base_column <- FALSE
-    if (!is.null(base_orientation) && base_orientation == "row") {
-      # If base is displayed as a column (row orientation), check if this is it
-      is_base_column <- col == statistic$base_label
-    }
-    if (is_base_column) {
-      next  # Skip formatting for base column
-    }
-
-    x_formatted[[col]] <- vapply(seq_along(orig), function(i) {
-      if (i %in% base_row_idx || is_base_column) {
-        as.character(orig[i])
-      } else if (is.numeric(orig[i]) && !is.na(orig[i])) {
-        formatted_val <- statistic$format_fn(orig[i])
-
-        # Add significance indicators from all tests
-        if (!is.null(all_sig) && data_row_mask[i]) {
-          sig_indicators <- character()
-
-          # The sig matrix only contains data rows, so we need to count how many data rows come before the current row
-          sig_row_idx <- sum(data_row_mask[1:i])
-
-          for (test_name in names(all_sig)) {
-            sig_result <- all_sig[[test_name]]
-
-            if (!is.null(sig_result$levels) &&
-                is.matrix(sig_result$levels) &&
-                sig_row_idx <= nrow(sig_result$levels) &&
-                col_idx <= ncol(sig_result$levels)) {
-
-              sig_level <- sig_result$levels[sig_row_idx, col_idx]
-
-              if (!is.na(sig_level) && nzchar(sig_level)) {
-                if (sig_level == "higher") {
-                  ref_col_name <- test_name
-
-                  if (!ref_col_name %in% names(col_letters) && !is.null(sig_result$versus)) {
-                    # Extract column name from "column N: Name" format
-                    if (grepl("^column \\d+: ", sig_result$versus)) {
-                      ref_col_name <- sub("^column \\d+: ", "", sig_result$versus)
-                    }
-                  }
-
-                  if (ref_col_name %in% names(col_letters)) {
-                    sig_indicators <- c(sig_indicators,
-                                        paste0(col_letters[ref_col_name], "+"))
-                  }
-                } else if (sig_level == "lower") {
-                  ref_col_name <- test_name
-
-                  if (!ref_col_name %in% names(col_letters) && !is.null(sig_result$versus)) {
-                    if (grepl("^column \\d+: ", sig_result$versus)) {
-                      ref_col_name <- sub("^column \\d+: ", "", sig_result$versus)
-                    }
-                  }
-
-                  if (ref_col_name %in% names(col_letters)) {
-                    sig_indicators <- c(sig_indicators,
-                                        paste0(col_letters[ref_col_name], "-"))
-                  }
-                }
-              }
-            }
-          }
-
-          if (length(sig_indicators) > 0) {
-            formatted_val <- paste0(formatted_val, " (",
-                                    paste(sig_indicators, collapse = ","), ")")
-          }
-        }
-        formatted_val
-      } else {
-        as.character(orig[i])
-      }
-    }, character(1))
-  }
-
-  # Update column names to include letters in brackets (after formatting is complete)
-  letter_index <- 1
-  for (i in seq_along(col_names)) {
-    col_name <- col_names[i]
-    if (col_name == statistic$base_label) {
-      # Don't add letter to base column
-      new_col_name <- col_name
-    } else {
-      # Add letter for non-base columns
-      new_col_name <- paste0(col_name, " (", LETTERS[letter_index], ")")
-      letter_index <- letter_index + 1
-    }
-    names(x_formatted)[i + 1] <- new_col_name
-  }
-
-  print.data.frame(x_formatted, row.names = FALSE, ...)
-
-  # Print significance testing legend if available
-  if (!is.null(all_sig)) {
-    cat("\nSignificance testing:\n")
-    cat("Column letters: ", paste(col_letters, "=", names(col_letters), collapse = ", "), "\n")
-
-    for (test_name in names(all_sig)) {
-      sig_result <- all_sig[[test_name]]
-      cat("\n", test_name, ":\n", sep = "")
-      cat("  Test: ", sig_result$test_name, "\n")
-      cat("  Level: ", sig_result$config$level, "\n")
-      if (!is.null(sig_result$config$adjust) && sig_result$config$adjust != "none") {
-        cat("  Adjustment: ", sig_result$config$adjust, "\n")
-      }
-    }
-
-    cat("\nNotation: X+ = significantly higher than column X, X- = significantly lower than column X\n")
-  }
-}
-
-#' Parse table formula expressions using NSE
-#'
-#' @param expr An expression captured using rlang::enquo
-#' @param data The data frame to evaluate against
-#' @param dpdict Optional data dictionary for metadata
-#' @return A list with type, components, and label
-#' @keywords internal
-parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_helpers = NULL) {
-
-  # If helpers not provided, use registry
-  if (is.null(helpers)) {
-    helpers <- .tab_registry$helpers
-  }
-
-  # Extract expression from quosure if needed
-  if (rlang::is_quosure(expr)) {
-    actual_expr <- rlang::quo_get_expr(expr)
-  } else {
-    actual_expr <- expr
-  }
-
-  # Check if it's a tab_helper object (evaluated helper function)
-  if (inherits(actual_expr, "tab_helper")) {
-    helper_type <- attr(actual_expr, "id")
-    label <- paste0(helper_type, "(...)")
-
-    return(list(
-      type = "helper",
-      helper_type = helper_type,
-      args = actual_expr,
-      label = label
-    ))
-  }
-
-  expr_text <- rlang::as_label(expr)
-
-  # Handle simple variable names
-  if (rlang::is_symbol(actual_expr)) {
-    var_name <- as.character(actual_expr)
-    return(list(
-      type = "simple",
-      components = list(var = var_name),
-      label = get_var_label(var_name, dpdict)
-    ))
-  }
-
-  # Handle multiplication (filters)
-  if (rlang::is_call(actual_expr, "*")) {
-    args <- rlang::call_args(actual_expr)
-    return(list(
-      type = "multiplication",
-      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict, all_helpers = all_helpers)),
-      label = expr_text
-    ))
-  }
-
-  # Handle subtraction
-  if (rlang::is_call(actual_expr, "-")) {
-    args <- rlang::call_args(actual_expr)
-    return(list(
-      type = "subtraction",
-      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict, all_helpers = all_helpers)),
-      label = expr_text
-    ))
-  }
-
-  # Handle other calls (including helper functions and comparisons)
-  if (rlang::is_call(actual_expr)) {
-    fn_name <- as.character(actual_expr[[1]])
-
-    # Check if it's a helper function
-    if (fn_name %in% names(helpers)) {
-      # Get arguments with their names preserved
-      args <- rlang::call_args(actual_expr)
-      arg_names <- rlang::call_args_names(actual_expr)
-
-      # Set names on the args list
-      if (length(arg_names) > 0) {
-        names(args) <- arg_names
-      }
-
-      return(list(
-        type = "helper",
-        helper_type = fn_name,
-        args = args,
-        label = expr_text
-      ))
-    }
-
-    # Check if it's a numeric expression (arithmetic operators)
-    if (fn_name %in% c("+", "-", "*", "/", "^", "%%", "%/%")) {
-      return(list(
-        type = "numeric_expression",
-        components = list(expr = actual_expr),
-        label = expr_text
-      ))
-    }
-
-    # Otherwise treat as a general expression (like age > 30)
-    return(list(
-      type = "expression",
-      components = list(expr = actual_expr),
-      label = expr_text
-    ))
-  }
-
-  # Handle string literals (for backward compatibility)
-  if (rlang::is_string(actual_expr)) {
-    return(list(
-      type = "simple",
-      components = list(var = actual_expr),
-      label = get_var_label(actual_expr, dpdict)
-    ))
-  }
-
-  # Default
-  return(list(
-    type = "expression",
-    components = list(expr = actual_expr),
-    label = expr_text
-  ))
-}
-
-#' Get variable label from dpdict or use variable name
-#' @keywords internal
-get_var_label <- function(var_name, dpdict = NULL) {
-  if (!is.null(dpdict) && var_name %in% dpdict$variable_names) {
-    label <- dpdict$variable_labels[dpdict$variable_names == var_name]
-    if (!is.na(label) && nzchar(label)) return(label)
-  }
-  return(var_name)
-}
-
-#' Get display label based on label mode
-#'
-#' @param var_name Variable name
-#' @param dpdict Data dictionary
-#' @param label_mode One of "full", "suffix", or "smart"
-#' @param category_name For expanded categorical variables
-#' @param data Optional data frame for separator detection
-#' @return Character string label
-#' @keywords internal
-get_display_label <- function(var_name, dpdict = NULL, label_mode = "full", category_name = NULL, data = NULL) {
-
-  # Get var info from dpdict if available
-  var_idx <- if (!is.null(dpdict) && var_name %in% dpdict$variable_names) {
-    match(var_name, dpdict$variable_names)
-  } else {
-    NA
-  }
-
-  # Handle each mode
-  switch(label_mode,
-         "full" = {
-           if (!is.null(category_name)) {
-             base_label <- if (!is.na(var_idx)) dpdict$variable_labels[var_idx] else var_name
-             paste0(base_label, ": ", category_name)
-           } else {
-             if (!is.na(var_idx)) dpdict$variable_labels[var_idx] else var_name
-           }
-         },
-
-         "suffix" = {
-           if (!is.null(category_name)) {
-             category_name
-           } else if (!is.na(var_idx)) {
-             if ("question_suffix" %in% names(dpdict) &&
-                 !is.na(dpdict$question_suffix[var_idx]) &&
-                 nzchar(dpdict$question_suffix[var_idx])) {
-               dpdict$question_suffix[var_idx]
-             } else {
-               # Updated call with dpdict and data parameters
-               extract_suffix_from_label(dpdict$variable_labels[var_idx], dpdict, data)
-             }
-           } else {
-             var_name
-           }
-         },
-
-         "smart" = {
-           if (!is.null(category_name)) {
-             category_name
-           } else {
-             # Check if multi-item question
-             is_multi <- if (!is.na(var_idx) && "singlevariablequestion" %in% names(dpdict)) {
-               !isTRUE(dpdict$singlevariablequestion[var_idx])
-             } else if (!is.na(var_idx) && "question_group" %in% names(dpdict)) {
-               qgroup <- dpdict$question_group[var_idx]
-               sum(dpdict$question_group == qgroup, na.rm = TRUE) > 1
-             } else {
-               FALSE  # Assume single-item, will use full label
-             }
-
-             if (is_multi) {
-               # Multi-item: use suffix
-               if (!is.na(var_idx) && "question_suffix" %in% names(dpdict) &&
-                   !is.na(dpdict$question_suffix[var_idx])) {
-                 dpdict$question_suffix[var_idx]
-               } else if (!is.na(var_idx)) {
-                 # Updated call with dpdict and data parameters
-                 extract_suffix_from_label(dpdict$variable_labels[var_idx], dpdict, data)
-               } else {
-                 var_name
-               }
-             } else {
-               # Single item: use full
-               if (!is.na(var_idx)) dpdict$variable_labels[var_idx] else var_name
-             }
-           }
-         },
-
-         # Default fallback
-         stop("Invalid label_mode: ", label_mode)
-  )
-}
-
-#' Extract suffix from a label string using detected separator patterns
-#' @param label Variable label to extract suffix from
-#' @param dpdict Optional data dictionary containing separator patterns
-#' @param data Optional data frame to detect separators from if dpdict lacks patterns
-#' @keywords internal
-extract_suffix_from_label <- function(label, dpdict = NULL, data = NULL) {
-  if (is.null(label) || is.na(label) || !nzchar(label)) {
-    return(label)
-  }
-
-  # Try to get separator patterns from dpdict
-  separators <- NULL
-  if (!is.null(dpdict)) {
-    sep_patterns <- attr(dpdict, "sep_patterns")
-    if (!is.null(sep_patterns)) {
-      # Use statement_sep first (most relevant for suffixes), then prefix_sep
-      if (!is.na(sep_patterns[["statement_sep"]])) {
-        separators <- c(sep_patterns[["statement_sep"]])
-      }
-      if (!is.na(sep_patterns[["prefix_sep"]])) {
-        separators <- c(separators, sep_patterns[["prefix_sep"]])
-      }
-    }
-  }
-
-  # If no separators from dpdict, try to detect from data
-  if (is.null(separators) && !is.null(data)) {
-    sep_analysis <- check_seps(data)
-    if (!is.na(sep_analysis$separators[["statement_sep"]])) {
-      separators <- c(sep_analysis$separators[["statement_sep"]])
-    }
-    if (!is.na(sep_analysis$separators[["prefix_sep"]])) {
-      separators <- c(separators, sep_analysis$separators[["prefix_sep"]])
-    }
-  }
-
-  # Fall back to common defaults if no patterns detected
-  if (is.null(separators) || length(separators) == 0) {
-    separators <- c(" - ", ": ", " | ", " / ")
-  }
-
-  # Try each separator
-  for (sep in separators) {
-    if (grepl(sep, label, fixed = TRUE)) {
-      parts <- strsplit(label, sep, fixed = TRUE)[[1]]
-      if (length(parts) > 1) {
-        suffix <- trimws(parts[length(parts)])
-        if (nzchar(suffix)) return(suffix)
-      }
-    }
-  }
-
-  label
-}
-
-#' Check if all variables exist in data and provide helpful error message
-#' @param vars Character vector of variable names to check
-#' @param data Data frame to check against
-#' @param context String describing where the variables are being used
-#' @keywords internal
-check_variables_exist <- function(vars, data, context = "expression") {
-  if (length(vars) == 0) return(TRUE)
-
-  missing_vars <- setdiff(vars, names(data))
-
-  if (length(missing_vars) > 0) {
-    # Get similar variable names for suggestions
-    all_vars <- names(data)
-    suggestions <- character()
-
-    for (missing in missing_vars) {
-      # Find variables with similar names (using agrep for fuzzy matching)
-      similar <- agrep(missing, all_vars, value = TRUE, max.distance = 0.2)
-      if (length(similar) > 0) {
-        suggestions <- c(suggestions,
-                         paste0("  - '", missing, "' -> did you mean: ",
-                                paste(paste0("'", similar, "'"), collapse = ", "), "?"))
-      } else {
-        suggestions <- c(suggestions, paste0("  - '", missing, "' (no similar variables found)"))
-      }
-    }
-
-    # Build comprehensive error message
-    if(length(all_vars) < 20){
-      error_msg <- paste0(
-        "Variable(s) not found in ", context, ":\n",
-        paste(suggestions, collapse = "\n"),
-        "\n\nAvailable variables in data:\n",
-        paste(strwrap(paste(all_vars, collapse = ", "), width = 70), collapse = "\n  ")
-      )
-    } else {
-      error_msg <- paste0(
-        "Variable(s) not found in ", context, ":\n",
-        paste(suggestions, collapse = "\n")
-      )
-    }
-    stop(error_msg, call. = FALSE)
-  }
-
-  return(TRUE)
-}
-
-#' Expand variables and question groups into individual components
-#'
-#' @param var_spec Variable specification (can be name, expression, or formula)
-#' @param data The data frame
-#' @param dpdict Optional data dictionary
-#' @param statistic$id The ID of the statistic being calculated
-#' @return List of expanded variable specifications
-#' @keywords internal
-expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, values_var = NULL, label_mode = "smart", all_helpers = NULL) {
-  # Handle complex expressions by recursively expanding components
-  if (is.list(var_spec) && !is.null(var_spec$type)) {
-
-    # Helper functions should not be expanded
-    if (var_spec$type == "helper") {
-      # Special handling for calc_if - expand the inner expression first
-      if (var_spec$helper_type == "calc_if") {
-        calc_if_obj <- var_spec$args
-
-        # Check if calc_if_obj is already properly structured
-        if (!is.list(calc_if_obj) || !all(c("expr", "gate") %in% names(calc_if_obj))) {
-          # It's raw arguments - need to construct the calc_if structure
-          if (length(calc_if_obj) != 2) {
-            stop("calc_if expects exactly 2 arguments: gate and expression")
-          }
-
-          # Evaluate the gate argument (first argument)
-          gate_arg <- calc_if_obj[[1]]
-          if (is.call(gate_arg)) {
-            gate_fn <- eval(gate_arg, envir = parent.frame())
-          } else {
-            gate_fn <- gate_arg
-          }
-
-          # The expression is the second argument - parse it
-          expr_arg <- calc_if_obj[[2]]
-          inner_spec <- parse_table_formula(rlang::enquo(expr_arg), data, dpdict, all_helpers = all_helpers)
-        } else {
-          gate_fn <- calc_if_obj$gate
-          inner_spec <- parse_table_formula(calc_if_obj$expr, data, dpdict, all_helpers = all_helpers)
-        }
-
-        # Recursively expand the inner expression
-        inner_expanded <- expand_variables(inner_spec, data, dpdict, statistic, values_var, label_mode)
-
-        # Wrap each expanded result with the gate
-        result <- list()
-        for (exp in inner_expanded) {
-          gated_spec <- list(
-            type = "gated",
-            inner_spec = exp,
-            gate = gate_fn,
-            label = exp$label  # Use the expanded label
-          )
-          result <- append(result, list(gated_spec))
-        }
-
-        return(result)
-      }
-      # Other helpers not expanded
-      return(list(var_spec))
-    }
-
-    if (var_spec$type == "multiplication") {
-      # Expand each component and return all combinations
-      expanded_components <- lapply(var_spec$components, function(comp) {
-        expand_variables(comp, data, dpdict, statistic$id, values_var, label_mode)
-      })
-
-      # Create combinations of all expanded components
-      result <- list()
-      for (comp1 in expanded_components[[1]]) {
-        for (comp2 in expanded_components[[2]]) {
-          combined_spec <- list(
-            type = "multiplication",
-            components = list(comp1, comp2),
-            label = paste(comp1$label, "*", comp2$label)
-          )
-          result <- append(result, list(combined_spec))
-        }
-      }
-      return(result)
-    }
-
-    if (var_spec$type == "simple") {
-      var_name <- var_spec$components$var
-    } else {
-      # For other complex types, return as-is
-      return(list(var_spec))
-    }
-  } else {
-    var_name <- as.character(var_spec)
-  }
-
-  if (is.na(var_name)) {
-    warning("Attempting to expand NA variable name")
-    return(list())
-  }
-
-  # Check if it's a categorical variable that needs expansion
-  if (var_name %in% names(data)) {
-    var_data <- data[[var_name]]
-
-    # Priority 1: Use dpdict questiontype if available
-    if (!is.null(dpdict) && "questiontype" %in% names(dpdict) && var_name %in% dpdict$variable_names) {
-      questiontype <- dpdict$questiontype[dpdict$variable_names == var_name]
-
-      if (questiontype %in% c("categorical", "categorical array")) {
-        # Expand to categories using labels or factor levels
-        labels <- attr(var_data, "labels")
-        if (!is.null(labels) && length(labels) > 0) {
-          return(lapply(seq_along(labels), function(i) {
-            val <- labels[i]
-            val_label <- names(labels)[i]
-            formatted_label <- get_display_label(var_name, dpdict, label_mode, val_label, data)
-
-            child_spec <- list(
-              type = "expression",
-              components = list(expr = call("==", as.name(var_name), val)),
-              label = formatted_label,
-              # Add meta attributes where we have full context
-              meta = list(
-                ivar = get_var_label(var_name, dpdict),
-                ival = val_label,
-                label = formatted_label
-              )
-            )
-            if (is.list(var_spec) && !is.null(var_spec$gate)) {
-              child_spec$gate <- var_spec$gate
-            }
-            child_spec
-          }))
-        } else if (is.factor(var_data)) {
-          levs <- levels(var_data)
-          return(lapply(seq_along(levs), function(i) {
-            lev <- levs[i]
-            formatted_label <- get_display_label(var_name, dpdict, label_mode, lev, data)
-
-            list(
-              type = "expression",
-              components = list(expr = call("==", as.name(var_name), i)),  # factors use numeric indices
-              label = formatted_label,
-              meta = list(
-                ivar = get_var_label(var_name, dpdict),
-                ival = lev,
-                label = formatted_label
-              )
-            )
-          }))
-        } else {
-          stop("Variable '", var_name, "' has questiontype '", questiontype, "' but no labels or factor levels found")
-        }
-      } else if (questiontype %in% c("multiresponse", "numeric", "multinumeric")) {
-        # Don't expand - return as single variable
-        if (is.character(var_spec)) {
-          var_label <- get_display_label(var_spec, dpdict, label_mode, NULL, data)
-          return(list(list(
-            type = "simple",
-            components = list(var = var_spec),
-            label = var_label,
-            meta = list(
-              ivar = get_var_label(var_spec, dpdict),
-              ival = NULL,  # No categorical value for these types
-              label = var_label
-            )
-          )))
-        } else {
-          return(list(var_spec))
-        }
-      } else if (questiontype == "text") {
-        stop("Cannot use text variable '", var_name, "' in cross-tabulation")
-      }
-    }
-
-    # Priority 2: Fallback to R class-based logic
-    # Check if it's labelled
-    labels <- attr(var_data, "labels")
-    if (!is.null(labels) && length(labels) > 0) {
-      return(lapply(seq_along(labels), function(i) {
-        val <- labels[i]
-        val_label <- names(labels)[i]
-        formatted_label <- get_display_label(var_name, dpdict, label_mode, val_label, data)
-
-        list(
-          type = "expression",
-          components = list(expr = call("==", as.name(var_name), val)),
-          label = formatted_label,
-          meta = list(
-            ivar = get_var_label(var_name, dpdict),
-            ival = val_label,
-            label = formatted_label
-          )
-        )
-      }))
-    }
-
-    # Check if it's a factor
-    if (is.factor(var_data)) {
-      levs <- levels(var_data)
-      return(lapply(levs, function(lev) {
-        formatted_label <- get_display_label(var_name, dpdict, label_mode, lev, data)
-
-        list(
-          type = "expression",
-          components = list(expr = call("==", as.name(var_name), lev)),
-          label = formatted_label,
-          meta = list(
-            ivar = get_var_label(var_name, dpdict),
-            ival = lev,
-            label = formatted_label
-          )
-        )
-      }))
-    }
-
-    # Check if it's logical (treat as binary, don't expand)
-    if (is.logical(var_data)) {
-      if (is.character(var_spec)) {
-        return(list(list(
-          type = "simple",
-          components = list(var = var_spec),
-          label = get_display_label(var_spec, dpdict, label_mode, NULL, data))))
-      } else {
-        return(list(var_spec))
-      }
-    }
-
-    # Check if it's numeric (don't expand)
-    if (is.numeric(var_data)) {
-      if (is.character(var_spec)) {
-        return(list(list(
-          type = "simple",
-          components = list(var = var_spec),
-          label = get_display_label(var_spec, dpdict, label_mode, NULL, data)
-        )))
-      } else {
-        return(list(var_spec))
-      }
-    }
-
-    # Character variables should error
-    if (is.character(var_data)) {
-      stop("Cannot use character variable '", var_name, "' for cross-tabulation")
-    }
-  }
-
-  # Check if it's a question group in dpdict
-  if (!is.null(dpdict) && "question_group" %in% names(dpdict) && !var_name %in% names(data)) {
-    # Guard against NA var_name
-    if (is.na(var_name)) {
-      warning("Cannot expand NA variable name")
-      return(list())
-    }
-
-    # First try exact match to question group name
-    exact_match_vars <- dpdict$variable_names[
-      !is.na(dpdict$question_group) &
-        dpdict$question_group == var_name &
-        !is.na(dpdict$variable_names)]
-    if (length(exact_match_vars) > 0) {
-      # Recursively expand each variable found in the question group
-      all_expanded <- list()
-      for (v in exact_match_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic$id, values_var, label_mode)
-        all_expanded <- append(all_expanded, expanded)
-      }
-      return(all_expanded)
-    }
-
-    # Then try pattern match
-    matching_groups <- unique(dpdict$question_group[
-      !is.na(dpdict$question_group) &
-        grepl(paste0("^", var_name, "_"), dpdict$question_group)
-    ])
-    if (length(matching_groups) > 0) {
-      group_vars <- dpdict$variable_names[dpdict$question_group %in% matching_groups & !is.na(dpdict$variable_names)]
-      # Recursively expand each variable found in the matching groups
-      all_expanded <- list()
-      for (v in group_vars) {
-        expanded <- expand_variables(v, data, dpdict, statistic$id, values_var, label_mode)
-        all_expanded <- append(all_expanded, expanded)
-      }
-      return(all_expanded)
-    }
-  }
-
-  # Check if it's a pattern match in data (only if NOT in data directly)
-  if (!var_name %in% names(data)) {
-    pattern_matches <- names(data)[grepl(paste0("^", var_name, "_\\d+"), names(data))]
-    if (length(pattern_matches) > 0) {
-      return(lapply(pattern_matches, function(v) {
-        list(type = "simple", components = list(var = v), label = get_var_label(v, dpdict))
-      }))
-    }
-  }
-
-  # Default: return as single variable
-  if (is.character(var_spec)) {
-    return(list(list(
-      type = "simple",
-      components = list(var = var_spec),
-      label = get_display_label(var_spec, dpdict, label_mode, NULL, data)
+  
+  store <- compute_result$store
+  summary_row_array <- compute_result$summary_row_array
+  summary_row_spec <- compute_result$summary_row_spec
+  summary_col_array <- compute_result$summary_col_array
+  summary_col_spec <- compute_result$summary_col_spec
+  
+  # Store dimensions for layout construction
+  n_rows <- length(row_arrays)
+  n_cols <- length(col_arrays)
+  
+  ## Build layout with layout_defs (NEW SYSTEM) --------------------------------
+  # Initialize layout_defs from expanded specs
+  has_summary_row <- !is.null(summary_row_spec)
+  has_summary_col <- !is.null(summary_col_spec)
+  
+  # Create layout_defs for rows and columns
+  # Only include summary specs if they should be shown
+  row_summary_spec <- if (has_summary_row && show_row_nets) summary_row_spec else NULL
+  col_summary_spec <- if (has_summary_col && show_col_nets) summary_col_spec else NULL
+  
+  row_defs <- initialize_layout_defs(rows_expanded, row_summary_spec, dimension = "row")
+  col_defs <- initialize_layout_defs(cols_expanded, col_summary_spec, dimension = "col")
+  
+  ## Build filter_rules from parameters ----------------------------------------
+  filter_rules <- list()
+  
+  # Add low base threshold filter if specified
+  if (!is.null(low_base_threshold)) {
+    filter_rules <- c(filter_rules, list(new_layout_def(
+      base_matcher = threshold_matcher(low_base_threshold, ">="),
+      label = paste0("base >= ", low_base_threshold),
+      dimension = "row"  # Applies to all cells
     )))
-  } else {
-    return(list(var_spec))
   }
-}
-
-#' Prepare data for expression evaluation by converting haven_labelled to numeric
-#' @param data Data frame
-#' @return Data frame with haven_labelled variables converted to numeric
-#' @keywords internal
-prepare_eval_data <- function(data) {
-  # Convert haven_labelled to numeric, preserve everything else
-  data[] <- lapply(data, function(x) {
-    if (inherits(x, "haven_labelled")) {
-      as.numeric(x)
-    } else {
-      x
-    }
-  })
-  data
-}
-
-# Specialized array creation functions with meta
-create_simple_array <- function(var_data, var_name, spec, dpdict) {
-  # Convert to appropriate array type
-  if (is.logical(var_data)) {
-    arr <- as.numeric(var_data)
-  } else if (is.numeric(var_data)) {
-    # Check if it's binary (0/1)
-    unique_vals <- unique(na.omit(var_data))
-    if (all(unique_vals %in% c(0, 1))) {
-      arr <- var_data
-    } else {
-      # For non-binary numeric, keep as is (for means)
-      arr <- var_data
-    }
-  } else {
-    stop("Unsupported variable type for '", var_name, "'")
-  }
-
-  # Add meta if not already present from spec
-  if (!is.null(spec$meta)) {
-    # Use meta from expand_variables
-    .ensure_meta(arr, spec$meta$ivar, spec$meta$ival, spec$meta$label)
-  } else {
-    # Add default meta for simple variables
-    .ensure_meta(
-      arr,
-      ivar = get_var_label(var_name, dpdict),
-      ival = NULL,
-      label = spec$label %||% get_var_label(var_name, dpdict)
-    )
-  }
-}
-
-create_expression_array <- function(expr_result, spec, expr_vars, dpdict) {
-  arr <- as.numeric(expr_result)
-
-  # Check if spec has meta from expand_variables
-  if (!is.null(spec$meta)) {
-    .ensure_meta(arr, spec$meta$ivar, spec$meta$ival, spec$meta$label)
-  } else {
-    # Add meta for general expressions
-    .ensure_meta(
-      arr,
-      ivar = if (length(expr_vars) > 0) expr_vars else "expression",
-      ival = NULL,
-      label = spec$label %||% deparse(spec$components$expr)
-    )
-  }
-}
-
-create_total_array <- function(n, spec) {
-  arr <- rep(1, n)
-  .ensure_meta(
-    arr,
-    ivar = "_SUMMARY",
-    ival = "Total",
-    label = spec$label %||% "Total"
+  
+  # Note: show_row_nets and show_col_nets are now handled by not creating
+  # the summary row_def/col_def in the first place (see row_summary_spec/col_summary_spec above)
+  # We don't need filter_rules for these anymore.
+  
+  ## Two-stage allocation ------------------------------------------------------
+  # Stage 1: Filter cell pool
+  cell_pool <- filter_cell_pool(store, filter_rules)
+  
+  # Stage 2: Allocate to grid
+  layout <- allocate_cells_to_grid(store, row_defs, col_defs, cell_pool)
+  
+  # Preserve filter_rules in layout
+  layout$filter_rules <- filter_rules
+  
+  ## Store arrays for significance testing ------------------------------------
+  arrays <- list(
+    base_array = base_array,
+    row_arrays = row_arrays,
+    col_arrays = col_arrays,
+    values_array = values_array,
+    summary_row_array = summary_row_array,
+    summary_col_array = summary_col_array
   )
-}
-
-#' Convert formula specification to numeric array
-#'
-#' @param formula_spec Parsed formula specification
-#' @param data Data frame
-#' @param dpdict Optional data dictionary for context
-#' @return Numeric vector of length nrow(data)
-#' @keywords internal
-formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL) {
-  n <- nrow(data)
-
-  # Start with identity array
-  result <- rep(1, n)
-
-  # Process based on type
-  if (formula_spec$type == "simple") {
-    var_name <- formula_spec$components$var
-
-    check_variables_exist(var_name, data,
-                          paste0("expression '", formula_spec$label, "'"))
-
-    return(create_simple_array(data[[var_name]], var_name, formula_spec, dpdict))
-
-  } else if (formula_spec$type == "multiplication") {
-    # Apply each component multiplicatively
-    for (comp in formula_spec$components) {
-      comp_array <- formula_to_array(comp, data, dpdict, all_helpers)
-      comp_array[is.na(comp_array)] <- 0
-      result <- result * comp_array
-    }
-    result[is.na(result)] <- 0
-
-    # For multiplication, preserve meta from first component if available
-    if (length(formula_spec$components) > 0) {
-      first_array <- formula_to_array(formula_spec$components[[1]], data, dpdict, all_helpers = all_helpers)
-      first_meta <- attr(first_array, "meta")
-      if (!is.null(first_meta)) {
-        result <- .ensure_meta(
-          result,
-          ivar = first_meta$ivar,
-          ival = first_meta$ival,
-          label = formula_spec$label %||% first_meta$label
-        )
-      }
-    }
-    return(result)
-
-  } else if (formula_spec$type == "expression") {
-    # Extract variables referenced in the expression
-    expr_vars <- all.vars(formula_spec$components$expr)
-
-    # Check all variables exist before subsetting
-    check_variables_exist(expr_vars, data,
-                          paste0("expression '", formula_spec$label, "'"))
-
-    # Create subset with only needed variables
-    data_subset <- data[, expr_vars, drop = FALSE]
-    # Evaluate the expression with numeric-only data for relevant variables
-    eval_data <- prepare_eval_data(data_subset)
-    expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
-    if (!is.logical(expr_result) && !is.numeric(expr_result)) {
-      stop("Expression must evaluate to logical or numeric")
-    }
-    return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
-
-  } else if (formula_spec$type == "helper") {
-      helper_result <- process_helper(formula_spec, data, dpdict, all_helpers)
-
-      # Check if it's a multi-column helper
-      # Multi-column helpers should already have meta
-      if (is.list(helper_result) && isTRUE(attr(helper_result, "is_multi_column"))) {
-        # For multi-column helpers, return the list directly
-        # The calling code will handle the expansion
-        return(helper_result)
-      } else {
-        # Single array helper - ensure it has meta
-        if (is.null(attr(helper_result, "meta"))) {
-          helper_result <- .ensure_meta(
-            helper_result,
-            ivar = formula_spec$helper_type,
-            ival = NULL,
-            label = formula_spec$label %||% formula_spec$helper_type
-          )
-        }
-        return(helper_result)
-      }
-  } else if (formula_spec$type == "numeric_expression") {
-    # Evaluate numeric expressions in data context with numeric-only data
-    tryCatch({
-      # Extract variables referenced in the expression
-      expr_vars <- all.vars(formula_spec$components$expr)
-
-      # Check all variables exist before subsetting
-      check_variables_exist(expr_vars, data,
-                            paste0("numeric expression '", formula_spec$label, "'"))
-
-      # Create subset with only needed variables
-      data_subset <- data[, expr_vars, drop = FALSE]
-      eval_data <- prepare_eval_data(data_subset)
-      expr_result <- rlang::eval_tidy(formula_spec$components$expr, eval_data)
-      if (!is.numeric(expr_result)) {
-        stop("Expression must evaluate to numeric values")
-      }
-      if (length(expr_result) != n) {
-        stop("Expression must return vector of length ", n)
-      }
-      return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
-    }, error = function(e) {
-      stop("Error evaluating expression '", formula_spec$label, "': ", e$message, call. = FALSE)
-    })
-
-  } else if (formula_spec$type == "subtraction") {
-    # Handle subtraction
-    comp1_array <- formula_to_array(formula_spec$components[[1]], data, dpdict, all_helpers)
-    comp2_array <- formula_to_array(formula_spec$components[[2]], data, dpdict, all_helpers)
-    result <- result * (comp1_array - comp2_array)
-
-    # For subtraction, preserve meta from first component if available
-    first_meta <- attr(comp1_array, "meta")
-    if (!is.null(first_meta)) {
-      result <- .ensure_meta(
-        result,
-        ivar = first_meta$ivar,
-        ival = first_meta$ival,
-        label = formula_spec$label %||% first_meta$label
-      )
-    }
-    return(result)
-  } else if (formula_spec$type == "gated") {
-    # Process the inner spec and attach the gate
-    inner_result <- formula_to_array(formula_spec$inner_spec, data, dpdict, all_helpers)
-
-    # Check if inner result is multi-column
-    if (is.list(inner_result) && isTRUE(attr(inner_result, "is_multi_column"))) {
-      # Multi-column result - attach gate to each array
-      for (arr_name in names(inner_result)) {
-        if (!is.null(inner_result[[arr_name]])) {
-          attr(inner_result[[arr_name]], "cell_gate") <- formula_spec$gate
-        }
-      }
-      return(inner_result)
-    } else {
-      # Single array result - attach gate and return
-      attr(inner_result, "cell_gate") <- formula_spec$gate
-      return(inner_result)
-    }
-
-  } else if (formula_spec$type == "total") {
-    # This represents "all data" - when no specific column is specified
-    # Not a summary, just an array of 1s representing the full dataset
-    arr <- rep(1, n)
-    .ensure_meta(
-      arr,
-      ivar = "ALL",  # More generic than "_SUMMARY"
-      ival = NULL,
-      label = formula_spec$label %||% "Total"
-    )
-
-  } else {
-    stop("Unknown formula type: ", formula_spec$type)
-  }
-
-  # Handle NAs
-  result[is.na(result)] <- 0
-
+  
+  ## Build cell-based tab_result -----------------------------------------------
+  result <- structure(list(
+    cell_store = store,
+    layout = layout,
+    arrays = arrays,
+    
+    data = data,
+    dpdict = dpdict,
+    statistic = statistic_obj,
+    show_base = show_base,
+    label_mode = label_mode,
+    
+    derive_operations = list(),
+    formatting = list(),
+    
+    call = original_call
+    
+  ), class = c("tab_result", "tab_cell_collection"))
+  
+  ## Note: Visibility is now controlled via filter_rules -------------------------
+  # The hide operations (show_row_nets, show_col_nets, show_base) are now handled
+  # via filter_rules during allocation. No post-processing needed.
+  
   return(result)
 }
 
-#' Process helper functions
+#' Build explicit grid layout from cell store and specifications
+#'
+#' @param store Cell store object
+#' @param row_specs List of row specifications from expand stage
+#' @param col_specs List of column specifications from expand stage
+#' @return Layout list with grid, labels, and specifications
 #' @keywords internal
-process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
-
-  helper_type <- formula_spec$helper_type
-
-  # Get the helper from registry
-  helper_obj <- .tab_registry$helpers[[helper_type]]
-  if (is.null(helper_obj)) {
-    stop("Unknown helper: '", helper_type, "'. Available: ",
-         paste(names(.tab_registry$helpers), collapse = ", "))
-  }
-
-  # Special handling for banner - keep inner spec unevaluated
-  if (helper_type == "banner") {
-    evaluated_args <- list()
-    arg_names <- names(formula_spec$args)
-
-    # Process each argument based on position and name
-    for (i in seq_along(formula_spec$args)) {
-      arg <- formula_spec$args[[i]]
-      arg_name <- if (!is.null(arg_names) && i <= length(arg_names)) arg_names[i] else ""
-
-      if (i == 1) {
-        # First argument: outer variable (must be a symbol)
-        if (rlang::is_symbol(arg)) {
-          # Unquoted variable name (e.g., banner(country, ...))
-          evaluated_args[[i]] <- as.character(arg)
-        } else if (is.character(arg) && length(arg) == 1) {
-          # Already a string (e.g., banner("country", ...))
-          evaluated_args[[i]] <- arg
-        } else {
-          stop("First argument to banner must be a variable name")
-        }
-      } else if (i == 2) {
-        # Second argument: inner specification (keep unevaluated)
-        evaluated_args[[i]] <- arg  # Keep as raw expression
-      } else {
-        # Additional arguments (usually named like subtotals, sep)
-        if (arg_name != "") {
-          # Named argument - evaluate it
-          tryCatch({
-            evaluated_args[[arg_name]] <- rlang::eval_tidy(arg, data)
-          }, error = function(e) {
-            # If evaluation fails, keep it as is
-            evaluated_args[[arg_name]] <- arg
-          })
-        } else {
-          # Positional argument beyond 2nd - evaluate it
-          evaluated_args[[i]] <- rlang::eval_tidy(arg, data)
-        }
+build_explicit_grid_layout <- function(store, row_specs, col_specs) {
+  n_rows <- length(row_specs)
+  n_cols <- length(col_specs)
+  grid <- matrix(NA_character_, n_rows, n_cols)
+  
+  # Get all cells
+  all_cell_ids <- all_cell_ids(store)
+  all_cells <- get_cells(store, all_cell_ids)
+  
+  # Match cells to grid positions by exact specification
+  for (i in seq_along(row_specs)) {
+    row_spec <- row_specs[[i]]
+    
+    for (j in seq_along(col_specs)) {
+      col_spec <- col_specs[[j]]
+      
+      # Find cell with matching row and col specifications
+      matching_cell <- Find(function(cell) {
+        row_match <- specs_equal(cell$specification$row_expr, row_spec$expr)
+        col_match <- specs_equal(cell$specification$col_expr, col_spec$expr)
+        row_match && col_match
+      }, all_cells)
+      
+      if (!is.null(matching_cell)) {
+        grid[i, j] <- matching_cell$cell_id
       }
-    }
-
-    # Ensure we have the minimum required arguments
-    if (length(evaluated_args) < 2) {
-      stop("Banner requires at least two arguments")
-    }
-
-  } else {
-    # Recursively evaluate arguments
-    evaluated_args <- list()
-    arg_names <- names(formula_spec$args)
-    for (i in seq_along(formula_spec$args)) {
-      arg <- formula_spec$args[[i]]
-
-      if (rlang::is_call(arg) && identical(arg[[1]], quote(c))) {
-        arg_list <- as.list(arg)[-1]
-        converted <- vapply(arg_list, function(x) {
-          if (rlang::is_symbol(x)) as.character(x)
-          else x
-        }, FUN.VALUE = character(1))
-        evaluated_args[[i]] <- converted
-        next
-      }
-
-      # If argument is itself a helper or complex expression, evaluate it recursively
-      if (rlang::is_call(arg)) {
-        fn_name <- as.character(arg[[1]])
-        if (fn_name %in% names(.tab_registry$helpers)) {
-          # It's a nested helper - parse and evaluate recursively
-          nested_args <- rlang::call_args(arg)
-          nested_arg_names <- rlang::call_args_names(arg)
-          if (length(nested_arg_names) > 0) {
-            names(nested_args) <- nested_arg_names
-          }
-
-          nested_spec <- list(
-            type = "helper",
-            helper_type = fn_name,
-            args = nested_args,
-            label = rlang::as_label(arg)
-          )
-          evaluated_args[[i]] <- process_helper(nested_spec, data, dpdict, all_helpers)  # Recursive call
-        } else {
-          # It's a regular expression - evaluate in data context
-          tryCatch({
-            # Extract variables referenced in the argument expression
-            expr_vars <- all.vars(arg)
-
-            # Check variables exist
-            check_variables_exist(expr_vars, data,
-                                  paste0("helper '", helper_type, "' argument ", i))
-
-            # Create subset with only needed variables
-            data_subset <- data[, expr_vars, drop = FALSE]
-            eval_data <- prepare_eval_data(data_subset)
-            evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
-          }, error = function(e) {
-            stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
-          })
-        }
-      } else if (rlang::is_symbol(arg)) {
-        # Variable name - convert to string instead of evaluating
-        evaluated_args[[i]] <- as.character(arg)
-      } else {
-        # Simple argument - evaluate directly
-
-        if (length(all.vars(arg)) > 0) {
-          # If it contains variables, check they exist
-          expr_vars <- all.vars(arg)
-          check_variables_exist(expr_vars, data,
-                                paste0("helper '", helper_type, "' argument ", i))
-        }
-
-        tryCatch({
-          # Extract variables referenced in the argument expression
-          expr_vars <- all.vars(arg)
-          # Create subset with only needed variables
-          data_subset <- data[, expr_vars, drop = FALSE]
-          eval_data <- prepare_eval_data(data_subset)
-          evaluated_args[[i]] <- rlang::eval_tidy(arg, eval_data)
-        }, error = function(e) {
-          stop("Error evaluating argument ", i, " in helper '", helper_type, "': ", e$message, call. = FALSE)
-        })
-      }
-    }
-    # Restore argument names after evaluation
-    if (!is.null(arg_names)) {
-      names(evaluated_args) <- arg_names
+      
+      # If multiple cells match, Find() returns first (TO DO: better handling of this)
     }
   }
-
-  # Create formula_spec with evaluated components for the processor
-  processed_spec <- list(
-    type = "helper",
-    helper_type = helper_type,
-    components = evaluated_args,
-    label = formula_spec$label %||% helper_type
+  
+  # Extract labels from specifications
+  row_labels <- sapply(row_specs, function(spec) spec$label %||% "")
+  col_labels <- sapply(col_specs, function(spec) spec$label %||% "")
+  
+  list(
+    type = "explicit_grid",
+    grid = grid,
+    row_labels = row_labels,
+    col_labels = col_labels
   )
-
-  if (!is.null(formula_spec$row_labels)) {
-    processed_spec$row_labels <- formula_spec$row_labels
-  }
-
-  # Dispatch to the helper's processor
-  tryCatch({
-    result <- helper_obj$processor(processed_spec, data, dpdict, all_helpers)
-
-    if (is.list(result) && !is.numeric(result)) {
-      # Helper returned a list of arrays (multi-column helper)
-      # Validate each array in the list
-      for (name in names(result)) {
-        if (!is.numeric(result[[name]]) || length(result[[name]]) != nrow(data)) {
-          stop("Helper '", helper_type, "' returned invalid result for '", name,
-               "'. Expected numeric vector of length ", nrow(data))
-        }
-      }
-      # Return the list with helper metadata
-      attr(result, "is_multi_column") <- TRUE
-      attr(result, "helper_type") <- helper_type
-      return(result)
-    } else {
-      # Single array return
-      if (!is.numeric(result) || length(result) != nrow(data)) {
-        stop("Helper '", helper_type, "' returned invalid result. Expected numeric vector of length ", nrow(data))
-      }
-      return(result)
-    }
-  }, error = function(e) {
-    stop("Error in helper '", helper_type, "': ", e$message, call. = FALSE)
-  })
 }
 
-#' Create named list of row specifications
-#'
-#' @param ... Named expressions for row specifications
-#' @return List for use in tab()
-#' @export
-#' @examples
-#' tab(data, rows = rows_list("Total" = q1, "Young" = q1 * (age < 30)))
-rows_list <- function(...) {
-  dots <- rlang::enquos(...)
-  if (length(dots) == 0) {
-    stop("rows_list() needs at least one expression")
-    }
-  if (is.null(names(dots))) names(dots) <- rep("", length(dots))
-  dots
-}
-
-#' Create named list of column specifications
-#'
-#' @param ... Named expressions for column specifications
-#' @return List for use in tab()
-#' @export
-#' @examples
-#' tab(data, gender, cols = cols_list("Total" = q1, "Young" = q1 * (age < 30)))
-cols_list <- function(...) {
-  dots <- rlang::enquos(...)
-  if (length(dots) == 0) {
-    stop("cols_list() needs at least one expression")
-  }
-  if (is.null(names(dots))) names(dots) <- rep("", length(dots))
-  dots
-}
-
-#' Compute value for a single cell
-#'
-#' @param row_array Numeric array for row specification
-#' @param col_array Numeric array for column specification (NULL for marginals)
-#' @param statistic Type of statistic to compute
-#' @param values Optional values array for mean calculations
-#' @return Computed cell value
+#' Filter layout grid based on low base thresholds
+#' @param layout Layout list with grid, row_labels, col_labels, etc
+#' @param store Cell store
+#' @param threshold Minimum base count threshold
 #' @keywords internal
-compute_cell <- function(base_array, row_array, col_array,
-                         statistic = "column_pct",
-                         values = NULL) {
-
-  if(!length(base_array) == length(row_array) & length(base_array) == length(col_array)){
-    stop("Must provide base_array, row_array and col_array each of equal length. (Provide array of 1s if no other calculation needed.")
-  }
-
-  # Convert string statistic to object if needed
-  if (is.character(statistic)) {
-    statistic <- .tab_registry$stats[[statistic]]
-    if (is.null(statistic)) {
-      stop("Unknown statistic: '", statistic, "'. Available: ",
-           paste(names(.tab_registry$stats), collapse = ", "))
-    }
-    statistic <- statistic
-  }
-
-  # Dispatch to the statistic's processor
-  if (inherits(statistic, "tab_stat")) {
-    return(statistic$processor(
-      base_array = base_array,
-      row_array = row_array,
-      col_array = col_array,
-      values = values
-    ))
-  } else {
-    stop("statistic must be a character string or tab_stat object")
-  }
-}
-
-
-#' Compute values for multiple cells using vectorized operations
-#'
-#' @param base_array Base array for filtering
-#' @param row_arrays List of row arrays
-#' @param col_arrays List of column arrays
-#' @param statistic Type of statistic to compute
-#' @param values Optional values array for mean calculations
-#' @return Matrix of computed cell values
-#' @keywords internal
-compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
-                                     statistic = "column_pct", values = NULL) {
-
-  n_rows <- length(row_arrays)
-  n_cols <- length(col_arrays)
-  res    <- matrix(NA_real_, n_rows, n_cols)
-
-  stat_fun <- statistic$processor
-
-  for (i in seq_len(n_rows)) {
-    r_arr   <- row_arrays[[i]]
-    r_gate  <- attr(r_arr, "cell_gate")
-    r_meta  <- attr(r_arr, "meta")
-
-    if (is.null(r_gate)) r_gate <- always_true_gate
-    if (is.null(r_meta)) r_meta <- list()
-
-    for (j in seq_len(n_cols)) {
-      c_arr  <- col_arrays[[j]]
-      c_gate <- attr(c_arr, "cell_gate")
-      c_meta <- attr(c_arr, "meta")
-
-      if (is.null(c_gate)) c_gate <- always_true_gate
-      if (is.null(c_meta)) c_meta <- list()
-
-      # Create cell context with all required information
-      cell_ctx <- list(
-        stat_id = statistic$id,
-        base_array = base_array,
-        values_array = values
-      )
-
-      # Apply gates: both row and column gates must pass
-      # This enables orthogonal filtering from both dimensions
-      cell_ok <- r_gate(r_meta, c_meta, cell_ctx) && c_gate(r_meta, c_meta, cell_ctx)
-
-      if (!cell_ok) {
-        res[i, j] <- 0            # or NA_real_ if you prefer blanks
-      } else {
-        res[i, j] <- stat_fun(
-          base_array   = base_array,
-          row_array    = r_arr,
-          col_array    = c_arr,
-          values = values
-        )
+filter_low_base_cells <- function(layout, store, threshold) {
+  grid <- layout$grid
+  n_rows <- nrow(grid)
+  n_cols <- ncol(grid)
+  
+  # Iterate through each cell in the grid
+  for (i in 1:n_rows) {
+    for (j in 1:n_cols) {
+      cell_id <- grid[i, j]
+      
+      # Skip if already NA
+      if (is.na(cell_id)) next
+      
+      # Check if cell exists in store
+      if (!has_cell(store, cell_id)) next
+      
+      # Get cell base
+      cell <- get_cell(store, cell_id)
+      
+      # Filter: set to NA if base < threshold
+      if (!is.na(cell$base) && cell$base < threshold) {
+        grid[i, j] <- NA_integer_
       }
     }
   }
-  res
+  
+  # Check for all-NA rows
+  all_na_rows <- apply(grid, 1, function(row) all(is.na(row)))
+  
+  # Check for all-NA columns
+  all_na_cols <- apply(grid, 2, function(col) all(is.na(col)))
+  
+  # Remove all-NA rows (except special rows like Base)
+  if (any(all_na_rows)) {
+    # Identify special rows (Base, Total, NET) - keep these even if NA
+    special_rows <- grepl("^(Base|Total|NET)", layout$row_labels)
+    rows_to_keep <- !all_na_rows | special_rows
+    
+    if (!all(rows_to_keep)) {
+      grid <- grid[rows_to_keep, , drop = FALSE]
+      layout$row_labels <- layout$row_labels[rows_to_keep]
+    }
+  }
+  
+  # Remove all-NA columns
+  if (any(all_na_cols)) {
+    cols_to_keep <- !all_na_cols
+    
+    if (!all(cols_to_keep)) {
+      grid <- grid[, cols_to_keep, drop = FALSE]
+      layout$col_labels <- layout$col_labels[cols_to_keep]
+    }
+  }
+  
+  # Update layout
+  layout$grid <- grid
+  
+  # Store filtering metadata
+  layout$filtered_cells <- list(
+    threshold = threshold,
+    timestamp = Sys.time()
+  )
+  
+  return(layout)
 }
 
-#' Copy tab results to clipboard for pasting into Sheets
+##### Glue tab #####
+
+#' Glue two tab() results together
 #'
-#' Copies a tab_result object to the clipboard in a format suitable for pasting
-#' into Sheets. Percentages are converted to decimals, base sizes are
-#' included, and source information is added.
+#' Combine two tab_cell_collection objects by merging their cell stores and layouts.
+#' Preserves the cell-based architecture throughout.
 #'
-#' @param tab_result A tab_result object from the tab() function
-#' @param digits Number of decimal places to round values to. If NULL (default), no rounding is applied
-#' @param empty_zeros Logical. If TRUE, cells with exactly 0 values will be displayed as empty instead of "0"
-#' @param na_display Character string to display for NA values. Default is empty string ("")
-#' @param show_source Logical. If TRUE (default), includes footnote on source.
-#' @return Invisibly returns the formatted data that was copied
+#' @param tab1 First tab_cell_collection object
+#' @param tab2 Second tab_cell_collection object
+#' @param direction Direction to glue: "cols" (side-by-side) or "rows" (stacked)
+#' @param sep Separator for combining labels
+#' @param prefix Optional prefix for tab2 labels
+#' @return A tab_cell_collection object with merged cells
 #' @export
-#'
 #' @examples
 #' \dontrun{
-#' result <- tab(data, gender, region)
-#' copy_tab(result)
-#' # Now paste into Sheets
+#' # Glue two tables side-by-side
+#' tab1 <- tab(data, gender, region)
+#' tab2_obj <- tab(data, gender, brand)
+#' result <- glue_tab(tab1, tab2_obj, direction = "cols")
 #' }
-copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display = "", show_source = TRUE) {
-
-  # Validate input
-  if (!inherits(tab_result, "tab_result")) {
-    stop("Input must be a tab_result object from the tab() function")
-  }
-
-  # Check if clipr is available
-  if (!requireNamespace("clipr", quietly = TRUE)) {
-    stop("The 'clipr' package is required for clipboard functionality. ",
-         "Please install it with: install.packages('clipr')")
-  }
-
-  # Check if clipboard is available
-  if (!clipr::clipr_available()) {
-    stop("Clipboard is not available. This may occur in non-interactive sessions ",
-         "or on systems without clipboard support.")
-  }
-
-  # Get call information
-  original_call <- attr(tab_result, "call")
-
-  # Get the statistic type
-  statistic <- attr(tab_result, "statistic")
-
-  # Create a copy of the data for processing
-  output_data <- tab_result
-
-  x_formatted <- output_data
-  x           <- output_data
-
-  # Identify the base row
-  base_row_idx <- which(x_formatted$row_label == statistic$base_label)
-
-  # Apply formatting function to all non-base rows
-  # Apply formatting function to all non-base rows
-  for (col in names(output_data)[-1]) {
-    # Check if base column
-    is_base_column <- col == statistic$base_label
-    if (is_base_column) {
-      next
-    }
-
-    original_values <- output_data[[col]]
-    output_data[[col]] <- vapply(
-      seq_along(original_values), function(i) {
-        if (i %in% base_row_idx) {
-          # Handle base row values
-          val <- original_values[i]
-          if (is.na(val)) {
-            return(na_display)
-          } else if (empty_zeros && val == 0) {
-            return("")
-          } else if (!is.null(digits)) {
-            # Round base values too, format as integer if digits = 0
-            rounded_val <- round(val, digits)
-            if (digits == 0) {
-              return(as.character(as.integer(rounded_val)))
-            } else {
-              return(as.character(rounded_val))
-            }
-          } else {
-            return(as.character(val))
-          }
-        } else if (is.numeric(original_values[i])) {
-          val <- original_values[i]
-          if (is.na(val)) {
-            return(na_display)
-          } else if (empty_zeros && val == 0) {
-            return("")
-          } else {
-            # Handle custom formatting or use statistic's format function
-            if (!is.null(digits)) {
-              rounded_val <- round(val, digits)
-              if (digits == 0) {
-                return(as.character(as.integer(rounded_val)))
-              } else {
-                # Format without trailing zeros
-                return(as.character(rounded_val))
-              }
-            } else {
-              return(statistic$format_fn(val))
-            }
-          }
-        } else {
-          return(as.character(original_values[i]))
-        }
-      }, character(1))
-  }
-
-  # Create column headers row
-  headers_row <- data.frame(
-    row_label = "Row Label",
-    stringsAsFactors = FALSE
-  )
-  for (col_name in names(output_data)[-1]) {
-    headers_row[[col_name]] <- col_name
-  }
-
-  # Combine headers with data (base row is already included in tab_result)
-  output_data <- rbind(headers_row, output_data)
-
-  if(show_source){
-    # Add empty row for spacing
-    empty_row <- output_data[1, ]
-    empty_row[1, ] <- ""
-    output_data <- rbind(output_data, empty_row)
-
-    # Add source information row with original call
-    if (statistic$id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
-      values_var <- attr(tab_result, "values_variable")
-      call_text <- deparse(original_call, width.cutoff = 500)
-      source_info <- paste0("Table showing mean of '", values_var, "' generated by surveydatar::", paste(call_text, collapse = " "), ")")
-    } else {
-      call_text <- deparse(original_call, width.cutoff = 500)
-      source_info <- paste0("Table showing survey ", statistic$id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
-    }
-
-    source_row <- output_data[1, ]
-    source_row[1, ] <- source_info
-    source_row[, -1] <- ""
-    output_data <- rbind(output_data, source_row)
-  }
-
-  # Convert to character matrix for clipboard
-  output_matrix <- as.matrix(output_data)
-
-  # Create tab-delimited string
-  output_lines <- apply(output_matrix, 1, function(row) {
-    paste(row, collapse = "\t")
-  })
-  output_string <- paste(output_lines, collapse = "\n")
-
-  # Copy to clipboard
-  tryCatch({
-    clipr::write_clip(output_string)
-    message("Table copied to clipboard. Ready to paste into Sheets.")
-  }, error = function(e) {
-    stop("Failed to copy to clipboard: ", e$message)
-  })
-
-  # Return the formatted data invisibly
-  invisible(output_data)
-}
-
-# Copy df to clipboard
-#
-# Useful for any dataframe manipulation of tab objects before copying
-#'@export
-copy_df <- function(df, row.names = FALSE, sep = "\t") {
-  # Ensure input is a data frame
-  if (!is.data.frame(df)) {
-    stop("Input must be a data frame")
-  }
-
-  # OS-specific behavior
-  os <- Sys.info()[["sysname"]]
-
-  if (os == "Windows") {
-    write.table(df, "clipboard", sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
-    message("Data copied to Windows clipboard.")
-  } else if (os == "Darwin") {  # macOS
-    clip <- pipe("pbcopy", "w")
-    write.table(df, file = clip, sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
-    close(clip)
-    message("Data copied to clipboard.")
-  } else {
-    stop("Clipboard functionality not implemented on this OS.")
-  }
-}
-
-
-#' Calculate summary value based on type
-#' @keywords internal
-calculate_summary <- function(type, arrays, base_array, col_array, statistic, values) {
-  if (type == "NET") {
-    # Union of all conditions
-    combined_matrix <- do.call(cbind, arrays)
-    summary_array <- as.numeric(rowSums(combined_matrix, na.rm = TRUE) > 0)
-  } else if (type == "Avg") {
-    # Union for averaging (same as NET but labeled differently)
-    combined_matrix <- do.call(cbind, arrays)
-    summary_array <- as.numeric(rowSums(combined_matrix, na.rm = TRUE) > 0)
-  } else if (type == "Total") {
-    # Simple sum
-    summary_array <- rep(1, length(base_array))
-  } else {
-    stop("Unknown summary type: ", type)
-  }
-
-  # Create label showing what was combined
-  array_labels <- names(arrays)
-  if (is.null(array_labels)) {
-    # Try to extract labels from array meta if no names
-    array_labels <- sapply(arrays, function(arr) {
-      meta <- attr(arr, "meta")
-      if (!is.null(meta) && !is.null(meta$label)) {
-        meta$label
-      } else {
-        "unknown"
-      }
-    })
-  }
-
-  combined_label <- paste0(type, " (", paste(array_labels, collapse = " + "), ")")
-
-  summary_array <- .ensure_meta(
-    summary_array,
-    ivar = "_SUMMARY",
-    ival = type,  # "NET", "Total", or "Avg"
-    label = combined_label
-  )
-
-  return(summary_array)
-}
-
-#' Add significance testing to a tab result
-#'
-#' @param tab_result A tab_result object from tab()
-#' @param versus Column to compare against: "first_col", "last_col",
-#'   column name, or column index
-#' @param test Test to use: "auto", "z_test_proportions", "t_test", etc.
-#' @param level Significance level (default 0.05)
-#' @param adjust Multiple comparison adjustment: "none", "bonferroni", "BH", etc.
-#' @param name Optional name for this comparison (defaults to versus value)
-#' @return The tab_result with significance testing added
-#' @export
-add_sig <- function(tab_result,
-                    versus = "first_col",
-                    test = "auto",
-                    level = 0.05,
-                    adjust = "none",
-                    name = NULL) {
-
-  if (!inherits(tab_result, "tab_result")) {
-    stop("Input must be a tab_result object")
-  }
-
-  # Extract stored arrays
-  arrays <- attr(tab_result, "arrays")
-  if (is.null(arrays)) {
-    stop("No arrays found in tab_result. This tab_result may have been created ",
-         "with an older version of tab() that doesn't store arrays.")
-  }
-
-  # Extract other needed info
-  statistic <- attr(tab_result, "statistic")
-
-  # Create result matrix (excluding row_label column)
-  result_matrix <- as.matrix(tab_result[, -1])
-
-  # Create sig_config
-  sig_config <- list(
-    test = test,
-    versus = versus,
-    level = level,
-    adjust = adjust
-  )
-
-  # Call compute_significance
-  sig_result <- compute_significance(
-    base_array = arrays$base_array,
-    row_arrays = arrays$row_arrays,
-    col_arrays = arrays$col_arrays,
-    result_matrix = result_matrix,
-    statistic = statistic,
-    values_array = arrays$values_array,
-    sig_config = sig_config,
-    row_labels = tab_result$row_label
-  )
-
-  # Determine name for this comparison
-  # Resolve versus to actual column name
-  target_col_name <- resolve_versus_to_column_name(versus, tab_result)
-
-  # Use provided name or default to target column name
-  if (is.null(name)) {
-    name <- target_col_name
-  }
-
-  # Get existing significance results
-  all_sig <- attr(tab_result, "significance")
-  if (is.null(all_sig)) {
-    all_sig <- list()
-  }
-
-  # Add new significance result
-  all_sig[[name]] <- sig_result
-  attr(tab_result, "significance") <- all_sig
-
-  return(tab_result)
-}
-
-#' Add significance testing versus all columns
-#'
-#' @param tab_result A tab_result object from tab()
-#' @param test Test to use for all comparisons
-#' @param level Significance level
-#' @param adjust Multiple comparison adjustment
-#' @param exclude Columns to exclude from testing (e.g., "Total")
-#' @return The tab_result with significance testing added for all columns
-#' @export
-add_sig_all <- function(tab_result,
-                        test = "auto",
-                        level = 0.05,
-                        adjust = "none",
-                        exclude = "Total") {
-
-  if (!inherits(tab_result, "tab_result")) {
-    stop("Input must be a tab_result object")
-  }
-
-  # Get statistic info to identify summary columns
-  statistic <- attr(tab_result, "statistic")
-
-  # Build list of columns to exclude
-  columns_to_exclude <- character()
-
-  # Always exclude base column
-  if (!is.null(statistic$base_label)) {
-    columns_to_exclude <- c(columns_to_exclude, statistic$base_label)
-  }
-
-  # Always exclude summary columns
-  if (!is.null(statistic$summary_col)) {
-    columns_to_exclude <- c(columns_to_exclude, statistic$summary_col)
-  }
-  if (!is.null(statistic$summary_row)) {
-    # In case summary_row appears as a column somehow
-    columns_to_exclude <- c(columns_to_exclude, statistic$summary_row)
-  }
-
-  # Add any user-specified exclusions
-  if (!is.null(exclude)) {
-    columns_to_exclude <- c(columns_to_exclude, exclude)
-  }
-
-  # Get all column names except row_label
-  col_names <- names(tab_result)[-1]
-
-  # Remove excluded columns
-  col_names <- setdiff(col_names, columns_to_exclude)
-
-  # Only proceed if there are columns left to test
-  if (length(col_names) == 0) {
-    warning("No columns left to test after excluding summary/base columns")
-    return(tab_result)
-  }
-
-  # Add significance vs each remaining column
-  for (col in col_names) {
-    # Use tryCatch to handle any issues with individual columns
-    tryCatch({
-      tab_result <- add_sig(tab_result,
-                            versus = col,
-                            test = test,
-                            level = level,
-                            adjust = adjust,
-                            name = col)  # Use column name as test name
-    }, error = function(e) {
-      warning("Could not add significance for column '", col, "': ", e$message)
-    })
-  }
-
-  return(tab_result)
-}
-
-#' Compute significance matrix for tab results
-#' @keywords internal
-compute_significance <- function(base_array, row_arrays, col_arrays,
-                                 result_matrix, statistic, values_array = NULL,
-                                 sig_config = list(), row_labels = NULL) {
-
-  # Default configuration
-  default_config <- list(
-    test = "auto",
-    versus = "first_col",
-    level = 0.05,
-    adjust = "none"
-  )
-  config <- utils::modifyList(default_config, sig_config)
-
-  meta_labels <- c(statistic$base_label)
-  if (!is.null(statistic$summary_row)) {
-    meta_labels <- c(meta_labels, statistic$summary_row)
-  }
-  if (!is.null(statistic$summary_col)) {
-    meta_labels <- c(meta_labels, statistic$summary_col)
-  }
-
-  # Identify which columns and rows to exclude
-  col_exclude <- which(colnames(result_matrix) %in% meta_labels)
-  row_exclude <- which(row_labels %in% meta_labels)
-
-  # Get data-only indices
-  data_cols <- setdiff(seq_len(ncol(result_matrix)), col_exclude)
-  data_rows <- setdiff(seq_len(nrow(result_matrix)), row_exclude)
-
-  # Filter to data-only elements
-  result_matrix <- result_matrix[data_rows, data_cols, drop = FALSE]
-  row_arrays <- row_arrays[data_rows]
-  col_arrays <- col_arrays[data_cols]
-  if (!is.null(row_labels)) {
-    row_labels <- row_labels[data_rows]
-  }
-  col_names <- colnames(result_matrix)
-
-  # Determine test to use
-  if (config$test == "auto") {
-    # Auto-determine based on statistic type
-    test_id <- switch(
-      statistic$id,
-      "column_pct" = "z_test_proportions",
-      "count" = "z_test_proportions",
-      "row_pct" = "z_test_proportions",
-      "mean" = "t_test",
-      "median" = "mann_whitney",
-      "sd" = "t_test",
-      "cv" = "t_test",
-      stop("No default test for statistic '", statistic$id, "'")
-    )
-  } else {
-    test_id <- config$test
-  }
-
-  # Get test object
-  test_obj <- .tab_registry$sig_tests[[test_id]]
-  if (is.null(test_obj)) {
-    stop("Unknown significance test: '", test_id, "'. Available: ",
-         paste(names(.tab_registry$sig_tests), collapse = ", "))
-  }
-
-  # Determine comparison base column index
-  n_cols <- ncol(result_matrix)
-  col_names <- colnames(result_matrix)
-
-  if (is.character(config$versus)) {
-    base_col <- switch(config$versus,
-                       "first_col" = 1,
-                       "last_col" = n_cols,
-                       "total" = {
-                         idx <- which(tolower(col_names) == "total")
-                         if (length(idx) == 0) stop("No 'Total' column found")
-                         idx[1]
-                       },
-                       # Otherwise treat as column name
-                       {
-                         idx <- which(col_names == config$versus)
-                         if (length(idx) == 0) stop("Column '", config$versus, "' not found")
-                         idx[1]
-                       }
-    )
-  } else if (is.numeric(config$versus)) {
-    base_col <- as.integer(config$versus)
-    if (base_col < 1 || base_col > n_cols) {
-      stop("Column index ", base_col, " out of range [1, ", n_cols, "]")
-    }
-  } else {
-    stop("versus must be a character string or numeric index")
-  }
-
-  # Identify data rows (exclude base row and any summary rows)
-  exclude_row_labels <- c(statistic$base_label)
-  if (!is.null(statistic$summary_row)) {
-    exclude_row_labels <- c(exclude_row_labels, statistic$summary_row)
-  }
-
-  # Find indices of rows to exclude
-  exclude_rows <- which(row_labels %in% exclude_row_labels)
-
-  # Determine actual data rows
-  all_rows <- seq_len(nrow(result_matrix))
-  data_rows <- setdiff(all_rows, exclude_rows)
-
-  n_data_rows <- length(data_rows)
-
-  sig_matrix <- matrix("", nrow = n_data_rows, ncol = n_cols)
-  p_matrix <- matrix(NA_real_, nrow = n_data_rows, ncol = n_cols)
-
-  # Set row and column names
-  if (length(data_rows) > 0) {
-    if (!is.null(row_labels)) {
-      rownames(sig_matrix) <- row_labels[data_rows]
-      rownames(p_matrix) <- row_labels[data_rows]
-    } else {
-      rownames(sig_matrix) <- rownames(result_matrix)[data_rows]
-      rownames(p_matrix) <- rownames(result_matrix)[data_rows]
-    }
-  }
-  colnames(sig_matrix) <- col_names
-  colnames(p_matrix) <- col_names
-
-  # Skip if only one column
-  if (n_cols == 1) {
-    return(list(
-      levels = sig_matrix,
-      p_values = p_matrix,
-      test_used = test_id,
-      test_name = test_obj$name,
-      versus = "none",
-      config = config
-    ))
-  }
-
-  # Check if test is omnibus (tests overall association)
-  if (!is.null(test_obj$is_omnibus) && test_obj$is_omnibus) {
-    # For omnibus tests, we need arrays for data rows only
-    # Map data_rows indices to row_arrays indices
-    array_indices <- seq_along(data_rows)
-    if (length(array_indices) > length(row_arrays)) {
-      array_indices <- array_indices[seq_len(length(row_arrays))]
-    }
-    data_row_arrays <- row_arrays[array_indices]
-
-    # For omnibus tests, also exclude summary columns
-    data_col_arrays <- col_arrays
-    if (!is.null(statistic$summary_col)) {
-      # Find indices of data columns (excluding summary column)
-      data_col_indices <- which(col_names != statistic$summary_col)
-      data_col_arrays <- col_arrays[data_col_indices]
-    }
-
-    # Run omnibus test once
-    test_result <- test_obj$processor(
-      base_array = base_array,
-      row_arrays = data_row_arrays,
-      col_arrays = data_col_arrays,
-      values = values_array
-    )
-
-    # For omnibus tests, store the overall p-value
-    if (!is.null(test_result$p_value)) {
-      # Set all cells to the same p-value (it's an overall test)
-      p_matrix[,] <- test_result$p_value
-
-      # Mark all cells as "omnibus" in sig_matrix
-      sig_matrix[,] <- if (test_result$p_value < config$level) "significant" else ""
-    }
-
-    return(list(
-      levels = sig_matrix,
-      p_values = p_matrix,
-      test_used = test_id,
-      test_name = test_obj$name,
-      versus = "overall association",
-      config = config,
-      is_omnibus = TRUE
-    ))
-  }
-
-  # Perform pairwise tests
-  base_col_array <- col_arrays[[base_col]]
-
-  # Remove base array from end of row_arrays if present
-  if (length(row_arrays) > n_data_rows) {
-    row_arrays <- row_arrays[seq_len(n_data_rows)]
-  }
-
-  # Test each data row against the base column
-  for (i in seq_len(n_data_rows)) {
-    row_idx <- data_rows[i]
-
-    array_idx <- i  # The i-th data row uses the i-th row array
-
-    for (j in 1:n_cols) {
-      if (j == base_col) {
-        sig_matrix[i, j] <- "base"
-        next
-      }
-
-      # Run test
-      tryCatch({
-        test_result <- test_obj$processor(
-          base_array = base_array,
-          row_array = row_arrays[[array_idx]],
-          col_array_1 = base_col_array,
-          col_array_2 = col_arrays[[j]],
-          values = values_array
-        )
-
-        p_matrix[i, j] <- test_result$p_value
-      }, error = function(e) {
-        # If test fails, leave as NA
-        warning("Test failed for row ", i, ", col ", j, ": ", e$message)
-      })
-    }
-  }
-
-  # Apply multiple comparison adjustment if requested
-  if (config$adjust != "none" && any(!is.na(p_matrix))) {
-    # Extract non-base p-values
-    p_values_vec <- as.vector(p_matrix[, -base_col])
-    p_values_vec <- p_values_vec[!is.na(p_values_vec)]
-
-    if (length(p_values_vec) > 0) {
-      p_adjusted <- p.adjust(p_values_vec, method = config$adjust)
-
-      # Put adjusted values back
-      idx <- 1
-      for (j in 1:n_cols) {
-        if (j != base_col) {
-          for (i in 1:n_data_rows) {
-            if (!is.na(p_matrix[i, j])) {
-              p_matrix[i, j] <- p_adjusted[idx]
-              idx <- idx + 1
-            }
-          }
-        }
-      }
-    }
-  }
-
-  # Convert p-values to significance levels
-  for (i in 1:n_data_rows) {
-    row_idx <- data_rows[i]
-
-    for (j in 1:n_cols) {
-      if (sig_matrix[i, j] == "base") {
-        next
-      } else if (!is.na(p_matrix[i, j]) && p_matrix[i, j] < config$level) {
-        # Determine direction based on values
-        val_current <- result_matrix[row_idx, j]
-        val_base <- result_matrix[row_idx, base_col]
-
-        if (!is.na(val_current) && !is.na(val_base)) {
-          if (val_current > val_base) {
-            sig_matrix[i, j] <- "higher"
-          } else if (val_current < val_base) {
-            sig_matrix[i, j] <- "lower"
-          }
-        }
-      }
-    }
-  }
-
-  return(list(
-    levels = sig_matrix,
-    p_values = p_matrix,
-    test_used = test_id,
-    test_name = test_obj$name,
-    versus = paste0("column ", base_col, ": ", col_names[base_col]),
-    config = config
-  ))
-}
-
-#' Resolve versus parameter to actual column name
-#' @keywords internal
-resolve_versus_to_column_name <- function(versus, tab_result) {
-  col_names <- names(tab_result)[-1]  # Exclude row_label
-  n_cols <- length(col_names)
-
-  if (is.character(versus)) {
-    target_col_idx <- switch(versus,
-                             "first_col" = 1,
-                             "last_col" = n_cols,
-                             # Otherwise treat as column name
-                             {
-                               idx <- which(col_names == versus)
-                               if (length(idx) == 0) stop("Column '", versus, "' not found")
-                               idx[1]
-                             }
-    )
-  } else if (is.numeric(versus)) {
-    target_col_idx <- as.integer(versus)
-    if (target_col_idx < 1 || target_col_idx > n_cols) {
-      stop("Column index ", target_col_idx, " out of range [1, ", n_cols, "]")
-    }
-  } else {
-    stop("versus must be a character string or numeric index")
-  }
-
-  return(col_names[target_col_idx])
-}
-
-# Function to modify row and column labels in a tab_object using gsub
-# Supports multiple pattern/replacement pairs via named vectors
-# Preserves tab_result class and attributes when present
-
-#' Modify row and column labels using pattern matching
-#'
-#' Apply gsub pattern replacements to row labels and/or column names in a data frame.
-#' Particularly useful for formatting tab_result objects before visualization.
-#'
-#' @param x A data frame, typically a tab_result object
-#' @param row_labels Named character vector of pattern/replacement pairs for row labels.
-#'   Patterns are applied sequentially to the row_label column.
-#' @param col_labels Named character vector of pattern/replacement pairs for column names.
-#'   Patterns are applied sequentially to column names (excluding row_label).
-#'
-#' @return The modified data frame with updated labels, preserving original class and attributes
-#'
-#' @export
-#'
-#' @examples
-#' # Basic usage
-#' result <- modify_labels(
-#'   tab_result,
-#'   row_labels = c("Very satisfied" = "Very sat", "Somewhat satisfied" = "Somewhat sat"),
-#'   col_labels = c("Male 18-34" = "M 18-34", "Female 35+" = "F 35+")
-#' )
-#'
-#' # In a pipeline
-#' my_tab %>%
-#'   modify_labels(row_labels = c("\\s+" = " ")) %>%  # Remove extra spaces
-#'   tab_to_flourish()
-modify_labels <- function(x, row_labels = NULL, col_labels = NULL) {
-  # Input validation
-  if (!is.data.frame(x)) {
-    stop("x must be a data frame")
-  }
-
-  # Store all original attributes to preserve them
-  original_attrs <- attributes(x)
-  result <- x
-
-  # Modify row labels if specified
-  if (!is.null(row_labels)) {
-    if (!is.character(row_labels) || is.null(names(row_labels))) {
-      stop("row_labels must be a named character vector")
-    }
-
-    if (!"row_label" %in% names(result)) {
-      stop("Data frame must have a 'row_label' column to modify row labels")
-    }
-
-    # Apply each pattern sequentially
-    for (i in seq_along(row_labels)) {
-      pattern <- names(row_labels)[i]
-      replacement <- row_labels[i]
-      result$row_label <- gsub(pattern, replacement, result$row_label, perl = TRUE)
-    }
-  }
-
-  # Modify column labels if specified
-  if (!is.null(col_labels)) {
-    if (!is.character(col_labels) || is.null(names(col_labels))) {
-      stop("col_labels must be a named character vector")
-    }
-
-    # Get column names excluding row_label
-    col_names <- names(result)
-    data_col_indices <- which(col_names != "row_label")
-
-    if (length(data_col_indices) == 0) {
-      warning("No data columns found to modify (only row_label column present)")
-    } else {
-      # Apply each pattern sequentially to data column names
-      for (i in seq_along(col_labels)) {
-        pattern <- names(col_labels)[i]
-        replacement <- col_labels[i]
-        col_names[data_col_indices] <- gsub(pattern, replacement, col_names[data_col_indices], perl = TRUE)
-      }
-
-      # Update column names
-      names(result) <- col_names
-    }
-  }
-
-  # Store the modified names before restoring attributes
-  modified_names <- names(result)
-
-  # Restore all original attributes except names
-  original_attrs$names <- NULL
-  attributes(result) <- original_attrs
-
-  # Set the modified names
-  names(result) <- modified_names
-
-  result
-}
-
-
-#' Glue two tab results together
-#'
-#' Combines two tab_result objects either side-by-side (columns) or
-#' stacked (rows). When gluing columns, rows are matched by row_label.
-#' When gluing rows, columns are matched by name.
-#'
-#' @param tab1 First tab_result object
-#' @param tab2 Second tab_result object to glue onto the first
-#' @param direction "cols" (side-by-side) or "rows" (stacked)
-#' @param sep Separator between prefix and original labels
-#' @param prefix Optional prefix for tab2's columns/rows. If NULL, uses existing labels
-#' @return Combined tab_result object
-#' @export
-#' @examples
-#' # Glue two country results side by side
-#' uk_tab <- tab(uk_data, gender, age)
-#' us_tab <- tab(us_data, gender, age)
-#' combined <- glue_tab(uk_tab, us_tab, prefix = "US")
-#'
-#' # Stack time periods vertically
-#' q1_tab <- tab(q1_data, satisfaction, product)
-#' q2_tab <- tab(q2_data, satisfaction, product)
-#' trend <- glue_tab(q1_tab, q2_tab, direction = "rows", prefix = "Q2")
 glue_tab <- function(tab1, tab2,
                      direction = c("cols", "rows"),
                      sep = ": ",
                      prefix = NULL) {
-
+  
   direction <- match.arg(direction)
-
-  # Validate inputs
-  if (!inherits(tab1, "tab_result")) {
-    stop("tab1 must be a tab_result object")
+  
+  # Validate both are tab_cell_collection
+  if (!inherits(tab1, "tab_cell_collection") || !inherits(tab2, "tab_cell_collection")) {
+    stop("glue_tab() requires tab_cell_collection objects from tab()")
   }
-  if (!inherits(tab2, "tab_result")) {
-    stop("tab2 must be a tab_result object")
-  }
-
+  
   # Check compatibility
   check_glue_compatibility(tab1, tab2, direction)
-
-  # Dispatch to appropriate gluing function
+  
   if (direction == "cols") {
-    result <- glue_tabs_cols(tab1, tab2, sep, prefix)
+    result <- glue_tabs_cols_cellbased(tab1, tab2, sep, prefix)
   } else {
-    result <- glue_tabs_rows(tab1, tab2, sep, prefix)
+    result <- glue_tabs_rows_cellbased(tab1, tab2, sep, prefix)
   }
-
+  
   return(result)
 }
 
-#' Check if two tabs can be glued together
+#' Check if two tab results can be glued together
 #' @keywords internal
 check_glue_compatibility <- function(tab1, tab2, direction) {
-  stat1 <- attr(tab1, "statistic")
-  stat2 <- attr(tab2, "statistic")
-
-  # Extract statistic ID properly
-  stat1_id <- if (is.character(stat1)) stat1 else stat1$id
-  stat2_id <- if (is.character(stat2)) stat2 else stat2$id
-
-  # Check statistic compatibility
+  # Check statistics match
+  stat1_id <- tab1$statistic$id
+  stat2_id <- tab2$statistic$id
+  
   if (stat1_id != stat2_id) {
-    warning("Gluing tabs with different statistics: ",
-            stat1_id, " and ", stat2_id)
+    warning("Gluing tabs with different statistics: ", stat1_id, " and ", stat2_id)
   }
-
+  
   if (direction == "cols") {
     # For column gluing, check row compatibility
-    if (!identical(tab1$row_label, tab2$row_label)) {
-      common_rows <- intersect(tab1$row_label, tab2$row_label)
+    if (!identical(tab1$layout$row_labels, tab2$layout$row_labels)) {
+      common_rows <- intersect(tab1$layout$row_labels, tab2$layout$row_labels)
       if (length(common_rows) == 0) {
         stop("No common row labels found between tabs")
       }
-      if (length(common_rows) < length(tab1$row_label)) {
-        warning("Only ", length(common_rows), " common rows found out of ",
-                length(tab1$row_label), " in tab1 and ",
-                length(tab2$row_label), " in tab2")
-      }
+      warning("Only ", length(common_rows), " common rows. Non-matching rows will be dropped.")
     }
   } else {
-    # For row gluing, column structures should be similar
-    cols1 <- setdiff(names(tab1), "row_label")
-    cols2 <- setdiff(names(tab2), "row_label")
-
-    if (!identical(sort(cols1), sort(cols2))) {
-      warning("Column structures differ. Missing columns will be filled with NA.")
+    # For row gluing, check column compatibility
+    if (!identical(tab1$layout$col_labels, tab2$layout$col_labels)) {
+      common_cols <- intersect(tab1$layout$col_labels, tab2$layout$col_labels)
+      if (length(common_cols) == 0) {
+        stop("No common column labels found between tabs")
+      }
+      warning("Only ", length(common_cols), " common cols. Non-matching cols will be dropped.")
     }
   }
-
+  
   invisible(TRUE)
+}
+
+#' Merge two cell stores
+#' @keywords internal
+merge_cell_stores <- function(store1, store2) {
+  merged <- new_cell_store()
+  
+  # Copy all cells from store1 (IDs unchanged)
+  for (cell_id in all_cell_ids(store1)) {
+    cell <- get_cell(store1, cell_id)
+    add_cell(merged, cell$value, cell$base, cell$specification, 
+             cell$computation, cell$metadata)
+  }
+  
+  # Copy all cells from store2 (track new IDs for remapping)
+  id_mapping <- list()
+  for (cell_id in all_cell_ids(store2)) {
+    cell <- get_cell(store2, cell_id)
+    new_id <- add_cell(merged, cell$value, cell$base, cell$specification,
+                      cell$computation, cell$metadata)
+    id_mapping[[as.character(cell_id)]] <- new_id
+  }
+  
+  list(store = merged, id_mapping = id_mapping)
 }
 
 #' Glue tabs side-by-side (columns)
 #' @keywords internal
-glue_tabs_cols <- function(tab1, tab2, sep, prefix) {
+glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
+  # Merge cell stores
+  merged_result <- merge_cell_stores(tab1$cell_store, tab2$cell_store)
+  merged_store <- merged_result$store
+  id_mapping <- merged_result$id_mapping
+  
   # Find common rows
-  common_rows <- intersect(tab1$row_label, tab2$row_label)
-
-  # Start with tab1, subset to common rows
-  result <- tab1[tab1$row_label %in% common_rows, , drop = FALSE]
-
-  # Reorder to match original row order
-  result <- result[match(common_rows, result$row_label), , drop = FALSE]
-
-  # Prepare tab2 columns
-  tab2_subset <- tab2[match(common_rows, tab2$row_label), , drop = FALSE]
-
-  # Track new column mappings for arrays
-  new_col_names <- character()
-
-  # Add tab2 columns (skip row_label)
-  for (i in 2:ncol(tab2_subset)) {
-    old_name <- names(tab2_subset)[i]
-
-    # Create new column name
-    if (!is.null(prefix)) {
-      new_name <- paste0(prefix, sep, old_name)
-    } else {
-      # Avoid name collision
-      new_name <- old_name
-      j <- 1
-      while (new_name %in% names(result)) {
-        new_name <- paste0(old_name, "_", j)
-        j <- j + 1
+  common_rows <- intersect(tab1$layout$row_labels, tab2$layout$row_labels)
+  
+  # Get indices of common rows in both tabs
+  tab1_row_idx <- match(common_rows, tab1$layout$row_labels)
+  tab2_row_idx <- match(common_rows, tab2$layout$row_labels)
+  
+  # Build new grid
+  n_rows <- length(common_rows)
+  n_cols1 <- ncol(tab1$layout$grid)
+  n_cols2 <- ncol(tab2$layout$grid)
+  new_grid <- matrix(NA_integer_, nrow = n_rows, ncol = n_cols1 + n_cols2)
+  
+  # Copy cells from tab1 (left side, IDs unchanged)
+  new_grid[, 1:n_cols1] <- tab1$layout$grid[tab1_row_idx, , drop = FALSE]
+  
+  # Copy cells from tab2 (right side, IDs remapped)
+  tab2_grid_subset <- tab2$layout$grid[tab2_row_idx, , drop = FALSE]
+  for (i in 1:nrow(tab2_grid_subset)) {
+    for (j in 1:ncol(tab2_grid_subset)) {
+      old_id <- tab2_grid_subset[i, j]
+      if (!is.na(old_id)) {
+        new_id <- id_mapping[[as.character(old_id)]]
+        new_grid[i, n_cols1 + j] <- new_id
       }
     }
-
-    result[[new_name]] <- tab2_subset[[old_name]]
-    new_col_names <- c(new_col_names, new_name)
   }
-
-  # Merge metadata
-  result <- merge_tab_metadata(result, tab1, tab2,
-                               direction = "cols",
-                               prefix = prefix,
-                               new_col_names = new_col_names)
-
+  
+  # Combine labels
+  new_col_labels <- c(tab1$layout$col_labels, 
+                     if (!is.null(prefix)) {
+                       paste0(prefix, sep, tab2$layout$col_labels)
+                     } else {
+                       tab2$layout$col_labels
+                     })
+  
+  # Build new layout
+  new_layout <- list(
+    type = "explicit_grid",
+    grid = new_grid,
+    row_labels = common_rows,
+    col_labels = new_col_labels,
+    has_summary_row = tab1$layout$has_summary_row || tab2$layout$has_summary_row,
+    has_summary_col = tab1$layout$has_summary_col || tab2$layout$has_summary_col
+  )
+  
+  # Merge arrays
+  merged_arrays <- list(
+    base_array = tab1$arrays$base_array,  # Use tab1's base
+    row_arrays = tab1$arrays$row_arrays,
+    col_arrays = c(tab1$arrays$col_arrays, tab2$arrays$col_arrays),
+    values_array = tab1$arrays$values_array
+  )
+  
+  # Build result
+  result <- structure(list(
+    cell_store = merged_store,
+    layout = new_layout,
+    arrays = merged_arrays,
+    base_spec = tab1$base_spec,
+    data = tab1$data,
+    dpdict = tab1$dpdict,
+    statistic = tab1$statistic,
+    calc_base = tab1$calc_base,
+    derive_operations = list(),
+    formatting = list(),
+    call = call("glue_tab2", quote(tab1), quote(tab2))
+  ), class = c("tab_result", "tab_cell_collection"))
+  
   return(result)
 }
 
 #' Glue tabs vertically (rows)
 #' @keywords internal
-glue_tabs_rows <- function(tab1, tab2, sep, prefix) {
-  # Get all unique columns
-  all_cols <- union(names(tab1), names(tab2))
-
-  # Prepare both tabs with all columns
-  tab1_full <- tab1
-  tab2_full <- tab2
-
-  # Add missing columns to tab1
-  for (col in setdiff(all_cols, names(tab1))) {
-    tab1_full[[col]] <- NA
-  }
-
-  # Add missing columns to tab2
-  for (col in setdiff(all_cols, names(tab2))) {
-    tab2_full[[col]] <- NA
-  }
-
-  # Reorder columns to match
-  tab1_full <- tab1_full[, all_cols, drop = FALSE]
-  tab2_full <- tab2_full[, all_cols, drop = FALSE]
-
-  # Create result based on prefix
-  if (!is.null(prefix)) {
-    # Add section header
-    section_header <- data.frame(
-      row_label = paste0("--- ", prefix, " ---"),
-      stringsAsFactors = FALSE
-    )
-    for (col in all_cols[-1]) {
-      section_header[[col]] <- NA
+glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix) {
+  # Merge cell stores
+  merged_result <- merge_cell_stores(tab1$cell_store, tab2$cell_store)
+  merged_store <- merged_result$store
+  id_mapping <- merged_result$id_mapping
+  
+  # Find common columns
+  common_cols <- intersect(tab1$layout$col_labels, tab2$layout$col_labels)
+  
+  # Get indices of common columns in both tabs
+  tab1_col_idx <- match(common_cols, tab1$layout$col_labels)
+  tab2_col_idx <- match(common_cols, tab2$layout$col_labels)
+  
+  # Build new grid
+  n_rows1 <- nrow(tab1$layout$grid)
+  n_rows2 <- nrow(tab2$layout$grid)
+  n_cols <- length(common_cols)
+  new_grid <- matrix(NA_integer_, nrow = n_rows1 + n_rows2, ncol = n_cols)
+  
+  # Copy cells from tab1 (top, IDs unchanged)
+  new_grid[1:n_rows1, ] <- tab1$layout$grid[, tab1_col_idx, drop = FALSE]
+  
+  # Copy cells from tab2 (bottom, IDs remapped)
+  tab2_grid_subset <- tab2$layout$grid[, tab2_col_idx, drop = FALSE]
+  for (i in 1:nrow(tab2_grid_subset)) {
+    for (j in 1:ncol(tab2_grid_subset)) {
+      old_id <- tab2_grid_subset[i, j]
+      if (!is.na(old_id)) {
+        new_id <- id_mapping[[as.character(old_id)]]
+        new_grid[n_rows1 + i, j] <- new_id
+      }
     }
-
-    # Add blank row between sections
-    blank_row <- section_header
-    blank_row$row_label <- ""
-
-    # Combine with section headers
-    result <- rbind(tab1_full, blank_row, section_header, tab2_full)
-  } else {
-    # Just stack them
-    result <- rbind(tab1_full, tab2_full)
   }
-
-  # Merge metadata
-  result <- merge_tab_metadata(result, tab1, tab2,
-                               direction = "rows",
-                               prefix = prefix,
-                               new_col_names = NULL)
-
+  
+  # Combine labels
+  new_row_labels <- c(tab1$layout$row_labels, 
+                     if (!is.null(prefix)) {
+                       paste0(prefix, sep, tab2$layout$row_labels)
+                     } else {
+                       tab2$layout$row_labels
+                     })
+  
+  # Build new layout
+  new_layout <- list(
+    type = "explicit_grid",
+    grid = new_grid,
+    row_labels = new_row_labels,
+    col_labels = common_cols,
+    has_summary_row = tab1$layout$has_summary_row || tab2$layout$has_summary_row,
+    has_summary_col = tab1$layout$has_summary_col || tab2$layout$has_summary_col
+  )
+  
+  # Merge arrays
+  merged_arrays <- list(
+    base_array = tab1$arrays$base_array,  # Use tab1's base
+    row_arrays = c(tab1$arrays$row_arrays, tab2$arrays$row_arrays),
+    col_arrays = tab1$arrays$col_arrays,
+    values_array = tab1$arrays$values_array
+  )
+  
+  # Build result
+  result <- structure(list(
+    cell_store = merged_store,
+    layout = new_layout,
+    arrays = merged_arrays,
+    base_spec = tab1$base_spec,
+    data = tab1$data,
+    dpdict = tab1$dpdict,
+    statistic = tab1$statistic,
+    calc_base = tab1$calc_base,
+    derive_operations = list(),
+    formatting = list(),
+    call = call("glue_tab2", quote(tab1), quote(tab2))
+  ), class = c("tab_result", "tab_cell_collection"))
+  
   return(result)
 }
 
-#' Merge metadata from two tabs
-#' @keywords internal
-merge_tab_metadata <- function(result, tab1, tab2, direction, prefix, new_col_names = NULL) {
-  # Preserve class
-  class(result) <- c("tab_result", "data.frame")
+##### Multi-tab #####
 
-  # Use statistic from first tab
-  attr(result, "statistic") <- attr(tab1, "statistic")
-
-  # Merge base arrays - for now use tab1's
-  attr(result, "base_array") <- attr(tab1, "base_array")
-
-  # Handle row and column arrays based on direction
-  if (direction == "cols") {
-    # Row arrays from tab1 (subset to common rows)
-    row_arrays1 <- attr(tab1, "row_arrays")
-    if (!is.null(row_arrays1)) {
-      # This assumes arrays are in same order as rows
-      common_row_indices <- which(tab1$row_label %in% result$row_label)
-      attr(result, "row_arrays") <- row_arrays1[common_row_indices]
-    }
-
-    # Combine column arrays
-    col_arrays1 <- attr(tab1, "col_arrays")
-    col_arrays2 <- attr(tab2, "col_arrays")
-
-    if (!is.null(col_arrays1) || !is.null(col_arrays2)) {
-      combined_col_arrays <- list()
-
-      # Add tab1's arrays (excluding row_label)
-      if (!is.null(col_arrays1)) {
-        for (i in seq_along(col_arrays1)) {
-          combined_col_arrays[[names(tab1)[i + 1]]] <- col_arrays1[[i]]
-        }
-      }
-
-      # Add tab2's arrays with new names
-      if (!is.null(col_arrays2) && length(new_col_names) > 0) {
-        for (i in seq_along(col_arrays2)) {
-          if (i <= length(new_col_names)) {
-            combined_col_arrays[[new_col_names[i]]] <- col_arrays2[[i]]
-          }
-        }
-      }
-
-      attr(result, "col_arrays") <- combined_col_arrays
-    }
-
-  } else {  # direction == "rows"
-    # Column arrays stay the same (from tab1)
-    attr(result, "col_arrays") <- attr(tab1, "col_arrays")
-
-    # Combine row arrays
-    row_arrays1 <- attr(tab1, "row_arrays")
-    row_arrays2 <- attr(tab2, "row_arrays")
-
-    if (!is.null(row_arrays1) || !is.null(row_arrays2)) {
-      combined_row_arrays <- list()
-
-      # Add all arrays, including NAs for separator rows
-      if (!is.null(row_arrays1)) {
-        combined_row_arrays <- c(combined_row_arrays, row_arrays1)
-      }
-
-      # Add NAs for blank row and section header if prefix used
-      if (!is.null(prefix)) {
-        combined_row_arrays <- c(combined_row_arrays, list(NA, NA))
-      }
-
-      if (!is.null(row_arrays2)) {
-        combined_row_arrays <- c(combined_row_arrays, row_arrays2)
-      }
-
-      attr(result, "row_arrays") <- combined_row_arrays
-    }
-  }
-
-  # Track gluing history
-  glue_history <- attr(tab1, "glue_history")
-  if (is.null(glue_history)) glue_history <- list()
-
-  glue_history <- c(glue_history, list(list(
-    action = "glue_tab",
-    direction = direction,
-    prefix = prefix,
-    timestamp = Sys.time()
-  )))
-
-  attr(result, "glue_history") <- glue_history
-
-  # Preserve other important attributes from tab1
-  if (!is.null(attr(tab1, "values_variable"))) {
-    attr(result, "values_variable") <- attr(tab1, "values_variable")
-  }
-
-  return(result)
-}
-
-#' Create multiple tabs and glue them together
+#' Run tab() multiple times with different filters and combine results
 #'
-#' Runs tab() on subsets of data defined by the 'by' parameter and combines
-#' the results using glue_tab(). This is a convenience function for the common
-#' pattern of creating similar tables for different groups.
+#' This function creates multiple tab() results filtered by different groups
+#' and combines them using glue_tab(). The `by` parameter specifies how to
+#' split the data into groups.
 #'
-#' @param data Data frame or survey_data object
-#' @param rows Row specification (same as tab())
-#' @param cols Column specification (same as tab())
-#' @param by Variable or specification for splitting data:
-#'   - Variable name: splits by all unique values
-#'   - Named list: list("Europe" = country %in% c("UK", "FR"), "Asia" = country == "JP")
-#' @param direction "cols" (side-by-side) or "rows" (stacked)
-#' @param include_total Include a total group with all data?
-#' @param total_name Name for the total group
-#' @param sep Separator between group name and column labels
-#' @param statistic Statistic to compute (passed to tab())
+#' @param data Survey data (data.frame or survey_data object)
+#' @param rows Row specification (passed to tab)
+#' @param cols Column specification (passed to tab)
+#' @param by Grouping specification (see Details)
+#' @param direction Direction to combine tables: "cols" or "rows"
+#' @param include_total Whether to include a total (unfiltered) table
+#' @param total_name Label for the total column/row
+#' @param sep Separator for combining group names with labels
+#' @param statistic Statistic to compute (passed to tab)
 #' @param ... Additional arguments passed to tab()
-#' @return Combined tab_result object
+#' @return A tab_cell_collection object with combined results
 #' @export
 #' @examples
-#' # Split by all countries
-#' multi_tab(data, gender, age, by = country)
-#'
-#' # Specific countries only
-#' multi_tab(data, gender, age, by = country[c("UK", "US")])
-#'
-#' # Custom groups
-#' multi_tab(data, brand, rating, by = list(
-#'   "Satisfied" = satisfaction >= 4,
-#'   "Dissatisfied" = satisfaction < 4
+#' \dontrun{
+#' # Split by gender
+#' result <- multi_tab(data, satisfaction, by = gender, direction = "cols")
+#' 
+#' # Split by age groups
+#' result <- multi_tab(data, brand, by = list(
+#'   "Young" = age < 35,
+#'   "Middle" = age >= 35 & age < 55,
+#'   "Older" = age >= 55
 #' ))
-multi_tab <- function(data,
-                      rows,
-                      cols,
-                      by,
-                      direction = c("cols", "rows"),
-                      include_total = TRUE,
-                      total_name = "Total",
-                      sep = ": ",
-                      statistic = "column_pct",
-                      ...) {
-
+#' }
+multi_tab <- function(data, rows, cols, by,
+                       direction = c("cols", "rows"),
+                       include_total = TRUE,
+                       total_name = "Total",
+                       sep = ": ",
+                       statistic = "column_pct",
+                       ...) {
+  
   direction <- match.arg(direction)
-
+  
   # Extract data frame and dpdict
   if (inherits(data, "survey_data")) {
     df <- data$dat
@@ -4552,197 +1256,101 @@ multi_tab <- function(data,
     df <- data
     dpdict <- NULL
   }
-
-  # Capture the by argument as a quosure
+  
+  # Parse by parameter
   by_quo <- rlang::enquo(by)
-
-  # Parse by to get groups
   groups <- parse_by_parameter(by_quo, df, dpdict)
-
+  
   if (length(groups) == 0) {
     stop("No groups found from 'by' specification")
   }
-
-  # Initialize result with first group
-  result <- NULL
-  successful_groups <- character()
-
+  
+  # Generate tab for each group
+  result_tabs <- list()
+  
   for (group_name in names(groups)) {
-    # Get filtered data for this group
     group_filter <- groups[[group_name]]
-
-    # Validate filter expression
-    tryCatch({
-      validate_filter_expression(group_filter, df)
-    }, error = function(e) {
-      stop("Invalid filter for group '", group_name, "': ", e$message)
-    })
-
-    # Apply filter
     group_mask <- eval(group_filter, df, parent.frame())
-    if (!is.logical(group_mask) || length(group_mask) != nrow(df)) {
-      stop("Filter for group '", group_name, "' must return a logical vector of length nrow(data)")
-    }
     group_mask[is.na(group_mask)] <- FALSE
-
+    
     group_df <- df[group_mask, , drop = FALSE]
-
+    
     if (nrow(group_df) == 0) {
       warning("Group '", group_name, "' has no data, skipping")
       next
     }
-
-    # Reconstruct survey_data if needed
+    
+    # Reconstruct survey_data
     if (!is.null(dpdict)) {
-      group_data <- structure(
-        list(dat = group_df, dpdict = dpdict),
-        class = "survey_data"
-      )
+      group_data <- structure(list(dat = group_df, dpdict = dpdict), 
+                             class = "survey_data")
     } else {
       group_data <- group_df
     }
-
-    # Run tab for this group
-    # Handle missing cols argument
+    
+    # Call tab() for this group
     if (missing(cols)) {
-      group_tab <- tab(
-        group_data,
-        rows = {{ rows }},
-        statistic = statistic,
-        ...
-      )
+      group_tab <- tab(group_data, rows = {{ rows }}, statistic = statistic, ...)
     } else {
-      group_tab <- tab(
-        group_data,
-        rows = {{ rows }},
-        cols = {{ cols }},
-        statistic = statistic,
-        ...
-      )
+      group_tab <- tab(group_data, rows = {{ rows }}, cols = {{ cols }}, 
+                       statistic = statistic, ...)
     }
-
-    # Store successful group
-    successful_groups <- c(successful_groups, group_name)
-
-    # First group becomes the base
-    if (is.null(result)) {
-      result <- group_tab
-
-      # Add prefix to first group's columns if gluing by cols
-      if (direction == "cols" && length(names(groups)) > 1) {
-        # Only add prefix if there will be multiple groups
-        for (i in 2:ncol(result)) {
-          old_name <- names(result)[i]
-          names(result)[i] <- paste0(group_name, sep, old_name)
-        }
-      }
-
-      # Add section header for first group if gluing by rows
-      if (direction == "rows" && length(names(groups)) > 1) {
-
-        # Create section header row
-        section_header <- data.frame(
-          row_label = paste0("--- ", group_name, " ---"),
-          stringsAsFactors = FALSE
-        )
-        # Add NA values for all other columns
-        for (col in names(result)[-1]) {
-          section_header[[col]] <- NA
-        }
-
-        # Combine header with result
-        result <- rbind(section_header, result)
-
-        # Preserve the tab_result class
-        class(result) <- c("tab_result", "data.frame")
-
-        # Update row arrays to account for the new header row
-        row_arrays <- attr(group_tab, "row_arrays")
-        if (!is.null(row_arrays)) {
-          # Add NA at the beginning for the header row
-          attr(result, "row_arrays") <- c(list(NA), row_arrays)
-        }
-
-        # Preserve other essential attributes from group_tab
-        attr(result, "statistic") <- attr(group_tab, "statistic")
-        attr(result, "base_array") <- attr(group_tab, "base_array")
-        attr(result, "col_arrays") <- attr(group_tab, "col_arrays")
-        if (!is.null(attr(group_tab, "values_variable"))) {
-          attr(result, "values_variable") <- attr(group_tab, "values_variable")
-        }
-      }
-    } else {
-      # Glue subsequent groups
-      result <- glue_tab(result, group_tab,
-                         direction = direction,
-                         sep = sep,
-                         prefix = group_name)
-    }
+    
+    result_tabs[[group_name]] <- group_tab
   }
-
-  # Check if we got any results
-  if (is.null(result)) {
-    stop("No groups produced valid results")
-  }
-
-  # Add total if requested
+  
+  # Optionally include total
   if (include_total) {
-    # Use full data for total
-    if (!is.null(dpdict)) {
-      total_data <- structure(
-        list(dat = df, dpdict = dpdict),
-        class = "survey_data"
-      )
-    } else {
-      total_data <- df
-    }
-
-    # Handle missing cols argument
     if (missing(cols)) {
-      total_tab <- tab(
-        total_data,
-        rows = {{ rows }},
-        statistic = statistic,
-        ...
-      )
+      total_tab <- tab(data, rows = {{ rows }}, statistic = statistic, ...)
     } else {
-      total_tab <- tab(
-        total_data,
-        rows = {{ rows }},
-        cols = {{ cols }},
-        statistic = statistic,
-        ...
-      )
+      total_tab <- tab(data, rows = {{ rows }}, cols = {{ cols }}, 
+                       statistic = statistic, ...)
     }
-
-    result <- glue_tab(result, total_tab,
-                       direction = direction,
-                       sep = sep,
-                       prefix = total_name)
+    
+    # Insert total at the beginning or end based on direction
+    if (direction == "cols") {
+      result_tabs <- c(list(Total = total_tab), result_tabs)
+    } else {
+      result_tabs <- c(result_tabs, list(Total = total_tab))
+    }
   }
-
-  # Add metadata about how it was created
-  attr(result, "multi_tab_by") <- rlang::as_label(by_quo)
-  attr(result, "multi_tab_groups") <- successful_groups
-  attr(result, "multi_tab_direction") <- direction
-
+  
+  # Combine using glue_tab()
+  if (length(result_tabs) == 1) {
+    result <- result_tabs[[1]]
+  } else {
+    # For the first tab, we need to apply its prefix manually since glue_tab
+    # only applies prefix to the second tab
+    result <- result_tabs[[1]]
+    first_name <- names(result_tabs)[1]
+    
+    # Apply prefix based on direction
+    if (!is.null(first_name) && nzchar(first_name)) {
+      if (direction == "cols") {
+        # Prefix column labels
+        old_col_labels <- result$layout$col_labels
+        result$layout$col_labels <- paste0(first_name, sep, old_col_labels)
+      } else {
+        # direction == "rows" - prefix row labels
+        old_row_labels <- result$layout$row_labels
+        result$layout$row_labels <- paste0(first_name, sep, old_row_labels)
+      }
+    }
+    
+    # Now glue with remaining tabs
+    for (i in 2:length(result_tabs)) {
+      result <- glue_tab(result, result_tabs[[i]], 
+                         direction = direction, 
+                         sep = sep,
+                         prefix = names(result_tabs)[i])
+    }
+  }
+  
+  # Add metadata
+  attr(result, "multi_tab_groups") <- names(groups)
+  
   return(result)
-}
-
-# Include the parse_by_parameter function from earlier implementation
-# (This is already defined in the tab_glue_flexible_by artifact)
-
-# Also include validate_filter_expression
-validate_filter_expression <- function(expr, data) {
-  # Check that all variables referenced in the expression exist in data
-  vars_in_expr <- all.vars(expr)
-  missing_vars <- setdiff(vars_in_expr, names(data))
-
-  if (length(missing_vars) > 0) {
-    stop("Variables not found in data: ", paste(missing_vars, collapse = ", "))
-  }
-
-  invisible(TRUE)
 }
 
 # Convenience wrappers
@@ -4769,8 +1377,6 @@ multi_tab_rows <- function(data, rows, cols = NULL, by, ...) {
               by = {{ by }}, direction = "rows", ...)
   }
 }
-
-# Helper functions for multi_tab
 
 #' Parse the flexible 'by' parameter into named filter expressions
 #'
@@ -4935,782 +1541,4 @@ create_groups_from_values <- function(var_name, values, data, dpdict = NULL) {
   }
 
   return(groups)
-}
-
-#' Validate that filter expression references valid variables
-#' @keywords internal
-validate_filter_expression <- function(expr, data) {
-  # Check that all variables referenced in the expression exist in data
-  vars_in_expr <- all.vars(expr)
-  missing_vars <- setdiff(vars_in_expr, names(data))
-
-  if (length(missing_vars) > 0) {
-    stop("Variables not found in data: ", paste(missing_vars, collapse = ", "))
-  }
-
-  invisible(TRUE)
-}
-
-#' Sort rows and/or columns of a tab result
-#'
-#' Re-orders the rows and/or columns of a **`tab_result`** produced by
-#' [tab()], while always keeping the automatically-generated **Base** and
-#' summary (**NET / Total / Avg**) rows / columns in their original
-#' positions.
-#'
-#' @param tab_result A **`tab_result`** object (the output of [tab()]).
-#' @param rows, cols  **Sorting instructions** for rows or columns.  Either
-#'   *`NULL`*   – leave the dimension unchanged – or **one** of the
-#'   following:
-#'
-#'   * **Character scalar / vector**
-#'     * `"label"` or `"row_label"` / `"col_label"` – alphabetical
-#'       (natural sort if `natural = TRUE` is later supplied).
-#'     * `"original"` – restore the order in which [tab()] created the
-#*       table.
-#'     * One or several *data-column names* – value-based sorting (ties are
-#'       broken by the subsequent names in the vector).
-#'
-#'   * **List of control fields** – full syntax for advanced options.
-#'     \describe{
-#'       \item{`by`}{(character) What to sort by. Same values as above.}
-#'       \item{`order`}{`"asc"` or `"desc"` (default is `"asc"` for
-#'         `by = "label"` / `"original"`, `"desc"` otherwise).}
-#'       \item{`custom_order`}{Character vector giving an explicit order
-#'         for labels.  Anything not listed drops to the end.}
-#'       \item{`natural`}{Logical; if `TRUE` use natural / “human”
-#'         ordering for labels (e.g. “Q2” < “Q10”). Default `FALSE`.}
-#'       \item{`na.last`}{Logical; keep `NA` values at the end (`TRUE`,
-#'         the default) or the front (`FALSE`).}
-#'       \item{`which`}{Subset of rows/columns to participate in the sort.
-#'         Can be numeric indices or labels/names.  All other
-#'         rows/columns keep their current relative order.}
-#'     }
-#'
-#' @param ...  (reserved for future use; currently ignored).
-#'
-#' @return A **`tab_result`** with the specified dimension(s) re-ordered.
-#'   All original attributes (arrays, base matrix, statistic descriptor,
-#'   etc.) are preserved so that subsequent calls to [sort_tab()],
-#'   significance tests, and printing continue to work.
-#'
-#' @examples
-#' tb <- tab(mydata, satisfaction, gender)
-#'
-#' # 1.  Simple value-based: largest NET first
-#' sort_tab(tb, rows = "NET")
-#'
-#' # 2.  Alphabetical (natural) on rows; reverse-alphabetical on cols
-#' sort_tab(tb,
-#'          rows = list(by = "label", natural = TRUE),
-#'          cols = list(by = "label", order = "desc"))
-#'
-#' # 3.  Custom label order
-#' sort_tab(tb,
-#'          rows = list(
-#'            by = "label",
-#'            custom_order = c("Very satisfied", "Satisfied", "Neutral",
-#'                             "Dissatisfied", "Very dissatisfied")))
-#'
-#' # 4.  Sort only the first three data rows, leave the rest untouched
-#' sort_tab(tb,
-#'          rows = list(by = "label",
-#'                      which = 1:3))
-#'
-#' # 5.  Undo all sorting
-#' sort_tab(tb, rows = "original", cols = "original")
-#'
-#' @export
-sort_tab <- function(tab_result, rows = NULL, cols = NULL, ...) {
-  if (!inherits(tab_result, "tab_result")) {
-    stop("Input must be a tab_result object")
-  }
-
-  # Sort rows if specified
-  if (!is.null(rows)) {
-    tab_result <- sort_tab_dimension(tab_result, rows, dimension = "rows")
-  }
-
-  # Sort columns if specified
-  if (!is.null(cols)) {
-    tab_result <- sort_tab_dimension(tab_result, cols, dimension = "cols")
-  }
-
-  return(tab_result)
-}
-
-#' Internal function to sort a single dimension (rows or cols)
-#' @keywords internal
-sort_tab_dimension <- function(tab_result, sort_spec, dimension = c("rows", "cols")) {
-  dimension <- match.arg(dimension)
-
-  # Parse the sorting specification
-  sort_config <- parse_sort_spec(sort_spec, tab_result, dimension)
-
-  if (dimension == "rows") {
-    # Get row information
-    n_rows <- nrow(tab_result)
-    all_indices <- seq_len(n_rows)
-
-    # Identify special rows to exclude from sorting
-    special_rows <- identify_special_rows(tab_result)
-    sortable_indices <- setdiff(all_indices, special_rows)
-
-    # Apply 'which' filter if specified
-      if (!is.null(sort_config$which)) {
-        if (is.character(sort_config$which)) {
-          hit <- match(sort_config$which, tab_result$row_label)
-          if (anyNA(hit)) {
-            stop("Unknown row label(s) in `which`: ",
-                 paste(sort_config$which[is.na(hit)], collapse = ", "))
-            }
-          sort_config$which <- hit
-          }
-        sortable_indices <- intersect(sortable_indices, sort_config$which)
-    }
-
-    # Handle different sorting methods
-    if (sort_config$by == "original") {
-      # Restore original order
-      original_order <- attr(tab_result, "original_row_order")
-      if (is.null(original_order)) {
-        warning("No original row order stored. Returning unchanged.")
-        return(tab_result)
-      }
-      if (is.character(original_order)) {
-        # Map original labels → current positions
-        new_order <- match(original_order, tab_result$row_label)
-        # drop any rows that no longer exist (just in case)
-        new_order <- new_order[!is.na(new_order)]
-        } else {
-          new_order <- original_order
-        }
-    } else if (sort_config$by == "label") {
-      # Sort by row labels
-      labels_to_sort <- tab_result$row_label[sortable_indices]
-
-      if (!is.null(sort_config$custom_order)) {
-        # Custom ordering
-        new_order_within <- match(labels_to_sort, sort_config$custom_order)
-        # Put unmatched items at the end
-        new_order_within[is.na(new_order_within)] <- length(sort_config$custom_order) +
-          seq_len(sum(is.na(new_order_within)))
-      } else if (sort_config$natural) {
-        # Natural sorting
-        new_order_within <- natural_order(labels_to_sort,
-                                          decreasing = sort_config$order == "desc",
-                                          na.last = sort_config$na.last)
-      } else {
-        # Standard alphabetical sorting
-        new_order_within <- order(labels_to_sort,
-                                  decreasing = sort_config$order == "desc",
-                                  na.last = sort_config$na.last)
-      }
-
-      # Construct full order preserving special rows
-      new_order <- all_indices
-      new_order[sortable_indices] <- sortable_indices[new_order_within]
-    } else {
-      # Sort by column values
-      sort_values <- extract_sort_values_rows(tab_result, sort_config$by, sortable_indices)
-
-      # Get sort order
-      new_order_within <- do.call(order, c(
-        sort_values,
-        list(decreasing = sort_config$order == "desc", na.last = sort_config$na.last)
-      ))
-
-      # Construct full order preserving special rows
-      new_order <- all_indices
-      new_order[sortable_indices] <- sortable_indices[new_order_within]
-    }
-
-    # Apply the reordering
-    tab_result <- reorder_rows(tab_result, new_order)
-
-  } else {  # dimension == "cols"
-    # Get column information
-    col_names <- names(tab_result)[-1]  # Exclude row_label column
-    n_cols <- length(col_names)
-    all_indices <- seq_len(n_cols)
-
-    # Identify special columns to exclude from sorting
-    special_cols <- identify_special_cols(tab_result, col_names)
-    sortable_indices <- setdiff(all_indices, special_cols)
-
-    # Apply 'which' filter if specified
-    if (!is.null(sort_config$which)) {
-      if (!is.null(sort_config$which)) {
-        if (is.character(sort_config$which)) {
-          hit <- match(sort_config$which, tab_result$row_label)
-          if (anyNA(hit)) {
-            stop("Unknown row label(s) in `which`: ",
-                 paste(sort_config$which[is.na(hit)], collapse = ", "))
-          }
-          sort_config$which <- hit
-        }
-        sortable_indices <- intersect(sortable_indices, sort_config$which)
-      }
-    }
-
-    # Handle different sorting methods
-    if (sort_config$by == "original") {
-      # Restore original order
-      original_order <- attr(tab_result, "original_col_order")
-      if (is.null(original_order)) {
-        warning("No original column order stored. Returning unchanged.")
-        return(tab_result)
-      }
-      if (is.character(original_order)) {
-        new_order <- match(original_order, col_names)
-        new_order <- new_order[!is.na(new_order)]
-      } else {
-        new_order <- original_order
-      }
-    } else if (sort_config$by == "label") {
-      # Sort by column names
-      labels_to_sort <- col_names[sortable_indices]
-
-      if (!is.null(sort_config$custom_order)) {
-        # Custom ordering
-        new_order_within <- match(labels_to_sort, sort_config$custom_order)
-        # Put unmatched items at the end
-        new_order_within[is.na(new_order_within)] <- length(sort_config$custom_order) +
-          seq_len(sum(is.na(new_order_within)))
-      } else if (sort_config$natural) {
-        # Natural sorting
-        new_order_within <- natural_order(labels_to_sort,
-                                          decreasing = sort_config$order == "desc",
-                                          na.last = sort_config$na.last)
-      } else {
-        # Standard alphabetical sorting
-        new_order_within <- order(labels_to_sort,
-                                  decreasing = sort_config$order == "desc",
-                                  na.last = sort_config$na.last)
-      }
-
-      # Construct full order preserving special columns
-      new_order <- all_indices
-      new_order[sortable_indices] <- sortable_indices[new_order_within]
-    } else {
-      # Sort by row values
-      sort_values <- extract_sort_values_cols(tab_result, sort_config$by,
-                                              sortable_indices, col_names)
-
-      # Get sort order
-      new_order_within <- do.call(order, c(
-        sort_values,
-        list(decreasing = sort_config$order == "desc", na.last = sort_config$na.last)
-      ))
-
-      # Construct full order preserving special columns
-      new_order <- all_indices
-      new_order[sortable_indices] <- sortable_indices[new_order_within]
-    }
-
-    # Apply the reordering
-    tab_result <- reorder_cols(tab_result, new_order, col_names)
-  }
-
-  return(tab_result)
-}
-
-#' Parse sort specification into standardized format
-#' @keywords internal
-parse_sort_spec <- function(sort_spec, tab_result, dimension) {
-  # Default configuration
-  config <- list(
-    by = NULL,
-    order = NULL,
-    custom_order = NULL,
-    natural = FALSE,
-    na.last = TRUE,
-    which = NULL
-  )
-
-  if (is.list(sort_spec)) {
-    # Merge user config with defaults
-    config <- modifyList(config, sort_spec)
-  } else if (is.character(sort_spec)) {
-    config$by <- sort_spec
-  } else {
-    stop("Sort specification must be a character vector or list")
-  }
-
-  # Validate and set defaults
-  if (is.null(config$by) || length(config$by) == 0) {
-    stop("Must specify 'by' for sorting")
-  }
-
-  # Set default order based on what we're sorting by
-  if (is.null(config$order)) {
-    if (config$by[1] == "label" || config$by[1] == "original") {
-      config$order <- "asc"
-    } else {
-      config$order <- "desc"  # Default to descending for values
-    }
-  }
-
-  # Validate order
-  if (!config$order %in% c("asc", "desc")) {
-    stop("Order must be 'asc' or 'desc'")
-  }
-
-  # Validate column/row names if sorting by values
-  if (!config$by[1] %in% c("label", "original")) {
-    if (dimension == "rows") {
-      valid_cols <- names(tab_result)[-1]
-      invalid <- setdiff(config$by, valid_cols)
-      if (length(invalid) > 0) {
-        stop("Invalid column names for sorting: ", paste(invalid, collapse = ", "))
-      }
-    } else {
-      # For column sorting, we use row labels or indices
-      # This validation happens in extract_sort_values_cols
-    }
-  }
-
-  return(config)
-}
-
-#' Identify special rows (Base and summary rows)
-#' @keywords internal
-identify_special_rows <- function(tab_result) {
-  special <- integer(0)
-
-  # Get statistic info
-  stat <- attr(tab_result, "statistic")
-  if (is.character(stat)) {
-    stat_obj <- .tab_registry$stats[[stat]]
-  } else {
-    stat_obj <- stat
-  }
-
-  # Find Base row
-  base_label <- stat_obj$base_label
-  base_idx <- which(tab_result$row_label == base_label)
-  if (length(base_idx) > 0) special <- c(special, base_idx)
-
-  # Find summary row
-  summary_label <- attr(tab_result, "summary_row_label")
-  if (!is.null(summary_label)) {
-    summary_idx <- which(tab_result$row_label == summary_label)
-    if (length(summary_idx) > 0) special <- c(special, summary_idx)
-  }
-
-  return(unique(special))
-}
-
-#' Identify special columns (summary columns)
-#' @keywords internal
-identify_special_cols <- function(tab_result, col_names) {
-  special <- integer(0)
-
-  # Find summary column
-  summary_label <- attr(tab_result, "summary_col_label")
-  if (!is.null(summary_label)) {
-    summary_idx <- which(col_names == summary_label)
-    if (length(summary_idx) > 0) special <- c(special, summary_idx)
-  }
-
-  # Check for base column (if base_orientation is "row")
-  if (identical(attr(tab_result, "base_orientation"), "row")) {
-    stat <- attr(tab_result, "statistic")
-    if (is.character(stat)) {
-      base_label <- .tab_registry$stats[[stat]]$base_label
-    } else {
-      base_label <- stat$base_label
-    }
-    # Remove "(n)" suffix to match column name
-    base_col_name <- gsub(" \\(n\\)$", "", base_label)
-    base_idx <- which(col_names == base_col_name)
-    if (length(base_idx) > 0) special <- c(special, base_idx)
-  }
-
-  return(unique(special))
-}
-
-#' Extract values for sorting rows
-#' @keywords internal
-extract_sort_values_rows <- function(tab_result, by_cols, row_indices) {
-  sort_values <- list()
-
-  for (col in by_cols) {
-    vals <- tab_result[[col]][row_indices]
-    # Convert to numeric if possible (handles percent strings)
-    if (is.character(vals)) {
-      numeric_vals <- suppressWarnings(as.numeric(gsub("%", "", vals)))
-      if (!all(is.na(numeric_vals))) {
-        vals <- numeric_vals
-      }
-    }
-    sort_values[[length(sort_values) + 1]] <- vals
-  }
-
-  return(sort_values)
-}
-
-#' Extract values for sorting columns
-#' @keywords internal
-extract_sort_values_cols <- function(tab_result, by_rows, col_indices, col_names) {
-  sort_values <- list()
-
-  for (row_spec in by_rows) {
-    # Handle numeric row index or row label
-    if (is.numeric(row_spec)) {
-      row_idx <- row_spec
-    } else {
-      row_idx <- which(tab_result$row_label == row_spec)
-      if (length(row_idx) == 0) {
-        stop("Row '", row_spec, "' not found for column sorting")
-      }
-    }
-
-    # Extract values for this row across specified columns
-    vals <- unlist(tab_result[row_idx, col_names[col_indices] , drop = TRUE])
-
-    # Convert to numeric if possible
-    if (is.character(vals)) {
-      numeric_vals <- suppressWarnings(as.numeric(gsub("%", "", vals)))
-      if (!all(is.na(numeric_vals))) {
-        vals <- numeric_vals
-      }
-    }
-
-    sort_values[[length(sort_values) + 1]] <- vals
-  }
-
-  return(sort_values)
-}
-
-#' Natural ordering of character vectors
-#' @keywords internal
-natural_order <- function(x, decreasing = FALSE, na.last = TRUE) {
-  # Split strings into numeric and non-numeric parts
-  # This is a simplified version - could be enhanced with more sophisticated parsing
-
-  if (length(x) == 0) return(integer())
-
-  # Extract all numbers from each string
-  numbers <- lapply(x, function(s) {
-    if (is.na(s)) return(NA)
-    # Find all numeric sequences
-    nums <- regmatches(s, gregexpr("[0-9]+", s))[[1]]
-    if (length(nums) == 0) return(0)
-    as.numeric(nums)
-  })
-
-  # Extract non-numeric parts
-  text_parts <- lapply(x, function(s) {
-    if (is.na(s)) return(NA)
-    gsub("[0-9]+", "", s)
-  })
-
-  # Create sort matrix
-  # First sort by text part, then by first number, then second number, etc.
-  max_numbers <- max(sapply(numbers, length))
-
-  sort_mat <- matrix(NA, nrow = length(x), ncol = 1 + max_numbers)
-
-  # Text parts as first column (converted to factor for sorting)
-  sort_mat[, 1] <- as.numeric(factor(unlist(text_parts)))
-
-  # Numbers in subsequent columns
-  for (i in seq_along(x)) {
-    if (!is.na(numbers[[i]][1]) && length(numbers[[i]]) > 0) {
-      sort_mat[i, 2:(1 + length(numbers[[i]]))] <- numbers[[i]]
-    }
-  }
-
-  # Apply order
-  if (decreasing) {
-    ord <- do.call(order, c(as.data.frame(-sort_mat), list(na.last = na.last)))
-  } else {
-    ord <- do.call(order, c(as.data.frame(sort_mat), list(na.last = na.last)))
-  }
-
-  return(ord)
-}
-
-#' Reorder rows of tab_result
-#' @keywords internal
-reorder_rows <- function(tab_result, new_order) {
-
-  ## keep a copy of ALL attributes before sub-setting -------------
-  old_attr <- attributes(tab_result)
-
-  ## reorder the data.frame itself --------------------------------
-  tab_result <- tab_result[new_order, , drop = FALSE]
-  rownames(tab_result) <- NULL          # reset row names
-
-  ## restore attributes -------------------------------------------
-  keep <- setdiff(names(old_attr), c("names", "row.names", "class"))
-  for (nm in keep) attr(tab_result, nm) <- old_attr[[nm]]
-
-  ## update the few attributes whose dimensions changed -----------
-  # arrays
-  if (!is.null(old_attr$arrays) && !is.null(old_attr$arrays$row_arrays)) {
-    old_attr$arrays$row_arrays <- old_attr$arrays$row_arrays[new_order]
-    attr(tab_result, "arrays") <- old_attr$arrays
-  }
-
-  # base_matrix
-  bm <- old_attr$base_matrix
-  if (!is.null(bm) && nrow(bm) == length(new_order)) {
-    attr(tab_result, "base_matrix") <- bm[new_order, , drop = FALSE]
-  }
-
-  return(tab_result)
-}
-
-#' Reorder columns of tab_result
-#' @keywords internal
-reorder_cols <- function(tab_result, new_order, col_names) {
-
-  ## snapshot attributes first ------------------------------------
-  old_attr <- attributes(tab_result)
-
-  ## build new column order (row_label must stay first) -----------
-  tab_result <- tab_result[, c("row_label", col_names[new_order]), drop = FALSE]
-
-  ## restore attributes -------------------------------------------
-  keep <- setdiff(names(old_attr), c("names", "row.names", "class"))
-  for (nm in keep) attr(tab_result, nm) <- old_attr[[nm]]
-
-  ## update changed attributes ------------------------------------
-  # arrays
-  if (!is.null(old_attr$arrays) && !is.null(old_attr$arrays$col_arrays)) {
-    old_attr$arrays$col_arrays <- old_attr$arrays$col_arrays[new_order]
-    attr(tab_result, "arrays") <- old_attr$arrays
-  }
-
-  # base_matrix
-  bm <- old_attr$base_matrix
-  if (!is.null(bm) && ncol(bm) == length(new_order)) {
-    attr(tab_result, "base_matrix") <- bm[, new_order, drop = FALSE]
-  }
-
-  return(tab_result)
-}
-
-#' Store original order in tab_result
-#' @keywords internal
-store_original_order <- function(tab_result) {
-
-  # Only create these attributes once
-  if (is.null(attr(tab_result, "original_row_order"))) {
-    attr(tab_result, "original_row_order") <- tab_result$row_label
-  }
-  if (is.null(attr(tab_result, "original_col_order"))) {
-    # names() minus the first column ("row_label")
-    attr(tab_result, "original_col_order") <- names(tab_result)[-1]
-  }
-  tab_result
-}
-
-#' Add a column to tab results from a lookup table
-#'
-#' Enriches a tab_result object by adding values from a lookup table based on
-#' key matching. The new column is positioned directly after the key column.
-#' Supports optional transformations of keys and fuzzy partial matching.
-#'
-#' @param tab_result A tab_result object from the tab() function
-#' @param lookup_df A data frame containing the lookup table
-#' @param tab_key Character string naming the column in tab_result to use as key
-#' @param lookup_key Character string naming the column in lookup_df to match against
-#' @param lookup_value Character string naming the column in lookup_df with values to add
-#' @param new_col_name Character string for the name of the new column to add
-#' @param tab_transform Optional function to transform tab_key values before matching
-#' @param lookup_transform Optional function to transform lookup_key values before matching
-#' @param fuzzy Logical. If TRUE, uses partial string matching instead of exact matching
-#'
-#' @return A tab_result object with the new column added after the key column
-#' @export
-#'
-#' @examples
-#' \dontrun{
-#' # Example: Adding theme descriptions to a tab of theme tags
-#' themes_lookup <- data.frame(
-#'   theme_id = c("satisfaction", "wait_time", "staff_helpful"),
-#'   theme_description = c(
-#'     "Overall satisfaction with service",
-#'     "Wait time was reasonable",
-#'     "Staff were helpful and knowledgeable"
-#'   )
-#' )
-#'
-#' result <- data %>%
-#'   tab(theme_satisfaction, region) %>%
-#'   add_col_from_lookup(
-#'     themes_lookup,
-#'     "row_label",
-#'     "theme_id",
-#'     "theme_description",
-#'     "Theme"
-#'   ) %>%
-#'   copy_tab()  # Ready to paste with descriptions
-#'
-#' # With transformations to clean up keys
-#' result <- data %>%
-#'   tab(q1, q2) %>%
-#'   add_col_from_lookup(
-#'     labels_df,
-#'     "row_label",
-#'     "label_code",
-#'     "full_text",
-#'     "Question Text",
-#'     tab_transform = function(x) gsub("^Q1: ", "", x),
-#'     lookup_transform = toupper
-#'   )
-#'
-#' # With fuzzy matching for partial matches
-#' result <- data %>%
-#'   tab(categories, dept) %>%
-#'   add_col_from_lookup(
-#'     category_descriptions,
-#'     "row_label",
-#'     "category_pattern",
-#'     "long_description",
-#'     "Description",
-#'     fuzzy = TRUE
-#'   )
-#' }
-add_col_from_lookup <- function(tab_result,
-                                lookup_df,
-                                tab_key,
-                                lookup_key,
-                                lookup_value,
-                                new_col_name,
-                                tab_transform = NULL,
-                                lookup_transform = NULL,
-                                fuzzy = FALSE) {
-
-  # Input validation
-  if (!inherits(tab_result, "tab_result")) {
-    stop("First argument must be a tab_result object from the tab() function")
-  }
-
-  if (!is.data.frame(lookup_df)) {
-    stop("lookup_df must be a data frame")
-  }
-
-  if (!tab_key %in% names(tab_result)) {
-    stop("Column '", tab_key, "' not found in tab_result")
-  }
-
-  if (!lookup_key %in% names(lookup_df)) {
-    stop("Column '", lookup_key, "' not found in lookup_df")
-  }
-
-  if (!lookup_value %in% names(lookup_df)) {
-    stop("Column '", lookup_value, "' not found in lookup_df")
-  }
-
-  if (new_col_name %in% names(tab_result)) {
-    warning("Column '", new_col_name, "' already exists in tab_result and will be overwritten")
-  }
-
-  # Store original attributes
-  original_attrs <- attributes(tab_result)
-
-  # Extract the key values from tab_result
-  tab_keys <- tab_result[[tab_key]]
-
-  # Apply transformation to tab keys if provided
-  if (!is.null(tab_transform)) {
-    if (!is.function(tab_transform)) {
-      stop("tab_transform must be a function or NULL")
-    }
-    tab_keys_transformed <- tab_transform(tab_keys)
-  } else {
-    tab_keys_transformed <- tab_keys
-  }
-
-  # Extract lookup keys and values
-  lookup_keys <- lookup_df[[lookup_key]]
-  lookup_values <- lookup_df[[lookup_value]]
-
-  # Apply transformation to lookup keys if provided
-  if (!is.null(lookup_transform)) {
-    if (!is.function(lookup_transform)) {
-      stop("lookup_transform must be a function or NULL")
-    }
-    lookup_keys_transformed <- lookup_transform(lookup_keys)
-  } else {
-    lookup_keys_transformed <- lookup_keys
-  }
-
-  # Perform matching
-  if (!fuzzy) {
-    # Exact matching
-    match_indices <- match(tab_keys_transformed, lookup_keys_transformed)
-  } else {
-    # Fuzzy partial matching
-    match_indices <- integer(length(tab_keys_transformed))
-
-    for (i in seq_along(tab_keys_transformed)) {
-      if (is.na(tab_keys_transformed[i])) {
-        match_indices[i] <- NA_integer_
-        next
-      }
-
-      # Convert to character for string matching
-      key_str <- as.character(tab_keys_transformed[i])
-      lookup_strs <- as.character(lookup_keys_transformed)
-
-      # Find partial matches - check if tab key is contained in any lookup key
-      matches <- which(vapply(lookup_strs, function(lookup_str) {
-        if (is.na(lookup_str)) return(FALSE)
-        grepl(key_str, lookup_str, fixed = TRUE, ignore.case = FALSE)
-      }, logical(1)))
-
-      # If no matches, try reverse - check if any lookup key is contained in tab key
-      if (length(matches) == 0) {
-        matches <- which(vapply(lookup_strs, function(lookup_str) {
-          if (is.na(lookup_str)) return(FALSE)
-          grepl(lookup_str, key_str, fixed = TRUE, ignore.case = FALSE)
-        }, logical(1)))
-      }
-
-      if (length(matches) > 0) {
-        match_indices[i] <- matches[1]  # Take first match
-      } else {
-        match_indices[i] <- NA_integer_
-      }
-    }
-  }
-
-  # Extract matched values
-  new_column_values <- lookup_values[match_indices]
-
-  # Find position of key column
-  key_col_position <- which(names(tab_result) == tab_key)
-
-  # Build new data frame with column inserted after key column
-  if (key_col_position == ncol(tab_result)) {
-    # Key column is last column - append new column at the end
-    tab_result[[new_col_name]] <- new_column_values
-  } else {
-    # Insert after key column
-    before_cols <- names(tab_result)[1:key_col_position]
-    after_cols <- names(tab_result)[(key_col_position + 1):ncol(tab_result)]
-
-    # Reconstruct data frame with new column in correct position
-    new_df <- tab_result[, before_cols, drop = FALSE]
-    new_df[[new_col_name]] <- new_column_values
-    new_df[after_cols] <- tab_result[, after_cols, drop = FALSE]
-
-    tab_result <- new_df
-  }
-
-  # Restore all original attributes (except names which have changed)
-  attrs_to_restore <- setdiff(names(original_attrs), c("names", "row.names"))
-  for (attr_name in attrs_to_restore) {
-    attr(tab_result, attr_name) <- original_attrs[[attr_name]]
-  }
-
-  # Ensure class is preserved
-  class(tab_result) <- c("tab_result", "data.frame")
-
-  return(tab_result)
 }

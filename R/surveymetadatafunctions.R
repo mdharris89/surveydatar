@@ -315,11 +315,28 @@ check_seps <- function(temp_dat,
 
   # get variable names and labels
   var_names <- names(temp_dat)
-  var_labels <- sapply(temp_dat, function(x) attr(x, "label", exact = TRUE))
+  var_labels <- sapply(temp_dat, function(x) {
+    label <- attr(x, "label", exact = TRUE)
+    if (is.null(label) || length(label) == 0) NA_character_ else label
+  })
 
   # helper function that looks for specified seps at the end of a given regex pattern
   check_seps_from_regex <- function(vector_of_strings, regex_pattern = "^[A-Za-z]+[-_.,0-9A-Za-z]*[A-Za-z0-9]", seps_to_check = NULL) {
 
+    # Filter out NA values - they don't contain separator patterns
+    non_na_idx <- !is.na(vector_of_strings)
+    if (!any(non_na_idx)) {
+      # All NAs, no patterns to detect
+      return(list(
+        separators = character(0),
+        consistent = TRUE,
+        count = NA,
+        example = NA_character_))
+    }
+    
+    # Only process non-NA strings
+    vector_of_strings <- vector_of_strings[non_na_idx]
+    
     sep_regex <- paste0(regex_pattern, seps_to_check)
 
     # find which strings have recognisable prefixes
@@ -342,7 +359,7 @@ check_seps <- function(temp_dat,
     ending_seps <- sapply(sep_portions, function(portion) {
       # Find the separator pattern within the portion
       sep_match <- regexpr(seps_to_check, portion)
-      if(sep_match > 0) {
+      if(length(sep_match) > 0 && sep_match > 0) {
         substr(portion,
                sep_match,
                sep_match + attr(sep_match, "match.length") - 1)
@@ -409,7 +426,9 @@ check_seps <- function(temp_dat,
     # for each prefix separator found, remove everything up to and including it
     for(sep in prefix_patterns$separators) {
       labels_without_prefixes <- sapply(labels_without_prefixes, function(x) {
-        if(grepl(sep, x, fixed = TRUE)) {
+        if(is.na(x) || length(x) == 0 || !nzchar(x)) {
+          x
+        } else if(grepl(sep, x, fixed = TRUE)) {
           parts <- strsplit(x, sep, fixed = TRUE)[[1]]
           trimws(paste(parts[-1], collapse = sep), which = "left")
         } else {
@@ -530,14 +549,14 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
     var_name_seps_found = NA_character_,
     old_variable_labels = vapply(temp_dat, function(x) {
       label <- attr(x, "label", exact = TRUE)
-      if (is.null(label)) NA_character_ else label
+      if (is.null(label) || length(label) == 0) NA_character_ else label
     }, character(1)),
     prefix_seps_found = NA_character_,
     statement_seps_found = NA_character_,
     new_variable_names = names(temp_dat),
     new_variable_labels = vapply(temp_dat, function(x) {
       label <- attr(x, "label", exact = TRUE)
-      if (is.null(label)) NA_character_ else label
+      if (is.null(label) || length(label) == 0) NA_character_ else label
     }, character(1)),
     stringsAsFactors = FALSE
   )
@@ -562,7 +581,7 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
       sep_portion <- substr(x, match_starts, match_ends)
       matched_sep <- regexpr(seps_to_check, sep_portion)
       # swap in new sep
-      if(matched_sep > 0) {
+      if(length(matched_sep) > 0 && matched_sep > 0) {
         found_sep <- substr(sep_portion,
                             matched_sep,
                             matched_sep + attr(matched_sep, "match.length") - 1)
@@ -641,11 +660,11 @@ create_dict_with_metadata <- function(temp_dat, noisy = 0){
   missing_var_labels <- FALSE
   na_var_labels <- FALSE
   for (var_name in names(temp_dat)){
-    if (is.null(attr(temp_dat[[var_name]], "label", exact = TRUE))){
+    current_label <- attr(temp_dat[[var_name]], "label", exact = TRUE)
+    if (is.null(current_label) || length(current_label) == 0){
       attr(temp_dat[[var_name]], "label") <- var_name
       missing_var_labels <- TRUE
-    }
-    if (is.na(attr(temp_dat[[var_name]], "label", exact = TRUE))){
+    } else if (is.na(current_label)){
       attr(temp_dat[[var_name]], "label") <- var_name
       na_var_labels <- TRUE
     }
@@ -2622,7 +2641,7 @@ validate_dat_dpdict_alignment <- function(temp_dat, temp_dpdict, warn_only = FAL
     # Check variable labels alignment - detailed analysis
     dat_labels <- sapply(temp_dat, function(x) {
       label <- attr(x, "label", exact = TRUE)
-      if (is.null(label)) NA_character_ else label
+      if (is.null(label) || length(label) == 0) NA_character_ else label
     })
     dat_labels <- dat_labels[!is.na(dat_labels)]
 
@@ -2976,6 +2995,52 @@ validate_variable_names <- function(names, warn_only = FALSE) {
 
 ##### surveydata object definition #####
 
+#' Convert factors to haven_labelled
+#'
+#' Converts any factor columns in a data frame to haven_labelled numeric variables,
+#' extracting factor levels as value labels. This ensures consistency with how
+#' surveydatar handles categorical data throughout the package.
+#'
+#' @param dat A data frame
+#' @return Data frame with factors converted to haven_labelled
+#' @keywords internal
+convert_factors_to_labelled <- function(dat) {
+  for (var_name in names(dat)) {
+    var <- dat[[var_name]]
+    
+    if (is.factor(var)) {
+      # Preserve any existing variable label
+      var_label <- attr(var, "label")
+      
+      # Get factor levels
+      levs <- levels(var)
+      
+      # Convert factor to numeric indices (1, 2, 3, ...)
+      numeric_var <- as.numeric(var)
+      
+      # Create named numeric vector for value labels
+      # Format: c("Female" = 1, "Male" = 2, "Other" = 3)
+      value_labels <- setNames(seq_along(levs), levs)
+      
+      # Create haven_labelled variable
+      labelled_var <- haven::labelled(numeric_var, labels = value_labels)
+      
+      # Restore variable label if it existed
+      if (!is.null(var_label)) {
+        attr(labelled_var, "label") <- var_label
+      } else {
+        # Default to variable name if no label
+        attr(labelled_var, "label") <- var_name
+      }
+      
+      # Replace in data frame
+      dat[[var_name]] <- labelled_var
+    }
+  }
+  
+  dat
+}
+
 #' create_survey_data
 #'
 #' Creates a survey_data object, which combines survey data with its metadata.
@@ -2994,6 +3059,9 @@ create_survey_data <- function(dat, dpdict = NULL) {
   if (!is.data.frame(dat)) {
     stop("'dat' must be a data frame")
   }
+
+  # Convert any factors to haven_labelled for consistency
+  dat <- convert_factors_to_labelled(dat)
 
   # if dpdict is not provided, create it, standardise it, and add metadata
   if (is.null(dpdict)) {

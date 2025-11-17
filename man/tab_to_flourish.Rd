@@ -12,6 +12,7 @@ tab_to_flourish(
   strip_summary_cols = TRUE,
   table_settings = NULL,
   settings = NULL,
+  label_mode = "full",
   ...
 )
 }
@@ -89,5 +90,4 @@ with each column scaled from its minimum to maximum value.
 f_tab <- data \%>\% tab(q1, gender) \%>\% tab_to_flourish()
 f_tab                      # shows bindings + head(data)
 # flourishcharts::flourish(f_tab$data, f_tab$chart_type, bindings = f_tab$bindings)
-Main function remains clean and high-level
 }

@@ -1,7 +1,6 @@
 # no tests created for:
 # - datamap()
 # - datamap_questions()
-# TODO: might be nice to have a global 'noisy' parameter that applies consistently across all functions in the package
 
 # Test dat updating functions
 test_that("update_dat_from_dpdict works", {
@@ -1083,7 +1082,7 @@ test_that("mutate preserves value labels from spliced variables", {
   attr(original_dat$existing_var, "label") <- "Existing Variable"
   attr(original_dat$existing_var, "labels") <- c("No" = 1, "Yes" = 2)
 
-  survey_obj <- create_survey_data(original_dat)
+  survey_obj <- suppressWarnings(create_survey_data(original_dat))
 
   # Create a named list with value labels (like a1a_wide)
   new_vars_list <- list(
@@ -1099,8 +1098,8 @@ test_that("mutate preserves value labels from spliced variables", {
   attr(new_vars_list$new_var2, "labels") <- c("Bad" = 1, "Good" = 2)
 
   # Test the mutation with splicing
-  result <- survey_obj %>%
-    mutate(!!!new_vars_list)
+  result <- suppressWarnings(survey_obj %>%
+    mutate(!!!new_vars_list))
 
   # Check that new variables exist
   expect_true("new_var1" %in% names(result$dat))
@@ -1140,8 +1139,8 @@ test_that("mutate updates dpdict when transforming existing labeled variables", 
   expect_false(all(is.na(original_dpdict_labels)))
 
   # Use mutate to create a copy of csat (simple assignment that should preserve labels)
-  survey_obj <- survey_obj %>%
-    dplyr::mutate(csat_copy = csat)  # Simple assignment should preserve labels
+  survey_obj <- suppressWarnings(survey_obj %>%
+    dplyr::mutate(csat_copy = csat))  # Simple assignment should preserve labels
 
   # Check that value labels are preserved in the data
   copy_labels_in_data <- sjlabelled::get_labels(survey_obj$dat$csat_copy, attr.only = TRUE, values = "as.name")
@@ -1172,7 +1171,7 @@ test_that("left_join works for survey_data objects", {
     stringsAsFactors = FALSE
   )
   attr(survey2_dat$new_var, "label") <- "New Variable"
-  survey2 <- create_survey_data(survey2_dat)
+  survey2 <- suppressWarnings(create_survey_data(survey2_dat))
 
   result1 <- left_join(survey1, survey2, by = "uid")
 
@@ -1201,7 +1200,7 @@ test_that("left_join works for survey_data objects", {
     csat = 5:1  # Conflicts with existing csat
   )
   attr(survey3_dat$csat, "label") <- "Customer Satisfaction (New)"
-  survey3 <- create_survey_data(survey3_dat)
+  survey3 <- suppressWarnings(create_survey_data(survey3_dat))
 
   expect_message(
     result3 <- left_join(survey1, survey3, by = "uid"),
