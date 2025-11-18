@@ -24,7 +24,7 @@ copy_tab(
 
 \item{show_source}{Logical. If TRUE (default), includes footnote on source.}
 
-\item{label_mode}{How to display labels: "full", "suffix", "name", or "smart" (future implementation)}
+\item{label_mode}{How to display labels: "smart", "full", or "suffix"}
 }
 \value{
 Invisibly returns the formatted data that was copied

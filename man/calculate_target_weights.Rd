@@ -16,7 +16,7 @@ calculate_target_weights(
 \arguments{
 \item{n}{Sample size}
 
-\item{selection_probs}{Vector of selection probabilities (π_i)}
+\item{selection_probs}{Vector of selection probabilities (pi_i)}
 
 \item{alpha}{Bias correction emphasis (0 = no correction, 1 = full HT)}
 
@@ -30,5 +30,5 @@ calculate_target_weights(
 Vector of target weights
 }
 \description{
-Implements the alpha-blended objective: w_target_i = α·(1/π_i) + (1-α)·1
+Implements the alpha-blended objective: w_target_i = alpha*(1/pi_i) + (1-alpha)*1
 }

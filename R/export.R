@@ -1469,3 +1469,147 @@ extract_base_matrix <- function(tab_result) {
   
   base_matrix
 }
+
+#' View base matrix from tab result
+#'
+#' Extracts and displays the base (sample size) counts for each cell in a tab
+#' result. Returns a data.frame with dimensions matching the visible tab layout,
+#' showing raw base counts as numeric values. This function respects the current
+#' visibility settings (hidden rows and columns are excluded from the output).
+#'
+#' @param tab_result A tab_result object (either cell-based tab_cell_collection 
+#'   or materialized data.frame)
+#' @return A data.frame with a row_label column followed by data columns 
+#'   containing raw base counts (numeric values). The structure matches the 
+#'   visible layout of the tab result.
+#' @export
+#' @examples
+#' \dontrun{
+#' # Basic usage with cell-based result
+#' result <- tab(data, satisfaction, gender)
+#' bases <- view_base_matrix(result)
+#' 
+#' # Works with materialized results too
+#' result_df <- as.data.frame(result)
+#' bases <- view_base_matrix(result_df)
+#' 
+#' # Respects visibility - hidden rows/columns are excluded
+#' result <- tab(data, satisfaction, gender) %>%
+#'   hide_rows("Don't know") %>%
+#'   hide_cols("Prefer not to say")
+#' bases <- view_base_matrix(result)  # Excluded rows/cols won't appear
+#' 
+#' # With derived columns
+#' result <- tab(data, satisfaction, gender) %>%
+#'   derive(delta_vs("Male", "Female"))
+#' bases <- view_base_matrix(result)
+#' }
+view_base_matrix <- function(tab_result) {
+  # Validate input
+  if (!inherits(tab_result, "tab_result")) {
+    stop("view_base_matrix() requires a tab_result object")
+  }
+  
+  # Path 1: Cell-based tab_result (tab_cell_collection)
+  if (inherits(tab_result, "tab_cell_collection")) {
+    # Extract full base matrix from cells
+    base_matrix <- extract_base_matrix(tab_result)
+    
+    # Get row and column labels
+    row_labels <- tab_result$layout$row_labels
+    col_labels <- tab_result$layout$col_labels
+    
+    # Check for empty grid
+    if (is.null(base_matrix) || nrow(base_matrix) == 0 || ncol(base_matrix) == 0) {
+      # Return empty data.frame with proper structure
+      return(data.frame(row_label = character(0), stringsAsFactors = FALSE))
+    }
+    
+    # Determine which rows and columns are hidden
+    hidden_rows <- .get_hidden_row_indices(tab_result)
+    hidden_cols <- .get_hidden_col_indices(tab_result)
+    
+    # Filter base matrix to only visible rows and columns
+    if (length(hidden_rows) > 0) {
+      base_matrix <- base_matrix[-hidden_rows, , drop = FALSE]
+      row_labels <- row_labels[-hidden_rows]
+    }
+    if (length(hidden_cols) > 0) {
+      base_matrix <- base_matrix[, -hidden_cols, drop = FALSE]
+      col_labels <- col_labels[-hidden_cols]
+    }
+    
+    # Convert to data.frame with proper structure
+    df <- as.data.frame(base_matrix, stringsAsFactors = FALSE)
+    
+    # Add row_label column at the beginning
+    df <- cbind(
+      data.frame(row_label = row_labels, stringsAsFactors = FALSE),
+      df
+    )
+    
+    # Set column names (skip first column which is row_label)
+    names(df)[-1] <- col_labels
+    
+    # Remove row names
+    rownames(df) <- NULL
+    
+    return(df)
+  }
+  
+  # Path 2: Materialized data.frame tab_result
+  if (inherits(tab_result, "data.frame")) {
+    # Try to extract base_matrix attribute
+    base_matrix <- attr(tab_result, "base_matrix")
+    
+    if (is.null(base_matrix)) {
+      stop("Cannot extract base matrix: tab_result does not have a 'base_matrix' attribute. ",
+           "This may occur if the result was created with an older version of surveydatar.")
+    }
+    
+    # Get row labels from the data.frame
+    row_labels <- tab_result$row_label
+    
+    # Get column names (excluding row_label)
+    col_names <- names(tab_result)[-1]
+    
+    # Check dimensions match
+    if (nrow(base_matrix) != length(row_labels)) {
+      warning("Base matrix rows (", nrow(base_matrix), ") don't match data rows (", 
+              length(row_labels), "). Using available data.")
+      # Adjust to minimum size
+      min_rows <- min(nrow(base_matrix), length(row_labels))
+      base_matrix <- base_matrix[1:min_rows, , drop = FALSE]
+      row_labels <- row_labels[1:min_rows]
+    }
+    
+    if (ncol(base_matrix) != length(col_names)) {
+      warning("Base matrix columns (", ncol(base_matrix), ") don't match data columns (", 
+              length(col_names), "). Using available data.")
+      # Adjust to minimum size
+      min_cols <- min(ncol(base_matrix), length(col_names))
+      base_matrix <- base_matrix[, 1:min_cols, drop = FALSE]
+      col_names <- col_names[1:min_cols]
+    }
+    
+    # Convert to data.frame
+    df <- as.data.frame(base_matrix, stringsAsFactors = FALSE)
+    
+    # Add row_label column at the beginning
+    df <- cbind(
+      data.frame(row_label = row_labels, stringsAsFactors = FALSE),
+      df
+    )
+    
+    # Set column names (skip first column which is row_label)
+    names(df)[-1] <- col_names
+    
+    # Remove row names
+    rownames(df) <- NULL
+    
+    return(df)
+  }
+  
+  # Should not reach here, but just in case
+  stop("Unexpected tab_result structure")
+}

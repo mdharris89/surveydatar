@@ -22,6 +22,30 @@ Layout object with expanded grid
 }
 \description{
 When multiple cells qualify for the same grid position, expand the grid
-by duplicating rows or columns. Deep-copies layout_defs for new positions.
+by duplicating rows or columns. This creates sub-positions to accommodate
+all qualifying cells without data loss.
+}
+\details{
+\strong{Collision Expansion Semantics:}
+\itemize{
+\item \strong{Row-only collisions}: When multiple cells match a single row position
+(but each has a unique column), the row is expanded into sub-rows labeled
+"RowName \link{1}", "RowName \link{2}", etc. Each sub-row gets one of the colliding cells.
+\item \strong{Column-only collisions}: When multiple cells match a single column position
+(but each has a unique row), the column is expanded into sub-columns labeled
+"ColName \link{1}", "ColName \link{2}", etc.
+\item \strong{Simultaneous row and column collisions}: When both dimensions have collisions
+at the same position, both are expanded. The cell assignment uses the row
+sub-index as the primary selector. This case is rare and typically indicates
+ambiguous layout specifications.
+}
+
+\strong{Implementation Details:}
+\itemize{
+\item Each expanded position gets a deep copy of the original layout_def
+\item A \code{sub_index} field is added to track which sub-position each def represents
+\item The original label is appended with " \link{N}" where N is the sub-index
+\item Empty sub-positions (NA) may occur if collision counts vary across dimensions
+}
 }
 \keyword{internal}

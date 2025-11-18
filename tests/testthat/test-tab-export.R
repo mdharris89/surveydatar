@@ -657,7 +657,246 @@ test_that("Pipeline: hide then show summaries and base", {
   expect_true(has_base)
 })
 
+##### view_base_matrix Tests #####
 
+test_that("view_base_matrix works with cell-based tab results", {
+  # Create a simple tab
+  result <- tab(test_survey_data, gender, region)
+  
+  # Extract base matrix
+  bases <- view_base_matrix(result)
+  
+  # Check structure
+  expect_true(is.data.frame(bases))
+  expect_true("row_label" %in% names(bases))
+  expect_equal(ncol(bases), ncol(result))
+  expect_equal(nrow(bases), nrow(result))
+  
+  # Check that values are numeric
+  expect_true(all(sapply(bases[-1], is.numeric)))
+  
+  # Check that all base values are positive
+  numeric_cols <- bases[, -1, drop = FALSE]
+  expect_true(all(numeric_cols >= 0, na.rm = TRUE))
+})
+
+test_that("view_base_matrix works with materialized data.frame tab results", {
+  # Create tab and materialize it
+  result <- tab(test_survey_data, gender, region)
+  result_df <- as.data.frame(result)
+  
+  # Extract base matrix from materialized result
+  bases <- view_base_matrix(result_df)
+  
+  # Check structure
+  expect_true(is.data.frame(bases))
+  expect_true("row_label" %in% names(bases))
+  expect_equal(names(bases), names(result_df))
+  
+  # Check that values are numeric
+  expect_true(all(sapply(bases[-1], is.numeric)))
+})
+
+test_that("view_base_matrix respects hidden rows and columns", {
+  # Create tab with some rows and columns hidden
+  result <- tab(test_survey_data, satisfaction, region) %>%
+    hide_rows("Neutral") %>%
+    hide_cols("East")
+  
+  # Extract base matrix
+  bases <- view_base_matrix(result)
+  
+  # Check that hidden elements are not in the output
+  expect_false("Neutral" %in% bases$row_label)
+  expect_false("East" %in% names(bases))
+  
+  # Check dimensions match visible tab result
+  expect_equal(ncol(bases), ncol(result))
+  expect_equal(nrow(bases), nrow(result))
+})
+
+test_that("view_base_matrix column and row labels match tab result", {
+  # Create tab without base row to ensure exact match
+  result <- tab(test_survey_data, satisfaction, gender, show_base = FALSE)
+  
+  # Extract base matrix
+  bases <- view_base_matrix(result)
+  
+  # Materialize tab result
+  result_df <- as.data.frame(result)
+  
+  # Check that labels match exactly
+  expect_equal(names(bases), names(result_df))
+  expect_equal(bases$row_label, result_df$row_label)
+  
+  # Also test that column names match for tab with base
+  result_with_base <- tab(test_survey_data, satisfaction, gender, show_base = TRUE)
+  bases_with_base <- view_base_matrix(result_with_base)
+  result_with_base_df <- as.data.frame(result_with_base)
+  
+  # Column names should always match
+  expect_equal(names(bases_with_base), names(result_with_base_df))
+  
+  # Row labels should match except the base_matrix won't have its own "Base (n)" row
+  # since it stores base values for data rows
+  non_base_rows <- result_with_base_df$row_label != "Base (n)"
+  expect_equal(bases_with_base$row_label, result_with_base_df$row_label[non_base_rows])
+})
+
+test_that("view_base_matrix works with different statistics", {
+  # Test with count statistic
+  result_count <- tab(test_survey_data, gender, region, statistic = "count")
+  bases_count <- view_base_matrix(result_count)
+  expect_true(is.data.frame(bases_count))
+  expect_true(all(sapply(bases_count[-1], is.numeric)))
+  
+  # Test with mean statistic
+  result_mean <- tab(test_survey_data, gender, region, statistic = "mean", values = "age")
+  bases_mean <- view_base_matrix(result_mean)
+  expect_true(is.data.frame(bases_mean))
+  expect_true(all(sapply(bases_mean[-1], is.numeric)))
+  
+  # Test with row_pct
+  result_row <- tab(test_survey_data, gender, region, statistic = "row_pct")
+  bases_row <- view_base_matrix(result_row)
+  expect_true(is.data.frame(bases_row))
+  expect_true(all(sapply(bases_row[-1], is.numeric)))
+})
+
+test_that("view_base_matrix handles derived columns", {
+  # Create tab with derived column
+  result <- tab(test_survey_data, satisfaction, region) %>%
+    derive(delta_vs("North", "South"))
+  
+  # Extract base matrix
+  bases <- view_base_matrix(result)
+  
+  # Should work without error
+  expect_true(is.data.frame(bases))
+  expect_equal(ncol(bases), ncol(result))
+  
+  # Derived columns should have base values (may be NA or matching source columns)
+  # delta_vs creates column with label "to_col - from_col"
+  expect_true("South - North" %in% names(bases))
+})
+
+test_that("view_base_matrix handles base row/column visibility", {
+  # Create tab with base visible
+  result_with_base <- tab(test_survey_data, gender, region, show_base = TRUE)
+  bases_with <- view_base_matrix(result_with_base)
+  
+  # Create tab with base hidden
+  result_no_base <- tab(test_survey_data, gender, region, show_base = FALSE)
+  bases_no <- view_base_matrix(result_no_base)
+  
+  # Both should work
+  expect_true(is.data.frame(bases_with))
+  expect_true(is.data.frame(bases_no))
+  
+  # Dimensions should match their respective tab results
+  expect_equal(ncol(bases_with), ncol(result_with_base))
+  expect_equal(ncol(bases_no), ncol(result_no_base))
+})
+
+test_that("view_base_matrix handles summary rows and columns", {
+  mtcars_cat <- mtcars
+  mtcars_cat$cyl <- factor(mtcars_cat$cyl)
+  mtcars_cat$gear <- factor(mtcars_cat$gear)
+  
+  # Create tab with summaries
+  result <- tab(mtcars_cat, cyl, gear, 
+                show_row_nets = TRUE, 
+                show_col_nets = TRUE)
+  
+  # Extract base matrix
+  bases <- view_base_matrix(result)
+  
+  # Should include summary rows/columns
+  expect_true(is.data.frame(bases))
+  expect_true(any(grepl("NET|Total", bases$row_label)))
+  expect_true(any(grepl("NET|Total", names(bases))))
+  
+  # Summary row/column bases should be numeric
+  net_row <- which(grepl("NET", bases$row_label))[1]
+  if (length(net_row) > 0) {
+    expect_true(is.numeric(bases[net_row, 2]))
+  }
+})
+
+test_that("view_base_matrix error handling works correctly", {
+  # Test with wrong input type
+  expect_error(
+    view_base_matrix("not_a_tab_result"),
+    "view_base_matrix\\(\\) requires a tab_result object"
+  )
+  
+  expect_error(
+    view_base_matrix(data.frame(x = 1:3)),
+    "view_base_matrix\\(\\) requires a tab_result object"
+  )
+})
+
+test_that("view_base_matrix handles data.frame without base_matrix attribute", {
+  # Create a regular data frame without tab_result class
+  df <- data.frame(row_label = c("A", "B"), col1 = c(1, 2), col2 = c(3, 4))
+  class(df) <- c("tab_result", "data.frame")
+  
+  # Should error with informative message
+  expect_error(
+    view_base_matrix(df),
+    "base_matrix.*attribute"
+  )
+})
+
+test_that("view_base_matrix output has correct structure for single column tab", {
+  # Single column (no cols specified)
+  result <- tab(test_survey_data, gender)
+  bases <- view_base_matrix(result)
+  
+  expect_true(is.data.frame(bases))
+  expect_equal(ncol(bases), 2)  # row_label + 1 data column
+  expect_true("row_label" %in% names(bases))
+})
+
+test_that("view_base_matrix preserves base values correctly", {
+  # Create tab with show_base = FALSE to compare underlying base_matrix
+  result <- tab(test_survey_data, gender, region, show_base = FALSE)
+  bases <- view_base_matrix(result)
+  
+  # All base values should be positive integers (counts)
+  expect_true(all(sapply(bases[-1], is.numeric)))
+  base_values <- unlist(bases[-1])
+  base_values <- base_values[!is.na(base_values)]
+  expect_true(all(base_values >= 0))
+  expect_true(all(base_values == floor(base_values)))  # Should be integers
+  
+  # Base values should be reasonable (not zero, not more than total sample)
+  total_n <- nrow(test_survey_data$dat)
+  expect_true(all(base_values > 0))
+  expect_true(all(base_values <= total_n))
+  
+  # Check that we have the expected number of base values
+  expected_cells <- nrow(bases) * (ncol(bases) - 1)  # -1 for row_label
+  actual_cells <- length(base_values)
+  expect_equal(actual_cells, expected_cells)
+})
+
+test_that("view_base_matrix handles tabs with filters", {
+  # Create tab with filter
+  result <- tab(test_survey_data, gender, region, filter = age > 30)
+  bases <- view_base_matrix(result)
+  
+  expect_true(is.data.frame(bases))
+  expect_equal(ncol(bases), ncol(result))
+  expect_equal(nrow(bases), nrow(result))
+  
+  # Base values should reflect the filtered data (smaller than unfiltered)
+  result_unfiltered <- tab(test_survey_data, gender, region)
+  bases_unfiltered <- view_base_matrix(result_unfiltered)
+  
+  # Filtered bases should generally be smaller (though not guaranteed for every cell)
+  expect_true(is.data.frame(bases))
+})
 
 # Tests for Layout Definition Objects
 

@@ -4,12 +4,14 @@
 \alias{row_def_matches_expression}
 \title{Check if row_def matches an expression}
 \usage{
-row_def_matches_expression(row_def, expr)
+row_def_matches_expression(row_def, expr, row_dsl = NULL)
 }
 \arguments{
 \item{row_def}{A layout_def object}
 
 \item{expr}{Expression to check}
+
+\item{row_dsl}{Optional DSL object from cell's specification (for pivoted grids)}
 }
 \value{
 Logical

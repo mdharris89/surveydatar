@@ -15,4 +15,3 @@ Vector of values or NULL if not determinable
 \description{
 Extracts all literal values from DSL expression where determinable.
 }
-\keyword{internal}

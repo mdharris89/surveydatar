@@ -4,12 +4,12 @@
 \alias{print.tab_result}
 \title{Print method for tab_result}
 \usage{
-\method{print}{tab_result}(x, label_mode = "full", ...)
+\method{print}{tab_result}(x, label_mode = "smart", ...)
 }
 \arguments{
 \item{x}{A tab_result object}
 
-\item{label_mode}{How to display labels: "full", "suffix", "name", or "smart" (future implementation)}
+\item{label_mode}{How to display labels: "smart", "full", or "suffix"}
 
 \item{...}{Additional arguments (unused)}
 }

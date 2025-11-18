@@ -28,8 +28,22 @@ column name, or column index}
 \item{name}{Optional name for this comparison (defaults to versus value)}
 }
 \value{
-The tab_result with significance testing added
+The tab_result (tab_cell_collection) with significance attached to cells
 }
 \description{
-Add significance testing to a tab result
+Performs statistical significance testing on tab results. Significance is
+attached directly to individual cells in the tab_cell_collection, preserving
+the cell-based pipeline without requiring materialization.
 }
+\section{Cell-Based Significance}{
+
+add_sig() attaches significance metadata directly to individual cells without
+materializing to data.frame. This enables true pipeline continuity:
+
+\code{tab(data, q1, gender) \%>\% add_sig() \%>\% hide_rows("Don't know")}
+
+Significance is preserved through derive operations and can be materialized
+later using as.data.frame(). Multiple significance tests can be added by
+calling add_sig() multiple times with different names.
+}
+
