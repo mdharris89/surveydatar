@@ -822,55 +822,6 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   return(result)
 }
 
-#' Build explicit grid layout from cell store and specifications
-#'
-#' @param store Cell store object
-#' @param row_specs List of row specifications from expand stage
-#' @param col_specs List of column specifications from expand stage
-#' @return Layout list with grid, labels, and specifications
-#' @keywords internal
-build_explicit_grid_layout <- function(store, row_specs, col_specs) {
-  n_rows <- length(row_specs)
-  n_cols <- length(col_specs)
-  grid <- matrix(NA_character_, n_rows, n_cols)
-  
-  # Get all cells
-  all_cell_ids <- all_cell_ids(store)
-  all_cells <- get_cells(store, all_cell_ids)
-  
-  # Match cells to grid positions by exact specification
-  for (i in seq_along(row_specs)) {
-    row_spec <- row_specs[[i]]
-    
-    for (j in seq_along(col_specs)) {
-      col_spec <- col_specs[[j]]
-      
-      # Find cell with matching row and col specifications
-      matching_cell <- Find(function(cell) {
-        row_match <- specs_equal(cell$specification$row_expr, row_spec$expr)
-        col_match <- specs_equal(cell$specification$col_expr, col_spec$expr)
-        row_match && col_match
-      }, all_cells)
-      
-      if (!is.null(matching_cell)) {
-        grid[i, j] <- matching_cell$cell_id
-      }
-      
-      # If multiple cells match, Find() returns first (TO DO: better handling of this)
-    }
-  }
-  
-  # Extract labels from specifications
-  row_labels <- sapply(row_specs, function(spec) spec$label %||% "")
-  col_labels <- sapply(col_specs, function(spec) spec$label %||% "")
-  
-  list(
-    type = "explicit_grid",
-    grid = grid,
-    row_labels = row_labels,
-    col_labels = col_labels
-  )
-}
 
 #' Filter layout grid based on low base thresholds
 #' @param layout Layout list with grid, row_labels, col_labels, etc
@@ -909,25 +860,59 @@ filter_low_base_cells <- function(layout, store, threshold) {
   # Check for all-NA columns
   all_na_cols <- apply(grid, 2, function(col) all(is.na(col)))
   
-  # Remove all-NA rows (except special rows like Base)
+  # Remove all-NA rows (except summary rows like Base, Total, NET)
   if (any(all_na_rows)) {
-    # Identify special rows (Base, Total, NET) - keep these even if NA
-    special_rows <- grepl("^(Base|Total|NET)", layout$row_labels)
-    rows_to_keep <- !all_na_rows | special_rows
+    # Identify summary rows semantically using layout_def matchers if available
+    is_summary_row <- logical(n_rows)
+    if (!is.null(layout$row_defs) && length(layout$row_defs) == n_rows) {
+      for (i in seq_along(layout$row_defs)) {
+        row_def <- layout$row_defs[[i]]
+        if (!is.null(row_def$is_summary_row_matcher)) {
+          # This row_def represents a summary position
+          is_summary_row[i] <- TRUE
+        }
+      }
+    } else if (!is.null(layout$has_summary_row) && isTRUE(layout$has_summary_row)) {
+      # Fallback: check if last row is summary (common pattern)
+      # This handles cases where row_defs aren't available or properly structured
+      is_summary_row[n_rows] <- TRUE
+    }
+    
+    # Keep rows that are not all-NA OR are summary rows
+    rows_to_keep <- !all_na_rows | is_summary_row
     
     if (!all(rows_to_keep)) {
       grid <- grid[rows_to_keep, , drop = FALSE]
       layout$row_labels <- layout$row_labels[rows_to_keep]
+      # Note: Do NOT modify row_defs here - they are definitional and maintained separately
     }
   }
   
-  # Remove all-NA columns
+  # Remove all-NA columns (except summary columns like Total, NET)
   if (any(all_na_cols)) {
-    cols_to_keep <- !all_na_cols
+    # Identify summary columns semantically using layout_def matchers if available
+    is_summary_col <- logical(n_cols)
+    if (!is.null(layout$col_defs) && length(layout$col_defs) == n_cols) {
+      for (j in seq_along(layout$col_defs)) {
+        col_def <- layout$col_defs[[j]]
+        if (!is.null(col_def$is_summary_col_matcher)) {
+          # This col_def represents a summary position
+          is_summary_col[j] <- TRUE
+        }
+      }
+    } else if (!is.null(layout$has_summary_col) && isTRUE(layout$has_summary_col)) {
+      # Fallback: check if last column is summary (common pattern)
+      # This handles cases where col_defs aren't available or properly structured
+      is_summary_col[n_cols] <- TRUE
+    }
+    
+    # Keep columns that are not all-NA OR are summary columns
+    cols_to_keep <- !all_na_cols | is_summary_col
     
     if (!all(cols_to_keep)) {
       grid <- grid[, cols_to_keep, drop = FALSE]
       layout$col_labels <- layout$col_labels[cols_to_keep]
+      # Note: Do NOT modify col_defs here - they are definitional and maintained separately
     }
   }
   

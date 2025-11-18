@@ -1421,6 +1421,7 @@ test_that("Z-test for proportions matches manual calculation", {
   result_prop <- tab(test_data, labelledordinal, labelledcategorical,
                      statistic = "column_pct")
   result_prop <- add_sig(result_prop, versus = "first_col", test = "z_test_proportions")
+  result_prop <- as.data.frame(result_prop)  # Materialize to extract significance
 
   # Manual calculation for "Very satisfied" (level 4) between North vs East
   north_satisfied <- sum(data_for_manual$labelledordinal == 4 &
@@ -1459,6 +1460,7 @@ test_that("T-test for means matches manual calculation", {
                       statistic = "mean",
                       values = "randomnumeric")
   result_means <- add_sig(result_means, versus = "first_col", test = "t_test")
+  result_means <- as.data.frame(result_means)  # Materialize to extract significance
 
   # Manual t-test calculation - compare North vs West for TRUE booleans
   north_values <- data_for_manual$randomnumeric[data_for_manual$labelledcategorical == 1 &
@@ -1492,6 +1494,7 @@ test_that("Chi-square test matches manual calculation", {
                     statistic = "count",
                     show_col_nets = FALSE)
   result_chi <- add_sig(result_chi, test = "chi_square")
+  result_chi <- as.data.frame(result_chi)  # Materialize to extract significance
 
   # Manual chi-square calculation
   cont_table <- table(data_for_manual$labelledordinal,
@@ -1523,6 +1526,7 @@ test_that("Mann-Whitney test matches manual calculation", {
                    statistic = "median",
                    values = "randomnumeric")
   result_mw <- add_sig(result_mw, test = "mann_whitney", versus = "first_col")
+  result_mw <- as.data.frame(result_mw)  # Materialize to extract significance
 
   # Manual Mann-Whitney calculation - North vs South for TRUE booleans
   north_values_mw <- data_for_manual$randomnumeric[data_for_manual$labelledcategorical == 1 &
@@ -1553,6 +1557,7 @@ test_that("Multiple comparison adjustments work correctly", {
                           statistic = "column_pct")
   result_no_adjust <- add_sig(result_no_adjust, test = "z_test_proportions",
                               versus = "first_col", adjust = "none")
+  result_no_adjust <- as.data.frame(result_no_adjust)  # Materialize to extract significance
 
   # Extract raw p-values
   sig_no_adjust <- attr(result_no_adjust, "significance")
@@ -1564,6 +1569,7 @@ test_that("Multiple comparison adjustments work correctly", {
                      statistic = "column_pct")
   result_bonf <- add_sig(result_bonf, test = "z_test_proportions",
                          versus = "first_col", adjust = "bonferroni")
+  result_bonf <- as.data.frame(result_bonf)  # Materialize to extract significance
 
   sig_bonf <- attr(result_bonf, "significance")
   bonf_p_values <- as.vector(sig_bonf[[1]]$p_values[, -1])
@@ -1579,6 +1585,7 @@ test_that("Multiple comparison adjustments work correctly", {
                    statistic = "column_pct")
   result_bh <- add_sig(result_bh, test = "z_test_proportions",
                        versus = "first_col", adjust = "BH")
+  result_bh <- as.data.frame(result_bh)  # Materialize to extract significance
 
   sig_bh <- attr(result_bh, "significance")
   bh_p_values <- as.vector(sig_bh[[1]]$p_values[, -1])
@@ -1626,6 +1633,7 @@ test_that("Custom significance test works correctly", {
   result_practical <- tab(test_data, labelledordinal, labelledcategorical,
                           statistic = "column_pct")
   result_practical <- add_sig(result_practical, test = "practical_sig", versus = "first_col")
+  result_practical <- as.data.frame(result_practical)  # Materialize to extract significance
 
   # Manual verification for "Very satisfied" between North vs East
   north_satisfied <- sum(data_for_manual$labelledordinal == 4 &
@@ -1661,6 +1669,7 @@ test_that("Weighted z-test matches manual calculation", {
                          weight = "weight_var",
                          statistic = "column_pct")
   result_weighted <- add_sig(result_weighted, test = "z_test_weighted", versus = "first_col")
+  result_weighted <- as.data.frame(result_weighted)  # Materialize to extract significance
 
   weights <- test_data$weight_var
 
@@ -1719,6 +1728,7 @@ test_that("Weighted t-test matches manual calculation", {
                               statistic = "mean",
                               values = "randomnumeric")
   result_weighted_mean <- add_sig(result_weighted_mean, test = "t_test_weighted", versus = "first_col")
+  result_weighted_mean <- as.data.frame(result_weighted_mean)  # Materialize to extract significance
 
   weights <- test_data$weight_var
 
@@ -1793,12 +1803,14 @@ test_that("Weighted data produces different results than unweighted", {
   result_unweighted <- tab(test_data, labelledordinal, labelledcategorical,
                            statistic = "column_pct")
   result_unweighted <- add_sig(result_unweighted, test = "z_test_proportions", versus = "first_col")
+  result_unweighted <- as.data.frame(result_unweighted)  # Materialize to extract significance
 
   # Weighted
   result_weighted <- tab(test_data, labelledordinal, labelledcategorical,
                          weight = "weight_var",
                          statistic = "column_pct")
   result_weighted <- add_sig(result_weighted, test = "z_test_weighted", versus = "first_col")
+  result_weighted <- as.data.frame(result_weighted)  # Materialize to extract significance
 
   # Extract base sizes - they should be different
   unweighted_bases <- as.numeric(result_unweighted[nrow(result_unweighted), -1])

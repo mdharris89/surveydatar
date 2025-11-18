@@ -406,6 +406,11 @@ move_row <- function(tab_result, .which = NULL,
     # Extract row_def to move
     row_def <- tab_result$layout$row_defs[[row_idx]]
     
+    # Prevent moving summary rows
+    if (!is.null(row_def$is_summary_row_matcher)) {
+      stop("Cannot move summary rows. Summary rows must remain at the end of the table.")
+    }
+    
     # Remove from current position
     defs_without <- tab_result$layout$row_defs[-row_idx]
     
@@ -413,7 +418,13 @@ move_row <- function(tab_result, .which = NULL,
     if (.to == "top") {
       tab_result$layout$row_defs <- c(list(row_def), defs_without)
     } else if (.to == "bottom") {
-      tab_result$layout$row_defs <- c(defs_without, list(row_def))
+      # Partition defs into non-summary and summary
+      summary_mask <- sapply(defs_without, function(d) !is.null(d$is_summary_row_matcher))
+      non_summary_defs <- defs_without[!summary_mask]
+      summary_defs <- defs_without[summary_mask]
+      
+      # Insert moved row before summaries
+      tab_result$layout$row_defs <- c(non_summary_defs, list(row_def), summary_defs)
     } else if (.to %in% c("before", "after")) {
       # Handle before/after positions
       if (is.null(.reference)) {
@@ -554,6 +565,11 @@ move_col <- function(tab_result, .which = NULL,
     # Extract col_def to move
     col_def <- tab_result$layout$col_defs[[col_idx]]
     
+    # Prevent moving summary columns
+    if (!is.null(col_def$is_summary_col_matcher)) {
+      stop("Cannot move summary columns. Summary columns must remain at the end of the table.")
+    }
+    
     # Remove from current position
     defs_without <- tab_result$layout$col_defs[-col_idx]
     
@@ -561,7 +577,13 @@ move_col <- function(tab_result, .which = NULL,
     if (.to == "left") {
       tab_result$layout$col_defs <- c(list(col_def), defs_without)
     } else if (.to == "right") {
-      tab_result$layout$col_defs <- c(defs_without, list(col_def))
+      # Partition defs into non-summary and summary
+      summary_mask <- sapply(defs_without, function(d) !is.null(d$is_summary_col_matcher))
+      non_summary_defs <- defs_without[!summary_mask]
+      summary_defs <- defs_without[summary_mask]
+      
+      # Insert moved column before summaries
+      tab_result$layout$col_defs <- c(non_summary_defs, list(col_def), summary_defs)
     } else if (.to %in% c("before", "after")) {
       # Handle before/after positions
       if (is.null(.reference)) {
@@ -2347,18 +2369,21 @@ select_rows <- function(tab_result, ...,
       next
     }
     
-    # Extract unique row expressions from matched cells
-    matched_row_exprs <- unique(lapply(matching_cells, function(cell) {
-      cell$specification$row_expr
+    # Extract unique row expressions and DSLs from matched cells
+    matched_row_data <- unique(lapply(matching_cells, function(cell) {
+      list(
+        expr = cell$specification$row_expr,
+        dsl = cell$specification$dsl$row
+      )
     }))
     
     # Find which row_defs match these expressions
-    for (row_expr in matched_row_exprs) {
+    for (row_data in matched_row_data) {
       for (i in seq_along(tab_result$layout$row_defs)) {
         row_def <- tab_result$layout$row_defs[[i]]
         
-        # Check if this row_def matches the expression
-        if (row_def_matches_expression(row_def, row_expr)) {
+        # Check if this row_def matches the expression (with DSL for pivoted grids)
+        if (row_def_matches_expression(row_def, row_data$expr, row_data$dsl)) {
           selected_row_indices <- c(selected_row_indices, i)
           break
         }
@@ -2430,17 +2455,20 @@ select_cols <- function(tab_result, ...,
       next
     }
     
-    # Extract unique column expressions from matched cells
-    matched_col_exprs <- unique(lapply(matching_cells, function(cell) {
-      cell$specification$col_expr
+    # Extract unique column expressions and DSLs from matched cells
+    matched_col_data <- unique(lapply(matching_cells, function(cell) {
+      list(
+        expr = cell$specification$col_expr,
+        dsl = cell$specification$dsl$col
+      )
     }))
     
     # Find which col_defs match these expressions
-    for (col_expr in matched_col_exprs) {
+    for (col_data in matched_col_data) {
       for (j in seq_along(tab_result$layout$col_defs)) {
         col_def <- tab_result$layout$col_defs[[j]]
         
-        if (col_def_matches_expression(col_def, col_expr)) {
+        if (col_def_matches_expression(col_def, col_data$expr, col_data$dsl)) {
           selected_col_indices <- c(selected_col_indices, j)
           break
         }
@@ -2716,16 +2744,20 @@ find_matching_cells <- function(tab_result, criterion, match_type, dimension) {
 #'
 #' @param row_def A layout_def object
 #' @param expr Expression to check
+#' @param row_dsl Optional DSL object from cell's specification (for pivoted grids)
 #' @return Logical
 #' @keywords internal
-row_def_matches_expression <- function(row_def, expr) {
+row_def_matches_expression <- function(row_def, expr, row_dsl = NULL) {
   if (!is.null(row_def$row_expr_matcher)) {
     return(row_def$row_expr_matcher(expr))
   }
   
-  # For row_dsl_matcher (after pivot), try matching on row DSL
-  # This is more complex - for now, return FALSE
-  # Could be enhanced to handle pivoted grids better
+  # For row_dsl_matcher (after pivot), use DSL if provided
+  if (!is.null(row_def$row_dsl_matcher) && !is.null(row_dsl)) {
+    return(row_def$row_dsl_matcher(row_dsl))
+  }
+  
+  # No applicable matcher
   FALSE
 }
 
@@ -2733,13 +2765,20 @@ row_def_matches_expression <- function(row_def, expr) {
 #'
 #' @param col_def A layout_def object
 #' @param expr Expression to check
+#' @param col_dsl Optional DSL object from cell's specification (for pivoted grids)
 #' @return Logical
 #' @keywords internal
-col_def_matches_expression <- function(col_def, expr) {
+col_def_matches_expression <- function(col_def, expr, col_dsl = NULL) {
   if (!is.null(col_def$col_expr_matcher)) {
     return(col_def$col_expr_matcher(expr))
   }
   
+  # For col_dsl_matcher (after pivot), use DSL if provided
+  if (!is.null(col_def$col_dsl_matcher) && !is.null(col_dsl)) {
+    return(col_def$col_dsl_matcher(col_dsl))
+  }
+  
+  # No applicable matcher
   FALSE
 }
 
@@ -2754,23 +2793,17 @@ col_def_matches_expression <- function(col_def, expr) {
 #' @return layout_def object
 #' @keywords internal
 create_custom_row_def <- function(fn, label) {
-  # Create matchers that apply the custom function to cell components
-  # The challenge: layout_def matchers receive individual components, not the full cell
-  # Solution: Store the function and apply it during allocation
+  # Custom matchers receive the full cell object and evaluate it directly
+  # This allows complete flexibility in matching logic
   
-  # For now, create a layout_def with a custom row_expr_matcher
-  # that always returns TRUE (matches all), and we'll filter later
-  # This is a limitation of the current system - custom matchers for define_*
-  # need special handling
+  if (!is.function(fn)) {
+    stop("Custom matcher must be a function")
+  }
   
-  # Better approach: Use all matchers to approximate the custom function
-  # But this is complex. For now, warn the user.
-  warning("Custom matchers in define_rows/define_cols may not work as expected. ",
-          "Consider using select_rows/select_cols with .match='custom' instead.")
-  
-  # Create a permissive def
+  # Create a layout_def with custom_matcher socket
+  # The function will receive the full cell object during allocation
   new_layout_def(
-    row_expr_matcher = function(expr) TRUE,  # Match all
+    custom_matcher = fn,
     label = label,
     dimension = "row"
   )
@@ -2783,11 +2816,17 @@ create_custom_row_def <- function(fn, label) {
 #' @return layout_def object
 #' @keywords internal
 create_custom_col_def <- function(fn, label) {
-  warning("Custom matchers in define_rows/define_cols may not work as expected. ",
-          "Consider using select_cols with .match='custom' instead.")
+  # Custom matchers receive the full cell object and evaluate it directly
+  # This allows complete flexibility in matching logic
   
+  if (!is.function(fn)) {
+    stop("Custom matcher must be a function")
+  }
+  
+  # Create a layout_def with custom_matcher socket
+  # The function will receive the full cell object during allocation
   new_layout_def(
-    col_expr_matcher = function(expr) TRUE,
+    custom_matcher = fn,
     label = label,
     dimension = "col"
   )
@@ -2862,6 +2901,7 @@ new_layout_def <- function(..., label, dimension = c("row", "col")) {
     meta_matcher = NULL,
     computation_matcher = NULL,
     derivation_matcher = NULL,
+    custom_matcher = NULL,  # Function that receives full cell and returns TRUE/FALSE
     label = label,
     dimension = dimension
   )
@@ -2963,6 +3003,11 @@ cell_qualifies_for_def <- function(cell, layout_def) {
   
   if (!is.null(layout_def$derivation_matcher)) {
     if (!layout_def$derivation_matcher(cell$derivation)) return(FALSE)
+  }
+  
+  # Custom matcher - receives full cell object
+  if (!is.null(layout_def$custom_matcher)) {
+    if (!layout_def$custom_matcher(cell)) return(FALSE)
   }
   
   # All checks passed
@@ -3291,7 +3336,29 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
 #' Expand grid for collision handling
 #'
 #' When multiple cells qualify for the same grid position, expand the grid
-#' by duplicating rows or columns. Deep-copies layout_defs for new positions.
+#' by duplicating rows or columns. This creates sub-positions to accommodate
+#' all qualifying cells without data loss.
+#'
+#' **Collision Expansion Semantics:**
+#' 
+#' - **Row-only collisions**: When multiple cells match a single row position
+#'   (but each has a unique column), the row is expanded into sub-rows labeled
+#'   "RowName [1]", "RowName [2]", etc. Each sub-row gets one of the colliding cells.
+#' 
+#' - **Column-only collisions**: When multiple cells match a single column position
+#'   (but each has a unique row), the column is expanded into sub-columns labeled
+#'   "ColName [1]", "ColName [2]", etc.
+#' 
+#' - **Simultaneous row and column collisions**: When both dimensions have collisions
+#'   at the same position, both are expanded. The cell assignment uses the row 
+#'   sub-index as the primary selector. This case is rare and typically indicates
+#'   ambiguous layout specifications.
+#'
+#' **Implementation Details:**
+#' - Each expanded position gets a deep copy of the original layout_def
+#' - A `sub_index` field is added to track which sub-position each def represents
+#' - The original label is appended with " [N]" where N is the sub-index
+#' - Empty sub-positions (NA) may occur if collision counts vary across dimensions
 #'
 #' @param grid Current grid matrix (may have empty positions where collisions exist)
 #' @param collision_tracker Matrix of lists containing cell IDs for each collision

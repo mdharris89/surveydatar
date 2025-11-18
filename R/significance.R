@@ -14,6 +14,10 @@
 
 #' Add significance testing to a tab result
 #'
+#' Performs statistical significance testing on tab results. Significance is 
+#' attached directly to individual cells in the tab_cell_collection, preserving 
+#' the cell-based pipeline without requiring materialization.
+#'
 #' @param tab_result A tab_result object from tab()
 #' @param versus Column to compare against: "first_col", "last_col",
 #'   column name, or column index
@@ -21,7 +25,18 @@
 #' @param level Significance level (default 0.05)
 #' @param adjust Multiple comparison adjustment: "none", "bonferroni", "BH", etc.
 #' @param name Optional name for this comparison (defaults to versus value)
-#' @return The tab_result with significance testing added
+#' @return The tab_result (tab_cell_collection) with significance attached to cells
+#' 
+#' @section Cell-Based Significance:
+#' add_sig() attaches significance metadata directly to individual cells without 
+#' materializing to data.frame. This enables true pipeline continuity:
+#' 
+#' \code{tab(data, q1, gender) \%>\% add_sig() \%>\% hide_rows("Don't know")}
+#' 
+#' Significance is preserved through derive operations and can be materialized
+#' later using as.data.frame(). Multiple significance tests can be added by
+#' calling add_sig() multiple times with different names.
+#' 
 #' @export
 add_sig <- function(tab_result,
                     versus = "first_col",
@@ -34,64 +49,13 @@ add_sig <- function(tab_result,
     stop("Input must be a tab_result object")
   }
   
-  # Materialize cell-based results first
-  if (inherits(tab_result, "tab_cell_collection")) {
-    tab_result <- as.data.frame(tab_result)
+  if (!inherits(tab_result, "tab_cell_collection")) {
+    stop("add_sig() requires a cell-based tab_result object. ",
+         "All tab() results are now cell-based.")
   }
-
-  # Extract stored arrays
-  arrays <- attr(tab_result, "arrays")
-  if (is.null(arrays)) {
-    stop("No arrays found in tab_result. This tab_result may have been created ",
-         "with an older version of tab() that doesn't store arrays.")
-  }
-
-  # Extract other needed info
-  statistic <- attr(tab_result, "statistic")
-
-  # Create result matrix (excluding row_label column)
-  result_matrix <- as.matrix(tab_result[, -1])
-
-  # Create sig_config
-  sig_config <- list(
-    test = test,
-    versus = versus,
-    level = level,
-    adjust = adjust
-  )
-
-  # Call compute_significance
-  sig_result <- compute_significance(
-    base_array = arrays$base_array,
-    row_arrays = arrays$row_arrays,
-    col_arrays = arrays$col_arrays,
-    result_matrix = result_matrix,
-    statistic = statistic,
-    values_array = arrays$values_array,
-    sig_config = sig_config,
-    row_labels = tab_result$row_label
-  )
-
-  # Determine name for this comparison
-  # Resolve versus to actual column name
-  target_col_name <- resolve_versus_to_column_name(versus, tab_result)
-
-  # Use provided name or default to target column name
-  if (is.null(name)) {
-    name <- target_col_name
-  }
-
-  # Get existing significance results
-  all_sig <- attr(tab_result, "significance")
-  if (is.null(all_sig)) {
-    all_sig <- list()
-  }
-
-  # Add new significance result
-  all_sig[[name]] <- sig_result
-  attr(tab_result, "significance") <- all_sig
-
-  return(tab_result)
+  
+  # Call cell-native implementation
+  return(add_sig_cell_native(tab_result, versus, test, level, adjust, name))
 }
 
 #' Add significance testing versus all columns
@@ -112,9 +76,14 @@ add_sig_all <- function(tab_result,
   if (!inherits(tab_result, "tab_result")) {
     stop("Input must be a tab_result object")
   }
+  
+  if (!inherits(tab_result, "tab_cell_collection")) {
+    stop("add_sig_all() requires a cell-based tab_result object. ",
+         "All tab() results are now cell-based.")
+  }
 
   # Get statistic info to identify summary columns
-  statistic <- attr(tab_result, "statistic")
+  statistic <- tab_result$statistic
 
   # Build list of columns to exclude
   columns_to_exclude <- character()
@@ -138,8 +107,8 @@ add_sig_all <- function(tab_result,
     columns_to_exclude <- c(columns_to_exclude, exclude)
   }
 
-  # Get all column names except row_label
-  col_names <- names(tab_result)[-1]
+  # Get all column names from layout
+  col_names <- tab_result$layout$col_labels
 
   # Remove excluded columns
   col_names <- setdiff(col_names, columns_to_exclude)
@@ -446,31 +415,284 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   ))
 }
 
-#' Resolve versus parameter to actual column name
-#' @keywords internal
-resolve_versus_to_column_name <- function(versus, tab_result) {
-  col_names <- names(tab_result)[-1]  # Exclude row_label
-  n_cols <- length(col_names)
+# Cell-Native Significance Implementation ----------------------------------------
 
-  if (is.character(versus)) {
-    target_col_idx <- switch(versus,
-                             "first_col" = 1,
-                             "last_col" = n_cols,
-                             # Otherwise treat as column name
-                             {
-                               idx <- which(col_names == versus)
-                               if (length(idx) == 0) stop("Column '", versus, "' not found")
-                               idx[1]
-                             }
-    )
-  } else if (is.numeric(versus)) {
-    target_col_idx <- as.integer(versus)
-    if (target_col_idx < 1 || target_col_idx > n_cols) {
-      stop("Column index ", target_col_idx, " out of range [1, ", n_cols, "]")
+#' Extract result matrix from cell grid without materialization
+#' 
+#' Reads cell values directly from the grid and builds a numeric matrix
+#' without materializing the entire tab_result to data.frame.
+#' 
+#' @param store A cell_store object
+#' @param grid Layout grid matrix containing cell IDs
+#' @return Numeric matrix of values matching grid dimensions
+#' @keywords internal
+extract_result_matrix_from_grid <- function(store, grid) {
+  n_rows <- nrow(grid)
+  n_cols <- ncol(grid)
+  result_matrix <- matrix(NA_real_, n_rows, n_cols)
+  
+  for (i in seq_len(n_rows)) {
+    for (j in seq_len(n_cols)) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell)) {
+          result_matrix[i, j] <- cell$value
+        }
+      }
+    }
+  }
+  
+  return(result_matrix)
+}
+
+#' Identify which rows or columns are meta (summary/base) positions
+#' 
+#' Checks cells in the grid to identify which rows/columns contain
+#' summary rows, summary columns, or base rows that should be excluded
+#' from significance testing.
+#' 
+#' @param store A cell_store object
+#' @param grid Layout grid matrix containing cell IDs
+#' @param dimension Either "row" or "col"
+#' @return Integer vector of indices that are meta positions
+#' @keywords internal
+identify_meta_indices <- function(store, grid, dimension = c("row", "col")) {
+  dimension <- match.arg(dimension)
+  
+  if (dimension == "row") {
+    n <- nrow(grid)
+    meta_indices <- integer(0)
+    
+    # Check first non-NA cell in each row
+    for (i in seq_len(n)) {
+      # Find first non-NA cell_id in this row
+      cell_id <- NA
+      for (j in seq_len(ncol(grid))) {
+        if (!is.na(grid[i, j])) {
+          cell_id <- grid[i, j]
+          break
+        }
+      }
+      
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell) && isTRUE(cell$specification$is_summary_row)) {
+          meta_indices <- c(meta_indices, i)
+        }
+      }
     }
   } else {
-    stop("versus must be a character string or numeric index")
+    n <- ncol(grid)
+    meta_indices <- integer(0)
+    
+    # Check first non-NA cell in each column
+    for (j in seq_len(n)) {
+      # Find first non-NA cell_id in this column
+      cell_id <- NA
+      for (i in seq_len(nrow(grid))) {
+        if (!is.na(grid[i, j])) {
+          cell_id <- grid[i, j]
+          break
+        }
+      }
+      
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell) && isTRUE(cell$specification$is_summary_col)) {
+          meta_indices <- c(meta_indices, j)
+        }
+      }
+    }
   }
+  
+  return(meta_indices)
+}
 
-  return(col_names[target_col_idx])
+#' Build mapping from grid positions to significance matrix positions
+#' 
+#' Creates an integer vector that maps grid position indices to the
+#' corresponding position in the significance matrix, accounting for
+#' skipped meta positions.
+#' 
+#' @param n_positions Total number of positions in grid dimension
+#' @param meta_indices Integer vector of positions to skip (meta rows/cols)
+#' @return Integer vector where mapping[grid_pos] = sig_matrix_pos
+#' @keywords internal
+build_sig_index_mapping <- function(n_positions, meta_indices) {
+  mapping <- integer(n_positions)
+  sig_counter <- 1L
+  
+  for (i in seq_len(n_positions)) {
+    if (!(i %in% meta_indices)) {
+      mapping[i] <- sig_counter
+      sig_counter <- sig_counter + 1L
+    }
+  }
+  
+  return(mapping)
+}
+
+#' Attach significance results to individual cells in the store
+#' 
+#' Iterates through the grid and attaches significance metadata to each
+#' cell. Cells are modified in-place via environment write-back. Meta
+#' positions (summary rows/cols) are skipped.
+#' 
+#' @param store A cell_store object
+#' @param grid Layout grid matrix containing cell IDs
+#' @param sig_result Result from compute_significance (list with levels, p_values, etc.)
+#' @param test_name Name for this significance test
+#' @param meta_row_indices Integer vector of row indices to skip
+#' @param meta_col_indices Integer vector of column indices to skip
+#' @return NULL (modifies store in place)
+#' @keywords internal
+attach_sig_to_cells <- function(store, grid, sig_result, test_name,
+                                 meta_row_indices, meta_col_indices) {
+  # Build index mappings (grid position → sig matrix position)
+  grid_to_sig_row <- build_sig_index_mapping(nrow(grid), meta_row_indices)
+  grid_to_sig_col <- build_sig_index_mapping(ncol(grid), meta_col_indices)
+  
+  # Iterate through grid and attach significance
+  for (i in seq_len(nrow(grid))) {
+    if (i %in% meta_row_indices) next
+    
+    for (j in seq_len(ncol(grid))) {
+      if (j %in% meta_col_indices) next
+      
+      cell_id <- grid[i, j]
+      if (is.na(cell_id)) next
+      
+      # Get corresponding position in significance matrices
+      sig_row <- grid_to_sig_row[i]
+      sig_col <- grid_to_sig_col[j]
+      
+      # Skip if mapping failed (shouldn't happen)
+      if (sig_row == 0 || sig_col == 0) next
+      
+      # Direct cell access and modification
+      cell <- store$cells[[cell_id]]
+      if (is.null(cell)) next
+      
+      # Initialize significance list if needed
+      if (is.null(cell$significance)) {
+        cell$significance <- list()
+      }
+      
+      # Add this test's results
+      cell$significance[[test_name]] <- list(
+        level = sig_result$levels[sig_row, sig_col],
+        p_value = sig_result$p_values[sig_row, sig_col],
+        test_used = sig_result$test_used,
+        versus = sig_result$versus,
+        is_omnibus = sig_result$is_omnibus  # Store is_omnibus flag if present
+      )
+      
+      # Write back to store
+      store$cells[[cell_id]] <- cell
+    }
+  }
+  
+  invisible(NULL)
+}
+
+#' Add significance testing to cell-based tab results (cell-native path)
+#' 
+#' This function implements the cell-native significance path that avoids
+#' materialization to data.frame. Significance metadata is attached directly
+#' to individual cells in the store, preserving the cell-based pipeline.
+#' 
+#' @param tab_result A tab_cell_collection object
+#' @param versus Column to compare against
+#' @param test Test to use
+#' @param level Significance level
+#' @param adjust Multiple comparison adjustment
+#' @param name Optional name for this comparison
+#' @return The tab_result (still tab_cell_collection) with significance attached to cells
+#' @keywords internal
+add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
+  # Extract components from cell-based result
+  store <- tab_result$cell_store
+  grid <- tab_result$layout$grid
+  arrays <- tab_result$arrays
+  statistic <- tab_result$statistic
+  
+  # Build result matrix directly from grid (no materialization)
+  result_matrix <- extract_result_matrix_from_grid(store, grid)
+  
+  # Identify meta rows and columns to exclude from significance
+  meta_row_indices <- identify_meta_indices(store, grid, "row")
+  meta_col_indices <- identify_meta_indices(store, grid, "col")
+  
+  # Filter result_matrix and arrays to data-only elements
+  data_rows <- setdiff(seq_len(nrow(grid)), meta_row_indices)
+  data_cols <- setdiff(seq_len(ncol(grid)), meta_col_indices)
+  
+  result_matrix_data <- result_matrix[data_rows, data_cols, drop = FALSE]
+  row_arrays_data <- arrays$row_arrays[data_rows]
+  col_arrays_data <- arrays$col_arrays[data_cols]
+  
+  # Get row labels for data rows
+  row_labels_data <- if (!is.null(tab_result$layout$row_labels)) {
+    tab_result$layout$row_labels[data_rows]
+  } else {
+    paste0("Row_", data_rows)
+  }
+  
+  # Get column names for data cols
+  col_names_data <- if (!is.null(tab_result$layout$col_labels)) {
+    tab_result$layout$col_labels[data_cols]
+  } else {
+    paste0("Col_", data_cols)
+  }
+  
+  # Set matrix names
+  rownames(result_matrix_data) <- row_labels_data
+  colnames(result_matrix_data) <- col_names_data
+  
+  # Create sig_config
+  sig_config <- list(
+    test = test,
+    versus = versus,
+    level = level,
+    adjust = adjust
+  )
+  
+  # Compute significance using existing function
+  sig_result <- compute_significance(
+    base_array = arrays$base_array,
+    row_arrays = row_arrays_data,
+    col_arrays = col_arrays_data,
+    result_matrix = result_matrix_data,
+    statistic = statistic,
+    values_array = arrays$values_array,
+    sig_config = sig_config,
+    row_labels = row_labels_data
+  )
+  
+  # Determine test name
+  if (is.null(name)) {
+    # Resolve versus to column name from data columns
+    if (is.character(versus)) {
+      name <- switch(versus,
+                     "first_col" = col_names_data[1],
+                     "last_col" = col_names_data[length(col_names_data)],
+                     versus)  # Use as-is if it's already a column name
+    } else if (is.numeric(versus)) {
+      name <- col_names_data[versus]
+    }
+  }
+  
+  # Attach significance to cells
+  attach_sig_to_cells(
+    store = store,
+    grid = grid,
+    sig_result = sig_result,
+    test_name = name,
+    meta_row_indices = meta_row_indices,
+    meta_col_indices = meta_col_indices
+  )
+  
+  # Return modified collection (still tab_cell_collection)
+  return(tab_result)
 }

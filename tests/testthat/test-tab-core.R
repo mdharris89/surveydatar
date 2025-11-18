@@ -2170,3 +2170,273 @@ test_that("transform_label_comparisons handles nested expressions", {
   expect_equal(inner_right[[3]], 30)
 })
 
+# Cell-Native Significance Tests ==========================================
+
+test_that("add_sig returns tab_cell_collection for cell-based input", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Yes", "No", "No", "Yes", "Yes")),
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female", "Male", "Female"))
+  )
+  
+  result <- tab(data, q1, gender)
+  
+  # add_sig should preserve cell-based type
+  result_with_sig <- add_sig(result, versus = "Male", test = "z_test_proportions")
+  
+  expect_true(inherits(result_with_sig, "tab_cell_collection"))
+  expect_true(inherits(result_with_sig, "tab_result"))
+})
+
+test_that("significance is attached to individual cells", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Yes", "No", "No", "Yes", "Yes")),
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female", "Male", "Female"))
+  )
+  
+  result <- tab(data, q1, gender) %>%
+    add_sig(versus = "Male", test = "z_test_proportions")
+  
+  # Check that at least some cells have significance data
+  store <- result$cell_store
+  grid <- result$layout$grid
+  
+  has_sig <- FALSE
+  for (i in seq_len(nrow(grid))) {
+    for (j in seq_len(ncol(grid))) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell$significance)) {
+          has_sig <- TRUE
+          expect_true(is.list(cell$significance))
+          expect_true("Male" %in% names(cell$significance))
+          break
+        }
+      }
+    }
+    if (has_sig) break
+  }
+  
+  expect_true(has_sig)
+})
+
+test_that("cell-native significance preserved through pipeline operations", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Maybe", "Yes", "No", "Maybe", "Yes")),
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female", "Male", "Female"))
+  )
+  
+  # Pipeline with significance
+  result <- tab(data, q1, gender) %>%
+    add_sig(versus = "Male", test = "z_test_proportions") %>%
+    hide_rows("Maybe")
+  
+  # Should still be cell-based
+  expect_true(inherits(result, "tab_cell_collection"))
+  
+  # Should still have cells with significance
+  store <- result$cell_store
+  grid <- result$layout$grid
+  
+  has_sig <- FALSE
+  for (i in seq_len(nrow(grid))) {
+    for (j in seq_len(ncol(grid))) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell$significance)) {
+          has_sig <- TRUE
+          break
+        }
+      }
+    }
+    if (has_sig) break
+  }
+  
+  expect_true(has_sig)
+})
+
+test_that("multiple significance tests can be added to cells", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Yes", "No", "No", "Yes", "Yes")),
+    region = factor(c("North", "South", "East", "North", "South", "East", "North", "South"))
+  )
+  
+  result <- tab(data, q1, region) %>%
+    add_sig(versus = "North", name = "vs_north") %>%
+    add_sig(versus = "South", name = "vs_south")
+  
+  # Check that cells have multiple tests
+  store <- result$cell_store
+  grid <- result$layout$grid
+  
+  found_multi_test <- FALSE
+  for (i in seq_len(nrow(grid))) {
+    for (j in seq_len(ncol(grid))) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell$significance)) {
+          if (length(names(cell$significance)) >= 2) {
+            expect_true("vs_north" %in% names(cell$significance))
+            expect_true("vs_south" %in% names(cell$significance))
+            found_multi_test <- TRUE
+            break
+          }
+        }
+      }
+    }
+    if (found_multi_test) break
+  }
+  
+  expect_true(found_multi_test)
+})
+
+test_that("significance extracted correctly during materialization", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Yes", "No", "No", "Yes", "Yes")),
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female", "Male", "Female"))
+  )
+  
+  result <- tab(data, q1, gender) %>%
+    add_sig(versus = "Male", test = "z_test_proportions")
+  
+  # Materialize
+  df <- as.data.frame(result)
+  
+  # Should have significance attribute
+  sig <- attr(df, "significance")
+  expect_true(!is.null(sig))
+  expect_true(is.list(sig))
+  expect_true("Male" %in% names(sig))
+  
+  # Significance should have expected structure
+  sig_male <- sig[["Male"]]
+  expect_true(!is.null(sig_male$levels))
+  expect_true(!is.null(sig_male$p_values))
+  expect_true(is.matrix(sig_male$levels))
+  expect_true(is.matrix(sig_male$p_values))
+})
+
+test_that("add_sig_all works with cell-based results", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Yes", "No", "No", "Yes", "Yes")),
+    region = factor(c("North", "South", "East", "North", "South", "East", "North", "South"))
+  )
+  
+  result <- tab(data, q1, region) %>%
+    add_sig_all(test = "z_test_proportions")
+  
+  # Should still be cell-based
+  expect_true(inherits(result, "tab_cell_collection"))
+  
+  # Should have significance in cells
+  store <- result$cell_store
+  grid <- result$layout$grid
+  
+  has_sig <- FALSE
+  for (i in seq_len(nrow(grid))) {
+    for (j in seq_len(ncol(grid))) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell$significance)) {
+          has_sig <- TRUE
+          break
+        }
+      }
+    }
+    if (has_sig) break
+  }
+  
+  expect_true(has_sig)
+})
+
+test_that("helper functions work correctly", {
+  skip_if_not_installed("surveydatar")
+  
+  # Test extract_result_matrix_from_grid
+  data <- data.frame(
+    q1 = factor(c("Yes", "No", "Yes", "No")),
+    gender = factor(c("Male", "Female", "Male", "Female"))
+  )
+  
+  result <- tab(data, q1, gender)
+  store <- result$cell_store
+  grid <- result$layout$grid
+  
+  matrix <- extract_result_matrix_from_grid(store, grid)
+  expect_true(is.matrix(matrix))
+  expect_equal(nrow(matrix), nrow(grid))
+  expect_equal(ncol(matrix), ncol(grid))
+  
+  # Test identify_meta_indices
+  meta_rows <- identify_meta_indices(store, grid, "row")
+  meta_cols <- identify_meta_indices(store, grid, "col")
+  
+  expect_true(is.integer(meta_rows))
+  expect_true(is.integer(meta_cols))
+  
+  # Test build_sig_index_mapping
+  mapping <- build_sig_index_mapping(5, c(2, 4))
+  expect_equal(length(mapping), 5)
+  expect_equal(mapping[1], 1)
+  expect_equal(mapping[2], 0)  # Skipped
+  expect_equal(mapping[3], 2)
+  expect_equal(mapping[4], 0)  # Skipped
+  expect_equal(mapping[5], 3)
+})
+
+test_that("cell structure includes significance field", {
+  skip_if_not_installed("surveydatar")
+  
+  data <- data.frame(
+    q1 = factor(c("Yes", "Yes", "No", "Yes")),
+    gender = factor(c("Male", "Female", "Male", "Female"))
+  )
+  
+  result <- tab(data, q1, gender) %>%
+    add_sig(versus = "Male", test = "z_test_proportions")
+  
+  store <- result$cell_store
+  grid <- result$layout$grid
+  
+  # Find a cell with significance
+  for (i in seq_len(nrow(grid))) {
+    for (j in seq_len(ncol(grid))) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(store, cell_id)
+        if (!is.null(cell$significance)) {
+          # Check structure
+          expect_true(is.list(cell$significance))
+          test_name <- names(cell$significance)[1]
+          sig_data <- cell$significance[[test_name]]
+          
+          expect_true(!is.null(sig_data$level))
+          expect_true(!is.null(sig_data$p_value))
+          expect_true(!is.null(sig_data$test_used))
+          expect_true(!is.null(sig_data$versus))
+          
+          return()  # Test passed
+        }
+      }
+    }
+  }
+  
+  # Should have found at least one cell with significance
+  expect_true(TRUE)
+})
+

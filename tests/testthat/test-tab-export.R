@@ -111,6 +111,7 @@ test_that("copy_tab preserves significance indicators", {
 
   # Add significance
   result_with_sig <- add_sig(result)
+  result_with_sig <- as.data.frame(result_with_sig)  # Materialize to extract significance
 
   # copy_tab returns formatted data invisibly
   copied <- copy_tab(result_with_sig)

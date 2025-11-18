@@ -1,4 +1,4 @@
-# Guide to built-in statistics and helpers  (note: this vignette not fully tested)
+# Guide to built-in statistics and helpers
 
 ## Statistics
 
@@ -152,6 +152,8 @@ tab(data, response_match(c("Daily", "Weekly"), "usage_group"), gender)
 tab(data, response_match(get_value_labels = "q1"), region)
 ```
 
+**Note**: For grid questions (variable × value matrices), consider using `pivot_to_grid()` as an alternative. It provides a cleaner approach to reshaping grid-style data. See the tab vignette for details.
+
 ### 9. All matching (all_matching)
 
 ``` r
@@ -159,9 +161,31 @@ tab(data, response_match(get_value_labels = "q1"), region)
 tab(data, all_matching("Microsoft", "A1"), gender)
 ```
 
-## Macro helpers (banner, calc_if + no_mismatch)
+## Layout Transformations
 
-These operate at a higher level than single-variable helpers.
+### pivot_to_grid (pivot_to_grid)
+
+Reshapes tables by extracting semantic dimensions from cells. Particularly useful for grid questions.
+
+``` r
+# Grid question with variables × values
+tab(data, usage_a, statistic = "row_pct") %>%
+  pivot_to_grid()
+# Creates a matrix with tools as rows, frequency as columns
+
+# Custom extractors
+tab(data, brand_attrs_a, region) %>%
+  pivot_to_grid(
+    row_extractor = ~ dsl_get_variables(.x$specification$dsl$row)[1],
+    col_extractor = ~ dsl_get_values(.x$specification$dsl$row)[1]
+  )
+```
+
+## Macros and higher-level helpers
+
+Macros transform the parameters you pass to `tab()` before any helpers are
+parsed. They are handy when a table requires coordinated changes to multiple
+arguments. Helpers such as `banner()` remain available for lower-level tasks.
 
 ### Banner (banner)
 
@@ -174,20 +198,6 @@ tab(data, q1, banner(region, top_box(satisfaction, 2)))
 
 # With subtotals per outer category
 tab(data, q1, banner(region, satisfaction, subtotals = TRUE))
-```
-
-### calc_if with no_mismatch gate
-
-Use `calc_if(no_mismatch("ival"), ...)` to compute cells only when row and column share at least one matching metadata value (e.g., the same response option label stored in `ival`). Useful for orthogonal tables.
-
-``` r
-# Only compute cells when row and column refer to the same response (by ival)
-tab(
-  data,
-  rows = calc_if(no_mismatch("ival"), response_match(get_value_labels = "q1")),
-  cols = response_match(get_value_labels = "q1"),
-  statistic = "count"
-)
 ```
 
 ## Notes

@@ -4,6 +4,11 @@
 
 The `tab()` function in surveydatar provides a flexible and powerful way to create cross-tabulation tables from survey data. This guide will walk you through its features, from basic frequency tables to advanced custom statistics and helper functions.
 
+```{r}
+library(surveydatar)
+library(dplyr) # for surveydatar dplyr methods
+```
+
 ## Basic Usage
 
 ### Simple Frequency Tables
@@ -11,20 +16,109 @@ The `tab()` function in surveydatar provides a flexible and powerful way to crea
 Let's start with the most basic use case - creating a frequency table for a single variable:
 
 ```{r data prep}
-library(surveydatar)
-
-# Create some example data
+# Create comprehensive example data for all vignette examples
 set.seed(123)
+
+# Define value labels for all categorical variables
+usage_levels <- c("Never", "Monthly", "Weekly", "Daily")
+usage_codes <- c(1, 2, 3, 4)
+usage_labels <- setNames(usage_codes, usage_levels)
+
+satisfaction_codes <- c(1, 2, 3, 4, 5)
+satisfaction_levels <- c("Very Dissatisfied", "Dissatisfied", "Neutral", "Satisfied", "Very Satisfied")
+satisfaction_labels <- setNames(satisfaction_codes, satisfaction_levels)
+
+rating_codes <- c(1, 2, 3, 4, 5)
+rating_levels <- c("Poor", "Fair", "Good", "Very Good", "Excellent")
+rating_labels <- setNames(rating_codes, rating_levels)
+
+binary_codes <- c(0, 1)
+binary_levels <- c("Not selected", "Selected")
+binary_labels <- setNames(binary_codes, binary_levels)
+
 survey_data <- data.frame(
+  # Demographics
   gender = factor(sample(c("Male", "Female", "Other"), 200, 
                         replace = TRUE, prob = c(0.45, 0.45, 0.1))),
   age_group = factor(sample(c("18-24", "25-34", "35-44", "45-54", "55+"), 200,
                            replace = TRUE)),
-  satisfaction = sample(1:5, 200, replace = TRUE),
   region = factor(sample(c("North", "South", "East", "West"), 200, replace = TRUE)),
+  
+  # Numeric variables
   income = sample(20000:120000, 200, replace = TRUE),
-  age = sample(18:65, 200, replace = TRUE)
+  age = sample(18:65, 200, replace = TRUE),
+  weight = runif(200, 0.5, 2.0),
+  
+  # Satisfaction measures
+  satisfaction = haven::labelled(
+    sample(satisfaction_codes, 200, replace = TRUE),
+    labels = satisfaction_labels,
+    label = "Overall Satisfaction"
+  ),
+  
+  # Question battery (q1) with proper labels
+  q1_1 = haven::labelled(
+    sample(binary_codes, 200, replace = TRUE),
+    labels = binary_labels,
+    label = "Brand Attributes - Quality"
+  ),
+  q1_2 = haven::labelled(
+    sample(binary_codes, 200, replace = TRUE),
+    labels = binary_labels,
+    label = "Brand Attributes - Value"
+  ),
+  q1_3 = haven::labelled(
+    sample(binary_codes, 200, replace = TRUE),
+    labels = binary_labels,
+    label = "Brand Attributes - Trust"
+  ),
+  
+  # Rating questions for helpers with proper labels
+  service_rating = haven::labelled(
+    sample(rating_codes, 200, replace = TRUE),
+    labels = rating_labels,
+    label = "Service Rating"
+  ),
+  quality_rating = haven::labelled(
+    sample(rating_codes, 200, replace = TRUE),
+    labels = rating_labels,
+    label = "Quality Rating"
+  ),
+  value_rating = haven::labelled(
+    sample(rating_codes, 200, replace = TRUE),
+    labels = rating_labels,
+    label = "Value Rating"
+  ),
+  
+  # Usage frequency battery (for pivot examples)
+  usage_1 = haven::labelled(
+    sample(usage_codes, 200, replace = TRUE, prob = c(0.1, 0.2, 0.3, 0.4)),
+    labels = usage_labels,
+    label = "Software Usage - Google Docs"
+  ),
+  usage_2 = haven::labelled(
+    sample(usage_codes, 200, replace = TRUE, prob = c(0.1, 0.15, 0.25, 0.5)),
+    labels = usage_labels,
+    label = "Software Usage - Google Sheets"
+  ),
+  usage_3 = haven::labelled(
+    sample(usage_codes, 200, replace = TRUE, prob = c(0.2, 0.3, 0.3, 0.2)),
+    labels = usage_labels,
+    label = "Software Usage - Google Slides"
+  ),
+  usage_4 = haven::labelled(
+    sample(usage_codes, 200, replace = TRUE, prob = c(0.05, 0.1, 0.25, 0.6)),
+    labels = usage_labels,
+    label = "Software Usage - Gmail"
+  )
 )
+
+# Convert to a surveydatar survey data object
+survey_data <- create_survey_data(survey_data)
+
+# Add derived variables
+survey_data <- survey_data %>% 
+  mutate(satisfied = as.numeric(satisfaction >= 4))
 
 # Simple frequency table
 tab(survey_data, gender)
@@ -45,7 +139,7 @@ This shows the distribution of gender within each region (column percentages by 
 
 ### Different Statistics
 
-The `tab()` function supports several built-in statistics:
+The `tab()` function supports several built-in statistics. Some of the most common are:
 
 ```{r different_stats}
 # Count instead of percentages
@@ -57,8 +151,9 @@ tab(survey_data, gender, region, statistic = "row_pct")
 # Column percentages (default)
 tab(survey_data, gender, region, statistic = "column_pct")
 
-# Mean of a numeric variable
-tab(survey_data, gender, region, statistic = "mean", values = "income")
+# Indexes (100 = average)
+tab(survey_data, gender, region, statistic = "index")
+
 ```
 
 ### Value-Based Statistics
@@ -70,34 +165,24 @@ Some statistics, like `mean`, require a `values` parameter to specify which nume
 tab(survey_data, gender, region, statistic = "mean", values = "income")
 ```
 
-Note that for mean calculations: - The `values` parameter must reference a numeric variable - An "Avg" row is automatically added instead of "NET" to show overall averages - Results are formatted with two decimal places by default
+Note that for mean calculations:
+
+-   The `values` parameter must reference a numeric variable
+-   An "Avg" row is automatically added instead of "NET" to show overall averages
+-   Results are formatted with two decimal places by default
 
 ### Using Weights
 
 Survey data often requires weighting. Add weights easily:
 
 ```{r weights}
-# Add a weight variable to our data
-survey_data$weight <- runif(200, 0.5, 2.0)
-
-# Weighted cross-tabulation
+# Weighted cross-tabulation (weight variable created in data prep)
 tab(survey_data, gender, region, weight = "weight")
 
 # Weighted mean calculation
+# Note this will show Base (n) NA as each cell has a different base. use extract_base_matrix() on the tab result to see.
 tab(survey_data, gender, region, weight = "weight", 
     statistic = "mean", values = "income")
-```
-
-## Formula Syntax and Filtering
-
-### Modern Formula Syntax
-
-While `tab()` supports traditional string syntax for backward compatibility, the modern formula syntax is more flexible:
-
-```{r formula_syntax}
-# Instead of: tab(survey_data, "gender", "region")
-# Use:
-tab(survey_data, gender, region)
 ```
 
 ### Filtering Within Variables
@@ -106,7 +191,7 @@ One of the most powerful features is the ability to filter data inline using the
 
 ```{r filtering}
 # Only show females
-tab(survey_data, gender * (gender == "Female"), region)
+tab(survey_data, gender == "Female", region) # use in-filters by referencing either values or value labels
 
 # Only show older respondents
 tab(survey_data, gender * (age > 40), region)
@@ -139,14 +224,18 @@ tab(survey_data, gender, region,
 
 If your data contains question batteries (e.g., q1_1, q1_2, q1_3), `tab()` can automatically expand them:
 
-```{r add_question_battery}
-# Add a question battery
-survey_data$q1_1 <- sample(0:1, 200, replace = TRUE)
-survey_data$q1_2 <- sample(0:1, 200, replace = TRUE)
-survey_data$q1_3 <- sample(0:1, 200, replace = TRUE)
-
-# This will create rows for q1_1, q1_2, and q1_3
+```{r question_battery_expansion}
+# Question batteries (q1_1, q1_2, q1_3 created in data prep) can be referenced by prefix
+# Tab uses fuzzy matching to expand "q1" to all matching variables
 tab(survey_data, q1, region)
+```
+
+Tab uses fuzzy matching to match "q1" to "q1_1", "q1_2", and "q1_3". With a surveydatar survey data object, you can also reference the question group name, e.g. "q1_a"
+
+### Question Group Expansion
+
+```{r}
+tab(survey_data, q1_a, region)
 ```
 
 ### Categorical Variable Expansion
@@ -154,13 +243,7 @@ tab(survey_data, q1, region)
 Labelled variables and factors are automatically expanded into their categories:
 
 ```{r variable_expansion}
-# Create a labelled satisfaction variable
-survey_data$satisfaction <- haven::labelled(
-  survey_data$satisfaction,
-  labels = c("Very Dissatisfied" = 1, "Dissatisfied" = 2, 
-             "Neutral" = 3, "Satisfied" = 4, "Very Satisfied" = 5)
-)
-
+# Labelled variables (like satisfaction created in data prep) are automatically expanded
 # This creates a row for each satisfaction level
 tab(survey_data, satisfaction, gender)
 ```
@@ -169,7 +252,7 @@ tab(survey_data, satisfaction, gender)
 
 ### Top and Bottom Box Analysis
 
-Survey analysis often requires looking at the top or bottom response options:
+Survey analysis often requires looking at the top or bottom response options. Built-in helpers are available for this:
 
 ```{r helpers}
 # Top 2 box (satisfied + very satisfied)
@@ -185,7 +268,7 @@ tab(survey_data, top_box(satisfaction, 2), gender,
 
 ### Named Row Groups
 
-Create multiple analyses in a single table using `rows_list()`:
+Create multiple analyses in a single table using `rows_list()` and `cols_list()`:
 
 ```{r named_groups}
 tab(survey_data,
@@ -220,19 +303,22 @@ A custom helper consists of two parts:
 1.  **The Helper Function**: This is what users call (e.g., `age_range(age, 25, 40)`)
 2.  **The Processor Function**: This does the actual work when `tab()` evaluates the helper
 
-The helper function must: - Register a processor function using `create_helper()` - Return a special object with class `"tab_helper"` - Include any parameters the processor will need
+The helper function must:
 
-The processor function receives: - `formula_spec`: Contains the components passed to your helper - `data`: The data frame being analyzed - `...`: Additional arguments (rarely used)
+-   Register its processor exactly once with `create_helper(id = ..., processor = ...)`, so the helper id is known to `tab()`.
+-   Return a value that preserves that id for later processing. The most direct pattern is to return `structure(..., class = "tab_helper", id = "<same id>")`. Any values you store inside the list are passed through to the processor as `formula_spec$components`. (Built-in helpers like `top_box()` instead return the unevaluated call via `match.call()`; that alternative also works when you prefer to keep everything as expressions.)
 
-The processor must return a numeric vector of 0s and 1s (same length as `nrow(data)`) indicating which rows match the condition.
+When `tab()` executes, it calls the processor with:
 
-### Add some rating questions
+-   `formula_spec`: A list containing the helper id (`formula_spec$helper_type`), the evaluated arguments (`formula_spec$components`), and any metadata captured along the way.
+-   `data`: The data frame being analysed.
+-   `...`: Additional arguments (rarely used).
 
-```{r add_ratings_questions}
-survey_data$service_rating <- sample(1:5, 200, replace = TRUE)
-survey_data$quality_rating <- sample(1:5, 200, replace = TRUE) 
-survey_data$value_rating <- sample(1:5, 200, replace = TRUE)
-```
+The processor must return a numeric vector the same length as `nrow(data)`. Most helpers emit 0/1 indicators, but any numeric weights work—`tab()` multiplies whatever you return with the other arrays when it builds each cell.
+
+### Using Multiple Rating Variables
+
+The following examples use rating variables (service_rating, quality_rating, value_rating) created in the data prep section:
 
 ### Step 1: Register the processor
 
@@ -286,7 +372,7 @@ row_avg_between <- function(var_pattern, min_val, max_val) {
       max_val = as.numeric(max_val)
     ),
     class = "tab_helper",
-    helper_type = "row_avg_between"
+    id = "row_avg_between"
   )
 }
 ```
@@ -305,19 +391,52 @@ tab(survey_data,
 
 ## Creating Custom Statistics
 
-Beyond the built-in statistics (count, column_pct, row_pct, mean), you can create your own:
+Like helpers, you can create custom statistics for specialized calculations.
+
+### How Statistics Work in tab()
+
+Here's how the array-based approach in tab() works:
+
+Every respondent in your dataset gets a position in parallel arrays. For a dataset with 1000 respondents:
+
+-   Position 1 in each array corresponds to respondent #1
+-   Position 2 in each array corresponds to respondent #2
+-   And so on...
+
+When tab() calculates a cell value, it:
+
+1.  Creates three parallel arrays, each with one element per respondent:
+
+-   base_array: Contains weights (or 1s) for respondents included after filters
+-   row_array: Typically contains 1 if that respondent matches the row condition, 0 otherwise
+-   col_array: Typically contains 1 if that respondent matches the column condition, 0 otherwise
+
+Note: While row and column arrays usually contain 0s and 1s (binary membership), they can contain any numeric values. For example, a helper might return 0.5 for partial membership or 2 for double-counting certain respondents.
+
+2.  Passes these arrays to the statistic processor, which then:
+
+-   Multiplies them element-wise: final = base \* row \* col
+-   Each element represents that respondent's weighted contribution to this cell
+-   Zero elements indicate no contribution (respondent not in this cell)
+-   Non-zero elements indicate the magnitude of contribution
+
+3.  The processor applies its specific calculation to the final array:
+
+-   For counts: sum the final array
+-   For column %: sum(final) / sum(base \* col) × 100
+-   For mean: sum(final \* values) / sum(final)
+
+4.  Returns a single number to display in that cell
 
 ### Understanding Statistic Structure
 
-Custom statistics calculate a single value for each cell in the cross-tabulation. The processor function receives:
+A custom statistic requires:
 
--   **`base_array`**: Represents the base population (including any weights and table-wide filters)
--   **`row_array`**: Binary array (0/1) indicating which rows match the row condition
--   **`col_array`**: Binary array (0/1) indicating which rows match the column condition
--   **`values`**: Optional numeric array for value-based statistics (like mean)
--   **`...`**: Additional arguments
+1.  A Processor Function: Calculates the statistic for each cell
+2.  A Base Calculator: Determines what to show as the base/denominator
+3.  Configuration: How to format, summarize, etc.
 
-To calculate a cell value, you typically: 1. Multiply arrays element-wise to get the rows in that cell 2. Perform your calculation on these rows 3. Return a single numeric value
+Alongside the processor, every statistic needs a **base calculator**—a function that tells `tab()` what base to show in the output (column totals, cell counts, valid responses, and so on). The package exposes helpers such as `base_column_total`, `base_row_total`, and `base_cell_count_valid` so you can pick the behaviour that matches your statistic.
 
 ### Configuring Custom Statistics
 
@@ -327,6 +446,7 @@ When creating a statistic, you can specify:
 create_statistic(
   id = "my_stat",                    # Unique identifier
   processor = function(...) {},       # Calculation function
+  base_calculator = base_column_total, # How to compute the base for each cell
   summary_row = "NET",               # Or "Avg", "Total", or NULL
   summary_col = "NET",               # Or "Avg", "Total", or NULL
   format_fn = function(x) sprintf("%.1f", x),  # Display format
@@ -342,33 +462,35 @@ Let's create a statistic that calculates the median instead of mean:
 ```{r median_statistic}
 # Create the median statistic
 median_stat <- function() {
-  if (!"median" %in% names(.tab_registry$stats)) {
-    create_statistic(
-      id = "median",
-      processor = function(base_array, row_array, col_array, values = NULL, ...) {
-        if (is.null(values)) {
-          stop("Median statistic requires 'values' parameter")
-        }
-        
-        # Find which rows belong to this cell
-        cell_membership <- base_array * row_array * col_array
-        
-        # Get values for rows in this cell
-        cell_values <- values[cell_membership > 0]
-        
-        if (length(cell_values) == 0) return(NA_real_)
-        
-        # Calculate median
-        return(median(cell_values, na.rm = TRUE))
-      },
-      summary_row = "Avg",  # Use "Avg" label for summary
-      format_fn = function(x) sprintf("%.1f", x),
-      requires_values = TRUE,
-      base_label = "Base (n)"
-    )
-  }
-  
-  .tab_registry$stats[["median"]]
+  create_statistic(
+    id = "median",
+    processor = function(base_array, row_array, col_array, values = NULL, ...) {
+      if (is.null(values)) {
+        stop("Median statistic requires 'values' parameter")
+      }
+      
+      # Find which rows belong to this cell
+      cell_membership <- base_array * row_array * col_array
+      
+      # Get values for rows in this cell
+      cell_values <- values[cell_membership > 0]
+      
+      if (length(cell_values) == 0) return(NA_real_)
+      
+      # Calculate median
+      return(median(cell_values, na.rm = TRUE))
+    },
+    base_calculator = base_cell_count_valid,  # Count respondents with valid values
+    summary_row = "Avg",  # Use "Avg" label for summary
+    summary_row_calculator = function(arrays, base_array) {
+      # Combine arrays into a union (respondents in ANY of the rows)
+      combined_matrix <- do.call(cbind, arrays)
+      as.numeric(rowSums(combined_matrix) > 0)
+    },
+    format_fn = function(x) sprintf("%.1f", x),
+    requires_values = TRUE,
+    base_label = "Base (n)"
+  )
 }
 
 # Use the median statistic
@@ -377,6 +499,8 @@ tab(survey_data, gender, region,
     values = "income")
 ```
 
+**Note:** When you specify `summary_row`, you must also provide `summary_row_calculator`. This calculator defines how to combine multiple row arrays into a single summary array. The function receives `arrays` (a list of row arrays to combine) and `base_array`, and should return a single combined array. The example above creates a union of all rows (respondents in ANY of the categories). Similarly, if you specify `summary_col`, you must also provide `summary_col_calculator`.
+
 ### Example: Confidence Interval Width
 
 A statistic that shows the width of the 95% confidence interval:
@@ -384,99 +508,40 @@ A statistic that shows the width of the 95% confidence interval:
 ```{r confidence_interval}
 # Create the custom statistic
 ci_width_stat <- function() {
-  # Register the statistic processor (only once)
-  if (!"ci_width" %in% names(.tab_registry$stats)) {
-    create_statistic(
-      id = "ci_width",  # Unique identifier
-      processor = function(base_array, row_array, col_array, ...) {
-        # Step 1: Find which rows belong to this cell
-        # This is the intersection of base, row condition, and column condition
-        cell_membership <- base_array * row_array * col_array
-        
-        # Step 2: Calculate the statistic
-        # For CI width, we need the proportion and sample size
-        numerator <- sum(cell_membership)  # Count in this cell
-        denominator <- sum(base_array * col_array)  # Column total
-        
-        if (denominator == 0) return(NA_real_)
-        
-        p <- numerator / denominator  # Proportion
-        n <- denominator  # Sample size
-        
-        if (n <= 1) return(NA_real_)
-        
-        # Step 3: Calculate 95% CI width
-        # Width = 2 * z-score * standard error
-        # Standard error = sqrt(p * (1-p) / n)
-        ci_width <- 2 * 1.96 * sqrt(p * (1 - p) / n) * 100
-        return(ci_width)
-      },
-      format_fn = function(x) sprintf("±%.1f%%", x),
-      summary_row = NULL  # No summary for CI width
-    )
-  }
-  
-  # Return the registered statistic object
-  .tab_registry$stats[["ci_width"]]
+  create_statistic(
+    id = "ci_width",  # Unique identifier
+    processor = function(base_array, row_array, col_array, ...) {
+      # Step 1: Find which rows belong to this cell
+      # This is the intersection of base, row condition, and column condition
+      cell_membership <- base_array * row_array * col_array
+      
+      # Step 2: Calculate the statistic
+      # For CI width, we need the proportion and sample size
+      numerator <- sum(cell_membership)  # Count in this cell
+      denominator <- sum(base_array * col_array)  # Column total
+      
+      if (denominator == 0) return(NA_real_)
+      
+      p <- numerator / denominator  # Proportion
+      n <- denominator  # Sample size
+      
+      if (n <= 1) return(NA_real_)
+      
+      # Step 3: Calculate 95% CI width
+      # Width = 2 * z-score * standard error
+      # Standard error = sqrt(p * (1-p) / n)
+      ci_width <- 2 * 1.96 * sqrt(p * (1 - p) / n) * 100
+      return(ci_width)
+    },
+    base_calculator = base_column_total,  # Show column totals in the base row
+    format_fn = function(x) sprintf("±%.1f%%", x),
+    summary_row = NULL  # No summary for CI width
+  )
 }
 
-# Use the custom statistic
-# First create a binary variable
-survey_data$satisfied <- as.numeric(survey_data$satisfaction >= 4)
-
+# Use the custom statistic (satisfied variable created in data prep)
 tab(survey_data, satisfied, gender, statistic = ci_width_stat())
 ```
-
-### Another Example: Effective Sample Size
-
-For weighted data, the effective sample size accounts for the loss of precision due to unequal weights:
-
-```{r effective_sample_size}
-eff_sample_size_stat <- function() {
-  if (!"eff_sample_size" %in% names(.tab_registry$stats)) {
-    create_statistic(
-      id = "eff_sample_size",
-      processor = function(base_array, row_array, col_array, ...) {
-        # Get the weights for this cell
-        weights <- base_array * row_array * col_array
-        weights <- weights[weights > 0]  # Remove zeros
-        
-        if (length(weights) == 0) return(NA_real_)
-        
-        # Effective sample size formula:
-        # n_eff = (sum of weights)^2 / sum of (weights^2)
-        sum_weights <- sum(weights)
-        sum_weights_sq <- sum(weights^2)
-        
-        if (sum_weights_sq == 0) return(NA_real_)
-        
-        eff_n <- sum_weights^2 / sum_weights_sq
-        return(eff_n)
-      },
-      format_fn = function(x) sprintf("%.0f", x),
-      summary_row = "Total"  # Sum for effective sample sizes
-    )
-  }
-  
-  .tab_registry$stats[["eff_sample_size"]]
-}
-
-# See how weights affect effective sample size
-tab(survey_data, gender, region, 
-    weight = "weight", 
-    statistic = eff_sample_size_stat())
-```
-
-### How Statistics Work in tab()
-
-The calculation flow for each cell:
-
-1.  `tab()` creates the base_array (1s for included rows, incorporating weights)
-2.  For the current row condition, it creates row_array (1s where condition is true)
-3.  For the current column condition, it creates col_array (1s where condition is true)
-4.  It calls your statistic processor with these arrays (and values if needed)
-5.  Element-wise multiplication (`base * row * col`) gives you the actual cell membership
-6.  Your processor calculates and returns a single value for that cell
 
 ## Banner Columns
 
@@ -494,6 +559,65 @@ tab(survey_data, q1_1, banner(region, gender, subtotals = TRUE))
 ```
 
 Banners are particularly useful for demographic breaks and complex column structures in market research.
+
+## Reshaping with pivot_to_grid()
+
+Grid questions (where the same response scale is asked for multiple items) can be reshaped into a more natural matrix format using `pivot_to_grid()`. This function extracts semantic dimensions from cells and reorganizes them into a grid structure.
+
+### Basic Grid Reshaping
+
+When you have a question battery where each variable shares the same value labels, `pivot_to_grid()` automatically creates a variable × value matrix:
+
+```{r pivot_basic}
+# Example: Usage frequency for different software tools
+# Using usage_1-4 variables created in initial data prep
+# Variables: usage_1, usage_2, usage_3, usage_4 (usage_a expands to all)
+# Values: Never, Monthly, Weekly, Daily
+
+# Standard tab creates a long format
+# Note: We use column_pct here because percentages transpose when pivoting
+# Column percentages in long format become row percentages in grid format
+long_result <- tab(survey_data, usage_a, statistic = "column_pct")
+
+# Pivot to grid format: tools as rows, frequency as columns
+long_result %>% pivot_to_grid()
+```
+
+The result is a table where: - Rows represent the different tools (Google Docs, Google Sheets, Google Slides, Gmail) - Columns represent frequency levels (Never, Monthly, Weekly, Daily) - Cells show the row percentages for each tool-frequency combination
+
+**Important**: Notice that we use `column_pct` in the initial tab, not `row_pct`. This is because when pivoting, the percentage direction transposes along with the data structure. Column percentages (where each column sums to 100%) become row percentages (where each row sums to 100%) after the pivot operation.
+
+### How pivot_to_grid() Works
+
+By default, `pivot_to_grid()` uses: - **Row dimension**: The primary variable from each cell (e.g., `usage_1`, `usage_2`) - **Column dimension**: The first value from each cell (e.g., "Never", "Monthly")
+
+Summary rows and columns (NET, Base) are automatically removed during pivoting since they don't fit the grid structure.
+
+### Custom Labels
+
+You can also provide functions to generate custom labels for the dimensions:
+
+```{r pivot_labels}
+grid_result <- tab(survey_data, usage_a, statistic = "column_pct") %>%
+  pivot_to_grid(
+    .row_labels = function(keys) {
+      # Clean up variable names
+      gsub("usage_", "", keys)
+    },
+    .col_labels = function(keys) {
+      # Abbreviate frequency labels
+      c("Daily" = "D", "Weekly" = "W", "Monthly" = "M", "Never" = "N")[keys]
+    }
+  )
+```
+
+### Use Cases
+
+`pivot_to_grid()` is particularly useful for:
+
+-   **Grid questions**: Same scale asked about multiple items
+-   **Brand tracking**: Same attributes measured for different brands
+-   **Multi-response grids**: Binary responses for items × attributes
 
 ## Significance Testing
 
@@ -520,30 +644,166 @@ print(result_with_sig)  # Prints with significance indicators
 
 Available tests include `z_test_proportions`, `t_test`, `chi_square`, and `mann_whitney`. Use `"auto"` for automatic test selection based on your statistic.
 
-## Advanced Feature: Gates and Orthogonal Tables
+### Cell-Based Significance
 
-Gates control which cells are calculated based on row/column metadata. For example, to create a brand-attribute matrix where each row/column is a brand x frequency combination, you can use:
+`add_sig()` works natively with cell-based results, preserving the cell-based pipeline without forcing materialization:
 
-```{r brand_attr_matrix, eval=FALSE}
-# Brand–attribute style matrix using value labels
-tab(survey_data,
-  rows = calc_if(no_mismatch("ival"),
-                 response_match(c("Daily", "Weekly", "Monthly"), "A2", mode = "value")),
-  cols = response_match(c("Daily", "Weekly", "Monthly"), "A2", mode = "value"),
-  statistic = "count",
-  sum_by = "ival",
-  show_base = FALSE, show_row_nets = FALSE, show_col_nets = FALSE
-)
+```{r cell_based_sig, eval=FALSE}
+# Significance preserves cell-based pipeline
+result <- tab(survey_data, satisfaction, region) %>%
+  add_sig(versus = "North", test = "z_test_proportions") %>%
+  hide_rows("Don't know") %>%
+  derive(delta_vs("North", "South"))
+
+# Significance is attached to individual cells
+# Materialize when ready to export or display
+df_with_sig <- as.data.frame(result)
+
+# Multiple significance tests can be added
+result <- tab(survey_data, satisfaction, region) %>%
+  add_sig(versus = "North", name = "vs_north") %>%
+  add_sig(versus = "South", name = "vs_south")
 ```
 
-What happens step-by-step:
+Significance metadata is stored at the cell level and automatically preserved through pipeline operations like `hide_rows()`, `hide_cols()`, `arrange_rows()`, and `derive()`.
 
-- First, calc_if(no_mismatch("ival")) creates an orthogonal table where only cells on the matching row/col value are computed; off-diagonals are blank/zero.
-- Then, sum_by = "ival" collapses those duplicates by the shared value label, leaving one row/column per unique value and preserving the gated (diagonal) structure.
+## Understanding tab() Results
 
-Note: This is an advanced, unusually imperative pattern in the package. A simpler, more declarative syntax for this use case will likely become the recommended approach.
+The `tab()` function returns a `tab_cell_collection` object - a specialized structure that stores cells with their values, bases, and complete metadata. Each cell is position-independent, meaning it carries full information about what it represents regardless of where it appears in a table.
+
+### Working with Cell Collections
+
+Most operations work directly on cell collections without requiring conversion:
+
+```{r working_with_cells, eval=FALSE}
+# Create a result - this is a cell collection
+result <- tab(survey_data, gender, region)
+
+# Many operations work directly on the collection
+result_sorted <- result %>% arrange_rows(.by = "Total", .sort = "desc")
+result_filtered <- result %>% hide_rows("Other")
+
+# Chain operations together
+result <- tab(survey_data, satisfaction, region) %>%
+  derive(delta_vs("North", "South")) %>%
+  hide_cols_except("North|South|Difference")
+```
+
+### Materializing to Data Frames
+
+When you need a standard data frame (for export, further processing, or display), use `as.data.frame()`:
+
+```{r materialize, eval=FALSE}
+# Convert to data frame
+df <- as.data.frame(result)
+
+# The data frame works with all standard R functions
+```
 
 ## Table Manipulation
+
+### Hiding and Showing Elements
+
+Control which rows, columns, and cells appear in your results:
+
+```{r hiding_basic}
+# Hide specific rows by label
+result <- tab(survey_data, satisfaction, region) %>%
+  hide_rows("Very Dissatisfied", "Dissatisfied")
+
+# Hide columns
+result <- tab(survey_data, gender, region) %>%
+  hide_cols("South")
+
+# Keep only specific rows or columns
+result <- tab(survey_data, satisfaction, region) %>%
+  hide_rows_except("Very satisfied|Satisfied")
+
+result <- tab(survey_data, satisfaction, region) %>%
+  hide_cols_except("North|South|Total")
+```
+
+#### Controlling Summary Rows and Columns
+
+Show or hide NET/Avg/Total rows and columns:
+
+```{r show_summaries}
+# Hide summary rows and columns during creation
+result <- tab(survey_data, satisfaction, region,
+              show_row_nets = FALSE,
+              show_col_nets = FALSE)
+
+# Or show them later
+result <- tab(survey_data, satisfaction, region,
+              show_row_nets = FALSE) %>%
+  show_summary(.rows = TRUE)
+```
+
+### Moving Rows and Columns
+
+Reposition specific rows or columns:
+
+```{r moving}
+# Move a row to the top
+result <- tab(survey_data, satisfaction, region) %>%
+  move_row(.which = "Very Satisfied", .to = "top")
+
+# Move to bottom
+result <- tab(survey_data, satisfaction, region) %>%
+  move_row(.which = "Neutral", .to = "bottom")
+
+# Move before or after another row
+result <- tab(survey_data, satisfaction, region) %>%
+  move_row(.which = "Neutral", .to = "after", .reference = "Satisfied")
+
+# Same for columns
+result <- tab(survey_data, gender, region) %>%
+  move_col(.which = "Total", .to = "right")
+```
+
+### Selecting Specific Rows and Columns
+
+Keep only selected rows or columns in a specific order:
+
+```{r selecting}
+# Select and reorder rows
+result <- tab(survey_data, satisfaction, region) %>%
+  select_rows("Very satisfied", "Satisfied", "Neutral")
+
+# Select columns
+result <- tab(survey_data, gender, region) %>%
+  select_cols("Total", "North", "South")
+```
+
+### Matcher Functions
+
+For more complex filtering, use matcher functions:
+
+```{r matchers}
+# Match by base threshold
+result <- tab(survey_data, satisfaction, age_group) %>%
+  hide_rows(.match = "custom",
+            base_matcher(30, ">="))
+
+# Match by label pattern
+result <- tab(survey_data, satisfaction, region) %>%
+  hide_rows(.match = "custom",
+            label_matcher(c("Don't know", "Refused")))
+
+# Combine matchers with logical operators
+result <- tab(survey_data, satisfaction, region) %>%
+  hide_if(.condition = function(cell) {
+    and_matcher(
+      base_matcher(30, ">="),
+      value_matcher(10, ">=")
+    )(cell$base)
+  })
+
+# Negate a matcher
+result <- tab(survey_data, satisfaction, region) %>%
+  hide_rows(.match = "custom",
+            not_matcher(label_matcher(c("Very satisfied", "Satisfied"))))
+```
 
 ### Low Base Thresholds
 
@@ -579,22 +839,82 @@ The `smart` mode is particularly useful for question batteries where you want co
 
 ### Sorting Tables
 
-Sort your results by values or labels:
+Reorder rows and columns using flexible strategies:
 
-```{r sorting}
-# Sort rows by NET column values (descending)
-sorted_result <- sort_tab(comprehensive_result, rows = "NET")
+#### Sorting by Values
 
-# Sort columns alphabetically  
-alpha_sorted <- sort_tab(comprehensive_result, 
-                         cols = list(by = "label", order = "asc"))
+Sort rows based on cell values in a specific column:
 
-# Sort with natural ordering (handles numbers properly)
-natural_sorted <- sort_tab(comprehensive_result,
-                          rows = list(by = "label", natural = TRUE))
+```{r sorting_by_value}
+# Sort rows by Total column (descending)
+result <- tab(survey_data, satisfaction, region,
+              statistic = "column_pct") %>%
+  arrange_rows(.by = "Total", .sort = "desc")
 
-# Restore original order
-restored <- sort_tab(natural_sorted, rows = "original", cols = "original")
+# Sort by a specific region
+result <- tab(survey_data, satisfaction, region) %>%
+  arrange_rows(.by = "North", .sort = "asc")
+
+# Sort columns by a specific row
+result <- tab(survey_data, satisfaction, region) %>%
+  arrange_cols(.by = "Very satisfied", .sort = "desc")
+```
+
+#### Explicit Label Ordering
+
+Specify the exact order you want:
+
+```{r sorting_explicit}
+# Explicit row order
+result <- tab(survey_data, satisfaction, region) %>%
+  arrange_rows(.by = c("Very satisfied", "Satisfied", 
+                       "Neutral", "Dissatisfied", "Very dissatisfied"))
+
+# Partial ordering (specified rows first, others follow in original order)
+result <- tab(survey_data, satisfaction, region) %>%
+  arrange_rows(.by = c("Very satisfied", "Satisfied"), .partial = TRUE)
+
+# Column ordering
+result <- tab(survey_data, gender, region) %>%
+  arrange_cols(.by = c("Total", "North", "South", "East", "West"))
+```
+
+#### Custom Sorting Functions
+
+Use custom functions to determine sort order:
+
+```{r sorting_custom}
+# Sort by base size
+result <- tab(survey_data, satisfaction, age_group) %>%
+  arrange_cols(.order_fn = function(cell) cell$base, .sort = "desc")
+
+# Sort by metadata
+result <- tab(survey_data, satisfaction, region) %>%
+  arrange_rows(.order_fn = function(cell) {
+    # Access cell metadata for custom ordering
+    cell$specification$meta$display_order
+  })
+
+# Sort rows by standard deviation (requires custom calculation)
+result <- tab(survey_data, gender, region,
+              statistic = "mean", values = "age") %>%
+  arrange_cols(.order_fn = function(cell) cell$value, .sort = "desc")
+```
+
+#### Combining Sorting with Other Operations
+
+```{r sorting_combined}
+# Sort, filter, and derive in sequence
+result <- tab(survey_data, satisfaction, region,
+              statistic = "column_pct") %>%
+  # Remove low-interest rows
+  hide_rows("Don't know|Refused") %>%
+  # Add derived columns
+  derive(delta_vs("North", "South")) %>%
+  # Sort by the difference
+  arrange_rows(.by = "South - North", .sort = "desc") %>%
+  # Keep only top differences
+  select_rows(head(row_labels, 5))
 ```
 
 ### Copying to Clipboard
@@ -607,6 +927,137 @@ copy_tab(comprehensive_result)
 
 # Results are formatted with statistic info and significance indicators
 ```
+
+## Derive Operations
+
+Derive operations let you create new rows or columns by transforming existing cells. These operations are additive - they add new cells without modifying existing ones, and they're fully composable, meaning you can chain multiple operations together.
+
+All derive operations work directly on cell collections and return updated cell collections. The new cells carry metadata about their derivation, which helps with labeling and transparency.
+
+### Calculating Differences with delta_vs()
+
+Compare columns by calculating the difference between them:
+
+```{r derive_delta}
+# Calculate difference between two regions
+result <- tab(survey_data, satisfaction, region) %>%
+  derive(delta_vs(from_col = "North", to_col = "South"))
+
+# This adds a new column showing South - North for each row
+as.data.frame(result)
+
+# Works great with percentage statistics to show point differences
+result <- tab(survey_data, top_box(satisfaction, 2), region,
+              statistic = "column_pct") %>%
+  derive(delta_vs("North", "South", label = "South vs North difference"))
+```
+
+The difference column shows positive values when the `to_col` is higher than `from_col`, and negative values when it's lower.
+
+### Calculating Indices with index_vs()
+
+Create index columns showing values relative to a base column (default multiplier = 100):
+
+```{r derive_index}
+# Create indices relative to Total column
+result <- tab(survey_data, satisfaction, region) %>%
+  derive(index_vs(base_col = "Total"))
+
+# This adds index columns for each region
+# Index = (Region value / Total value) * 100
+# 100 = average, >100 = above average, <100 = below average
+
+# Custom multiplier
+result <- tab(survey_data, gender, region, 
+              statistic = "mean", values = "income") %>%
+  derive(index_vs(base_col = "Total", multiplier = 1))
+# Now index of 1.0 = average
+```
+
+Indices make it easy to spot which segments over- or under-perform relative to the total.
+
+### Collapsing with sum_if()
+
+Collapse rows or columns based on cell metadata. This is particularly useful for grouping related categories:
+
+```{r derive_sum_if}
+# Example: You have satisfaction levels and want to create summary rows
+# Assume cells have metadata like: ival = "Very satisfied", "Satisfied", etc.
+
+# Collapse based on value labels (ival)
+result <- tab(survey_data, satisfaction, region) %>%
+  derive(sum_if(metadata_field = "ival", 
+                dimension = "rows"))
+
+# This groups rows by their value labels and creates sum rows
+
+# Collapse based on variable names (ivar) - useful for question batteries
+result <- tab(survey_data, q1, region) %>%
+  derive(sum_if(metadata_field = "ivar",
+                dimension = "cols"))
+
+# For custom grouping, you can provide a label function
+result <- tab(survey_data, satisfaction, region) %>%
+  derive(sum_if(
+    metadata_field = "ival",
+    dimension = "rows",
+    label_fn = function(group_key, group_metadata) {
+      paste("Sum:", group_key)
+    }
+  ))
+```
+
+### Share Calculations with share_of_sum()
+
+Calculate each cell as a percentage of its row or column total:
+
+```{r derive_share}
+# Convert count table to shares of row totals
+result <- tab(survey_data, satisfaction, region,
+              statistic = "count") %>%
+  derive(share_of_sum(by = "row"))
+
+# Or column totals
+result <- tab(survey_data, satisfaction, region,
+              statistic = "count") %>%
+  derive(share_of_sum(by = "col", label = "% of column"))
+```
+
+This is useful when you have count statistics but want to show proportions within rows or columns.
+
+### Chaining Multiple Operations
+
+Derive operations are designed to work together:
+
+```{r derive_chain}
+# Complex analytical workflow
+result <- tab(survey_data, satisfaction, region,
+              statistic = "column_pct") %>%
+  # Add difference columns
+  derive(delta_vs("North", "South")) %>%
+  derive(delta_vs("East", "West")) %>%
+  # Add index columns
+  derive(index_vs("Total")) %>%
+  # Filter to only show interesting rows
+  hide_rows("Don't know|Refused") %>%
+  # Keep only specific columns
+  hide_cols_except("North|South|.*difference|.*index") %>%
+  # Sort by one of the difference columns
+  arrange_rows(.by = "South vs North difference", .sort = "desc")
+
+# View the result
+as.data.frame(result)
+```
+
+### Use Cases for Derive Operations
+
+**delta_vs()**: - Compare performance between groups - Show change before/after - Highlight differences in A/B tests
+
+**index_vs()**: - Identify over/under-indexing segments - Normalize for comparison across scales - Show relative performance
+
+**sum_if()**: - Create "top box" or "bottom box" summary rows - Group related product categories - Aggregate across similar questions
+
+**share_of_sum()**: - Convert counts to proportions - Show relative contribution - Compare distribution shapes
 
 ## Putting It All Together
 
@@ -678,17 +1129,6 @@ print(satisfaction_deep_dive)
 copy_tab(comprehensive_result)
 ```
 
-## Best Practices
-
-1.  **Start Simple**: Begin with basic cross-tabs and gradually add complexity
-2.  **Use Named Row Groups**: The `rows_list()` function makes your code more readable
-3.  **Filter Thoughtfully**: Inline filters (`*`) are great for one-off analyses; table-wide filters are better for consistent subsetting
-4.  **Choose Appropriate Statistics**: Use percentages for distributions, counts for raw numbers, and mean/median for continuous variables
-5.  **Document Custom Helpers**: When creating custom helpers, include clear error messages and validation
-6.  **Test with Small Data**: When developing custom statistics or helpers, test with small, known datasets first
-7.  **Consider Summary Rows/Columns**: Built-in statistics automatically add NET or Avg rows/columns when appropriate
-
 ## Conclusion
 
 The `tab()` function provides a flexible foundation for survey analysis, from simple frequency tables to complex custom analyses. By mastering its formula syntax, built-in helpers, value-based statistics, and extension mechanisms, you can create sophisticated analyses while keeping your code clean and readable.
-

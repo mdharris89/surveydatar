@@ -11,6 +11,7 @@ This package addresses these challenges through:
 -   **Standardization tools** for variable names and labels
 -   **The `survey_data` object** that keeps data and metadata synchronized
 -   **Flexible analysis** with the `tab()` function for cross-tabulations
+-   **Cell-based architecture** for position-independent table manipulation
 -   **Validation functions** to ensure data integrity
 
 ## Core Concepts
@@ -350,7 +351,7 @@ validate_survey_data(survey_obj)
 
 ## Quick Analysis with tab()
 
-The `tab()` function provides flexible cross-tabulation capabilities:
+The `tab()` function provides flexible cross-tabulation capabilities. It returns a `tab_cell_collection` object that can be manipulated with derive and layout operations before being materialized to a data frame:
 
 ```{r tab}
 # First add a weight variable to our survey object
@@ -376,9 +377,15 @@ tab(survey_obj,
 tab(survey_obj, categoricalasfactor, labelledcategorical, 
     statistic = "mean", 
     values = "age_numeric")
+
+# Chain operations on cell collections
+tab(survey_obj, labelledordinal, categoricalasfactor) %>%
+  derive(delta_vs("1", "2")) %>%
+  hide_rows("Don't know") %>%
+  as.data.frame()
 ```
 
-For comprehensive tab() documentation, see the dedicated tab vignette.
+The cell-based architecture enables powerful post-computation operations like adding derived columns, reshaping with `pivot_to_grid()`, and flexible filtering. For comprehensive tab() documentation including derive operations, pivot_to_grid(), and advanced layout manipulation, see the dedicated tab vignette.
 
 ## A Complete Example
 

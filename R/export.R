@@ -12,10 +12,10 @@
 
 #' Print method for tab_result
 #' @param x A tab_result object
-#' @param label_mode How to display labels: "full", "suffix", "name", or "smart" (future implementation)
+#' @param label_mode How to display labels: "smart", "full", or "suffix"
 #' @param ... Additional arguments (unused)
 #' @export
-print.tab_result <- function(x, label_mode = "full", ...) {
+print.tab_result <- function(x, label_mode = "smart", ...) {
   # Materialize cell-based results and apply layout/visibility
   if (inherits(x, "tab_cell_collection")) {
     x <- .materialize_for_export(x, show_base = NULL, label_mode = label_mode)
@@ -211,7 +211,7 @@ print.tab_result <- function(x, label_mode = "full", ...) {
 #' @param empty_zeros Logical. If TRUE, cells with exactly 0 values will be displayed as empty instead of "0"
 #' @param na_display Character string to display for NA values. Default is empty string ("")
 #' @param show_source Logical. If TRUE (default), includes footnote on source.
-#' @param label_mode How to display labels: "full", "suffix", "name", or "smart" (future implementation)
+#' @param label_mode How to display labels: "smart", "full", or "suffix"
 #' @return Invisibly returns the formatted data that was copied
 #' @export
 #'
@@ -1231,6 +1231,86 @@ as.data.frame.tab_result <- function(x,
     }
   }
   attr(df, "base_matrix") <- base_matrix
+  
+  ## Extract significance from cells if present ----------------------------------
+  # Check if any cells have significance data
+  has_sig <- FALSE
+  all_sig_tests <- list()
+  
+  for (i in 1:n_rows) {
+    for (j in 1:n_cols) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(x$cell_store, cell_id)
+        if (!is.null(cell) && !is.null(cell$significance)) {
+          has_sig <- TRUE
+          # Collect all test names
+          test_names <- names(cell$significance)
+          for (test_name in test_names) {
+            if (!test_name %in% names(all_sig_tests)) {
+              all_sig_tests[[test_name]] <- list()
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  # If significance found, extract and format it
+  if (has_sig) {
+    # For each test, build significance matrices
+    for (test_name in names(all_sig_tests)) {
+      sig_matrix <- matrix("", nrow = n_rows, ncol = n_cols)
+      p_matrix <- matrix(NA_real_, nrow = n_rows, ncol = n_cols)
+      test_used <- NULL
+      versus <- NULL
+      is_omnibus <- NULL
+      
+      # Extract significance from each cell
+      for (i in 1:n_rows) {
+        for (j in 1:n_cols) {
+          cell_id <- grid[i, j]
+          if (!is.na(cell_id)) {
+            cell <- get_cell(x$cell_store, cell_id)
+            if (!is.null(cell) && !is.null(cell$significance[[test_name]])) {
+              sig_data <- cell$significance[[test_name]]
+              sig_matrix[i, j] <- sig_data$level
+              p_matrix[i, j] <- sig_data$p_value
+              if (is.null(test_used)) {
+                test_used <- sig_data$test_used
+                versus <- sig_data$versus
+                is_omnibus <- sig_data$is_omnibus
+              }
+            }
+          }
+        }
+      }
+      
+      # Set matrix names
+      rownames(sig_matrix) <- row_labels
+      colnames(sig_matrix) <- col_names
+      rownames(p_matrix) <- row_labels
+      colnames(p_matrix) <- col_names
+      
+      # Store in format matching data.frame-based add_sig
+      sig_result <- list(
+        levels = sig_matrix,
+        p_values = p_matrix,
+        test_used = test_used,
+        versus = versus
+      )
+      
+      # Add is_omnibus flag if it exists
+      if (!is.null(is_omnibus)) {
+        sig_result$is_omnibus <- is_omnibus
+      }
+      
+      all_sig_tests[[test_name]] <- sig_result
+    }
+    
+    # Attach significance attribute
+    attr(df, "significance") <- all_sig_tests
+  }
   
   ## Add visible base (using calculated base matrix) ------------------------------
   base_orientation <- NULL
