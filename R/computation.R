@@ -155,19 +155,34 @@ compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
 #' @return cell_store object with all computed cells
 #' @keywords internal
 compute_cells_as_bundle <- function(base_array,
-                                    row_arrays,
-                                    col_arrays,
-                                    rows_expanded,
-                                    cols_expanded,
-                                    base_filter_spec,
-                                    base_filter_expr,
-                                    statistic_obj,
-                                    values_array = NULL,
-                                    values_var = NULL) {
+                                   row_arrays,
+                                   col_arrays,
+                                   rows_expanded,
+                                   cols_expanded,
+                                   base_filter_spec,
+                                   base_filter_expr,
+                                   statistic_obj,
+                                   values_array = NULL,
+                                   values_var = NULL) {
   
   n_cells <- length(row_arrays) * length(col_arrays)
   
   store <- new_cell_store(size_hint = n_cells)
+  
+  compute_universe <- function(arr) {
+    if (is.null(arr)) return(0)
+    contrib <- base_array * arr
+    contrib[is.na(contrib)] <- 0
+    sum(contrib)
+  }
+  
+  row_universes <- if (length(row_arrays) > 0) {
+    vapply(row_arrays, compute_universe, numeric(1))
+  } else numeric(0)
+  
+  col_universes <- if (length(col_arrays) > 0) {
+    vapply(col_arrays, compute_universe, numeric(1))
+  } else numeric(0)
   
   # Compute each cell directly from array intersections
   for (i in seq_along(row_arrays)) {
@@ -210,6 +225,9 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
+      specification$row_universe <- row_universes[i]
+      specification$col_universe <- col_universes[j]
+      
       # Store computation metadata
       computation <- list(
         statistic = statistic_obj$id,
@@ -251,6 +269,8 @@ compute_cells_as_bundle <- function(base_array,
       arrays = col_arrays,
       base_array = base_array
     )
+    
+    summary_col_universe <- compute_universe(summary_col_array)
     
     # Extract labels from arrays being summarized
     col_labels <- sapply(col_arrays, function(arr) {
@@ -308,6 +328,9 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
+      specification$row_universe <- row_universes[i]
+      specification$col_universe <- summary_col_universe
+      
       computation <- list(
         statistic = statistic_obj$id,
         array_refs = list(base = 1, row = i, col = "summary")
@@ -330,6 +353,8 @@ compute_cells_as_bundle <- function(base_array,
       arrays = row_arrays,
       base_array = base_array
     )
+    
+    summary_row_universe <- compute_universe(summary_row_array)
     
     # Extract labels from arrays being summarized
     row_labels <- sapply(row_arrays, function(arr) {
@@ -387,6 +412,9 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
+      specification$row_universe <- summary_row_universe
+      specification$col_universe <- col_universes[j]
+      
       computation <- list(
         statistic = statistic_obj$id,
         array_refs = list(base = 1, row = "summary", col = j)
@@ -427,6 +455,9 @@ compute_cells_as_bundle <- function(base_array,
         statistic_id = statistic_obj$id,
         values_var = values_var
       )
+      
+      specification$row_universe <- summary_row_universe
+      specification$col_universe <- summary_col_universe
       
       computation <- list(
         statistic = statistic_obj$id,

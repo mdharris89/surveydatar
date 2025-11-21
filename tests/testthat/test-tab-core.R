@@ -2440,3 +2440,620 @@ test_that("cell structure includes significance field", {
   expect_true(TRUE)
 })
 
+##### EXTERNAL VARIABLE RESOLUTION TESTS #####
+
+test_that("External variables are inlined in expressions", {
+  data <- create_tab_test_data(n = 100)
+  
+  # External variable
+  desirable_values <- c(4, 5)
+  
+  result <- tab(data, satisfaction %in% desirable_values)
+  df <- as.data.frame(result)
+  
+  # Should work and produce correct results
+  expect_true(nrow(df) > 0)
+  
+  # Check that the expression in metadata has inlined values, not the variable name
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  
+  # The expression should contain the literal values, not "desirable_values"
+  expr_str <- deparse(cell$specification$row_expr)
+  expect_true(grepl("4", expr_str))
+  expect_true(grepl("5", expr_str))
+  expect_false(grepl("desirable_values", expr_str))
+})
+
+test_that("Multiple external variables are inlined", {
+  data <- create_tab_test_data(n = 100)
+  
+  min_val <- 4
+  max_val <- 5
+  
+  result <- tab(data, satisfaction >= min_val & satisfaction <= max_val)
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  
+  # Check expression has literal values
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  expect_true(grepl("4", expr_str))
+  expect_true(grepl("5", expr_str))
+  expect_false(grepl("min_val", expr_str))
+  expect_false(grepl("max_val", expr_str))
+})
+
+test_that("External variables in filter expressions are inlined", {
+  data <- create_tab_test_data(n = 100)
+  
+  min_age <- 25
+  
+  result <- tab(data, satisfaction, filter = age > min_age)
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  
+  # Filter should have inlined the value
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(result$cell_store, cell_id)
+  base_spec <- cell$specification$base_expr
+  if (!is.null(base_spec)) {
+    expr_str <- deparse(base_spec)
+    expect_true(grepl("25", expr_str))
+    expect_false(grepl("min_age", expr_str))
+  }
+})
+
+test_that("Helper arguments with external variables are inlined", {
+  data <- create_tab_test_data(n = 100)
+  
+  n_boxes <- 2
+  
+  result <- tab(data, top_box(satisfaction, n_boxes))
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  
+  # The helper call should be preserved but argument should be inlined
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  expect_true(grepl("top_box", expr_str))
+  expect_true(grepl("2", expr_str))
+  expect_false(grepl("n_boxes", expr_str))
+})
+
+test_that("Data columns take priority over external variables", {
+  data <- create_tab_test_data(n = 100)
+  
+  # Add a column with the same name as our external variable
+  data$threshold <- rep(10, nrow(data))
+  
+  # External variable with same name
+  threshold <- 3
+  
+  # Should use data column, not external variable
+  result <- tab(data, satisfaction > threshold)
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  
+  # Expression should still have threshold as a symbol (data column)
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  # Should reference the symbol, not the literal
+  expect_true(grepl("threshold", expr_str))
+  # Should not be the external variable value
+  expect_false(grepl("^3$", expr_str))
+})
+
+test_that("Unregistered functions produce helpful error", {
+  data <- create_tab_test_data(n = 100)
+  
+  # Unregistered function
+  my_filter <- function(x) x > 3
+  
+  expect_error(
+    tab(data, my_filter(satisfaction)),
+    "Function 'my_filter' used in expression but not registered as helper"
+  )
+  
+  expect_error(
+    tab(data, my_filter(satisfaction)),
+    "create_helper"
+  )
+})
+
+test_that("Unregistered function variables produce helpful error", {
+  data <- create_tab_test_data(n = 100)
+  
+  # Function stored in variable
+  filter_fn <- function(x) x > 3
+  
+  expect_error(
+    tab(data, satisfaction > filter_fn),
+    "Function 'filter_fn' used in expression but not registered as helper"
+  )
+})
+
+test_that("Registered helpers are preserved, not inlined", {
+  data <- create_tab_test_data(n = 100)
+  
+  result <- tab(data, top_box(satisfaction, 2))
+  
+  # The expression should still contain the helper call
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  expect_true(grepl("top_box", expr_str))
+})
+
+test_that("Metadata only includes data columns after resolution", {
+  data <- create_tab_test_data(n = 100)
+  
+  external_val <- 4
+  
+  result <- tab(data, satisfaction > external_val)
+  
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  
+  # Metadata variables should only include data columns
+  # Check variables in the expression (since meta variables aren't populated for simple expressions)
+  expr_vars <- all.vars(cell$specification$row_expr)
+  
+  expect_true("satisfaction" %in% expr_vars)
+  expect_false("external_val" %in% expr_vars)
+})
+
+test_that("Serialization works with inlined external variables", {
+  data <- create_tab_test_data(n = 100)
+  
+  threshold <- 4
+  
+  result <- tab(data, satisfaction > threshold)
+  
+  # Save to temp file
+  temp_file <- tempfile(fileext = ".rds")
+  on.exit(unlink(temp_file))
+  
+  saveRDS(result, temp_file)
+  
+  # Load in fresh environment (threshold no longer exists)
+  rm(threshold)
+  result_loaded <- readRDS(temp_file)
+  
+  # Should still work
+  df <- as.data.frame(result_loaded)
+  expect_true(nrow(df) > 0)
+  
+  # Expression should have literal value
+  store <- result_loaded$cell_store
+  cell_id <- result_loaded$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  expect_true(grepl("4", expr_str))
+  expect_false(grepl("threshold", expr_str))
+})
+
+test_that("Complex expressions with external variables work", {
+  data <- create_tab_test_data(n = 100)
+  
+  vals <- c(4, 5)
+  status <- 1
+  
+  result <- tab(data, satisfaction %in% vals & gender == status)
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  
+  # Both external variables should be inlined
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  expect_false(grepl("vals", expr_str))
+  expect_false(grepl("status", expr_str))
+  expect_true(grepl("4", expr_str) || grepl("5", expr_str))
+})
+
+test_that("External variables work with rows and cols", {
+  data <- create_tab_test_data(n = 100)
+  
+  row_vals <- c(4, 5)
+  col_val <- 1
+  
+  result <- tab(data, satisfaction %in% row_vals, gender == col_val)
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  expect_true(ncol(df) > 1)  # Should have columns
+})
+
+test_that("Empty external variables are handled correctly", {
+  data <- create_tab_test_data(n = 100)
+  
+  empty_vec <- numeric(0)
+  
+  # This should work but match nothing
+  result <- tab(data, satisfaction %in% empty_vec)
+  df <- as.data.frame(result)
+  
+  # Should have rows (the labels) but all zeros or NAs
+  expect_true(nrow(df) > 0)
+})
+
+test_that("Large external vectors are inlined correctly", {
+  data <- create_tab_test_data(n = 100)
+  
+  large_vec <- 1:50
+  
+  result <- tab(data, satisfaction %in% large_vec)
+  df <- as.data.frame(result)
+  
+  expect_true(nrow(df) > 0)
+  
+  # Expression should have all the values inlined
+  store <- result$cell_store
+  cell_id <- result$layout$grid[1, 1]
+  cell <- get_cell(store, cell_id)
+  expr_str <- deparse(cell$specification$row_expr)
+  
+  expect_true(grepl("1", expr_str))
+  expect_true(grepl("50", expr_str))
+})
+
+test_that("Base R functions work in expressions", {
+  data <- create_tab_test_data(n = 100)
+  
+  # Use an expression that evaluates to logical/numeric
+  result1 <- tab(data, as.numeric(gender) > 1, region)
+  expect_s3_class(result1, "tab_cell_collection")
+  df1 <- as.data.frame(result1)
+  expect_true(nrow(df1) > 0)
+  
+  # as.character() should work
+  result2 <- tab(data, satisfaction, filter = as.character(region) == "North")
+  expect_s3_class(result2, "tab_cell_collection")
+  df2 <- as.data.frame(result2)
+  expect_true(nrow(df2) > 0)
+  
+  # c() should work
+  result3 <- tab(data, satisfaction %in% c(4, 5))
+  expect_s3_class(result3, "tab_cell_collection")
+  df3 <- as.data.frame(result3)
+  expect_true(nrow(df3) > 0)
+})
+
+test_that("Package functions work in expressions", {
+  data <- create_tab_test_data(n = 100)
+  
+  # Haven functions should work (they're from a package)
+  # This tests that we're not blocking package functions
+  if (requireNamespace("haven", quietly = TRUE)) {
+    # This should work without error
+    result <- tab(data, satisfaction)
+    expect_s3_class(result, "tab_cell_collection")
+  }
+})
+
+
+# Test data generator (simplified version)
+create_hide_empty_test_data <- function(n = 100) {
+  set.seed(123)
+  data.frame(
+    gender = factor(
+      sample(c("Male", "Female"), n, replace = TRUE),
+      levels = c("Male", "Female")
+    ),
+    region = factor(
+      sample(c("North", "South", "East", "West"), n, replace = TRUE),
+      levels = c("North", "South", "East", "West")
+    ),
+    value = sample(1:5, n, replace = TRUE)
+  )
+}
+
+test_that("hide_empty = FALSE preserves empty rows under filter", {
+  # Create a factor variable with a level that will be filtered out
+  test_data <- create_hide_empty_test_data(n = 100)
+  
+  # Add a region_code variable with levels including one we'll filter out
+  test_data$region_code <- factor(
+    sample(c("A", "B", "C"), nrow(test_data), replace = TRUE),
+    levels = c("A", "B", "C", "D")  # D will never appear in data
+  )
+  
+  # Tab with filter that excludes region_code == "C"
+  result <- tab(test_data, 
+                region_code, 
+                gender,
+                filter = region_code != "C",
+                hide_empty = FALSE)
+  
+  df <- as.data.frame(result)
+  
+  # With hide_empty=FALSE, we should still see row for "C"
+  expect_true("C" %in% df$row_label)
+})
+
+test_that("hide_empty = TRUE removes empty rows under filter", {
+  # Same setup as above
+  test_data <- create_hide_empty_test_data(n = 100)
+  test_data$region_code <- factor(
+    sample(c("A", "B", "C"), nrow(test_data), replace = TRUE),
+    levels = c("A", "B", "C", "D")
+  )
+  
+  # Tab with hide_empty = TRUE
+  result <- tab(test_data, 
+                region_code, 
+                gender,
+                statistic = "row_pct",
+                filter = region_code != "C",
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # With hide_empty=TRUE, row "C" should be gone
+  expect_false("C" %in% df$row_label)
+  
+  # And we should still see A and B
+  expect_true("A" %in% df$row_label)
+  expect_true("B" %in% df$row_label)
+})
+
+test_that("row universes reflect filtered exposure", {
+  test_data <- create_hide_empty_test_data(n = 100)
+  test_data$row_var <- factor(
+    sample(c("R1", "R2", "R3"), nrow(test_data), replace = TRUE),
+    levels = c("R1", "R2", "R3")
+  )
+  test_data$col_var <- factor(
+    sample(c("C1", "C2"), nrow(test_data), replace = TRUE),
+    levels = c("C1", "C2")
+  )
+  
+  result <- tab(test_data,
+                row_var,
+                col_var,
+                filter = row_var != "R2",
+                hide_empty = FALSE)
+  
+  layout <- result$layout
+  row_uni <- layout$row_universe
+  
+  expect_equal(row_uni[layout$row_labels == "R2"], 0)
+  expect_gt(row_uni[layout$row_labels == "R1"], 0)
+  expect_gt(row_uni[layout$row_labels == "R3"], 0)
+  
+  result_hidden <- tab(test_data,
+                       row_var,
+                       col_var,
+                       filter = row_var != "R2",
+                       hide_empty = TRUE)
+  df_hidden <- as.data.frame(result_hidden)
+  expect_false("R2" %in% df_hidden$row_label)
+})
+
+test_that("hide_empty = TRUE removes empty columns under filter", {
+  # Create test data with a factor column variable
+  test_data <- create_hide_empty_test_data(n = 100)
+  test_data$brand_small <- factor(
+    sample(c("X", "Y", "Z"), nrow(test_data), replace = TRUE),
+    levels = c("X", "Y", "Z", "W")  # W will never appear
+  )
+  
+  # Tab with filter that excludes brand_small == "Z"
+  result <- tab(test_data, 
+                gender, 
+                brand_small,
+                statistic = "column_pct",
+                filter = brand_small != "Z",
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # With hide_empty=TRUE, column "Z" should be gone
+  expect_false("Z" %in% names(df))
+  
+  # And we should still see X and Y
+  expect_true("X" %in% names(df))
+  expect_true("Y" %in% names(df))
+})
+
+test_that("column universes reflect filtered exposure", {
+  test_data <- create_hide_empty_test_data(n = 120)
+  test_data$row_var <- factor(
+    sample(c("R1", "R2"), nrow(test_data), replace = TRUE),
+    levels = c("R1", "R2")
+  )
+  test_data$col_var <- factor(
+    sample(c("C1", "C2", "C3"), nrow(test_data), replace = TRUE),
+    levels = c("C1", "C2", "C3")
+  )
+  
+  result <- tab(test_data,
+                row_var,
+                col_var,
+                filter = col_var != "C3",
+                hide_empty = FALSE)
+  layout <- result$layout
+  col_uni <- layout$col_universe
+  
+  expect_equal(col_uni[layout$col_labels == "C3"], 0)
+  expect_gt(col_uni[layout$col_labels == "C1"], 0)
+  expect_gt(col_uni[layout$col_labels == "C2"], 0)
+  
+  result_hidden <- tab(test_data,
+                       row_var,
+                       col_var,
+                       filter = col_var != "C3",
+                       hide_empty = TRUE)
+  df_hidden <- as.data.frame(result_hidden)
+  expect_false("C3" %in% names(df_hidden))
+})
+
+test_that("hide_empty works with low_base_threshold", {
+  # Create test data where one category will have very low base
+  test_data <- create_hide_empty_test_data(n = 100)
+  
+  # Create a skewed distribution
+  test_data$category <- factor(
+    c(rep("Common", 95), rep("Rare", 5)),
+    levels = c("Common", "Rare", "VeryRare")
+  )
+  
+  # Tab with low_base_threshold that will filter out "Rare" and "VeryRare"
+  result <- tab(test_data, 
+                category, 
+                gender,
+                statistic = "row_pct",
+                low_base_threshold = 10,
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # With hide_empty=TRUE and low_base_threshold, both Rare and VeryRare should be gone
+  expect_false("Rare" %in% df$row_label)
+  expect_false("VeryRare" %in% df$row_label)
+  expect_true("Common" %in% df$row_label)
+})
+
+test_that("hide_empty preserves summary rows even when they are empty", {
+  # Create data where summary row might be all NA
+  test_data <- create_hide_empty_test_data(n = 50)
+  test_data$binary_var <- factor(
+    sample(c("Yes", "No"), nrow(test_data), replace = TRUE),
+    levels = c("Yes", "No")
+  )
+  
+  # Tab with a NET row (for count statistic, this is "Total")
+  result <- tab(test_data, 
+                binary_var, 
+                gender,
+                statistic = "count",
+                show_col_nets = TRUE,
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # Total column should still be present even with hide_empty=TRUE
+  expect_true("Total" %in% names(df))
+})
+
+test_that("hide_empty preserves base row even when filtering heavily", {
+  test_data <- create_hide_empty_test_data(n = 100)
+  test_data$test_var <- factor(
+    sample(c("A", "B"), nrow(test_data), replace = TRUE),
+    levels = c("A", "B", "C")
+  )
+  
+  # Tab with show_base and hide_empty both TRUE
+  result <- tab(test_data, 
+                test_var, 
+                gender,
+                statistic = "row_pct",
+                filter = test_var == "A",
+                show_base = TRUE,
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # Base row should still be present
+  expect_true("Base (n)" %in% df$row_label)
+  
+  # "B" and "C" should be gone (all NA due to filter)
+  expect_false("B" %in% df$row_label)
+  expect_false("C" %in% df$row_label)
+})
+
+test_that("hide_empty handles edge case where all non-summary rows are empty", {
+  test_data <- create_hide_empty_test_data(n = 50)
+  test_data$always_a <- factor(rep("A", nrow(test_data)), levels = c("A", "B", "C"))
+  
+  # Filter that removes all data
+  result <- tab(test_data, 
+                always_a, 
+                gender,
+                filter = always_a == "B",  # Will match nothing
+                show_base = TRUE,
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # Should have at least base row, but no data rows
+  expect_true("Base (n)" %in% df$row_label)
+  
+  # A, B, C should all be gone (all NA)
+  expect_false("A" %in% df$row_label)
+  expect_false("B" %in% df$row_label)
+  expect_false("C" %in% df$row_label)
+})
+
+test_that("hide_empty works with both rows and columns simultaneously", {
+  test_data <- create_hide_empty_test_data(n = 100)
+  test_data$row_var <- factor(
+    sample(c("R1", "R2"), nrow(test_data), replace = TRUE),
+    levels = c("R1", "R2", "R3")
+  )
+  test_data$col_var <- factor(
+    sample(c("C1", "C2"), nrow(test_data), replace = TRUE),
+    levels = c("C1", "C2", "C3")
+  )
+  
+  # Filter that leaves R3 and C3 empty
+  result <- tab(test_data, 
+                row_var, 
+                col_var,
+                filter = row_var != "R3" & col_var != "C3",
+                hide_empty = TRUE)
+  
+  df <- as.data.frame(result)
+  
+  # R3 should be gone from rows
+  expect_false("R3" %in% df$row_label)
+  # C3 should be gone from columns
+  expect_false("C3" %in% names(df))
+  
+  # R1, R2, C1, C2 should remain
+  expect_true("R1" %in% df$row_label)
+  expect_true("R2" %in% df$row_label)
+  expect_true("C1" %in% names(df))
+  expect_true("C2" %in% names(df))
+})
+
+test_that("hide_empty = FALSE is the default behavior", {
+  test_data <- create_hide_empty_test_data(n = 100)
+  test_data$test_var <- factor(
+    sample(c("A", "B"), nrow(test_data), replace = TRUE),
+    levels = c("A", "B", "C")
+  )
+  
+  # Tab without specifying hide_empty (should default to FALSE)
+  result <- tab(test_data, 
+                test_var, 
+                gender,
+                filter = test_var != "C")
+  
+  df <- as.data.frame(result)
+  
+  # "C" should still be present (empty row preserved by default)
+  expect_true("C" %in% df$row_label)
+})

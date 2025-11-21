@@ -81,6 +81,42 @@
 #' including `add_sig()`, `copy_tab()`, `sort_tab()`, `modify_labels()`, 
 #' `tab_to_reactable()`, etc.
 #'
+#' @section Using External Variables:
+#' tab() captures external variable values at creation time, making results
+#' self-contained and serializable:
+#' 
+#' ```r
+#' threshold <- 3
+#' result <- tab(data, A1_a > threshold)
+#' # Expression becomes: A1_a > 3
+#' 
+#' saveRDS(result, "mytab.rds")  # Works - no environment dependency
+#' ```
+#' 
+#' Data columns take priority over external variables with the same name.
+#' 
+#' @section Using Functions:
+#' Functions must be registered as helpers to preserve semantic meaning:
+#' 
+#' ```r
+#' # Register your function
+#' create_helper("my_top_n", processor = function(spec, data, dpdict, ...) {
+#'   # Your logic here - return numeric vector
+#' })
+#' 
+#' # Use in tab
+#' tab(data, my_top_n(satisfaction, 2))
+#' ```
+#' 
+#' For simple one-off logic, evaluate directly in the expression:
+#' ```r
+#' # Instead of creating a function:
+#' tab(data, A1_a > 3 & B1 == 1)  # Direct expression
+#' ```
+#' 
+#' Attempting to use unregistered functions will produce a helpful error
+#' guiding you to register the function or restructure your code.
+#'
 #' @param data Data frame or survey_data object
 #' @param rows Row specification (variable, expression, or helper)
 #' @param cols Column specification (optional)
@@ -92,6 +128,8 @@
 #' @param show_col_nets Whether to display NET/summary columns (NET column for row_pct, Total for count, etc.). Summary columns are always computed, this controls visibility.
 #' @param show_base Whether to display Base row/column. Base is always computed, this controls visibility.
 #' @param low_base_threshold Minimum base count threshold - cells/rows/cols with base below this are filtered out
+#' @param hide_empty Logical; if TRUE, remove rows and columns whose universe exposure
+#'   (after filters/weights) drops to zero. Summary and base rows/columns are always preserved.
 #' @param label_mode How to display labels: "smart" (default - suffix for multi-item, full for single-item), 
 #'   "full" (complete variable label), or "suffix" (extract suffix after separator). Can be overridden 
 #'   in as.data.frame(). Stored in result for use during materialization.
@@ -120,12 +158,26 @@
 #'   arrange_rows(.by = "North", .sort = "desc") %>%
 #'   hide_rows("Don't know") %>%
 #'   as.data.frame()
+#'
+#' # Using external variables (inlined automatically)
+#' desirable_values <- c(4, 5)
+#' result <- tab(data, satisfaction %in% desirable_values)
+#' # Result is self-contained with values inlined
+#'
+#' # External variables in filter
+#' min_age <- 25
+#' result <- tab(data, satisfaction, gender, filter = age > min_age)
+#'
+#' # External variables in helper arguments
+#' n_boxes <- 2
+#' result <- tab(data, top_box(satisfaction, n_boxes))
 #' }
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
                 show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
                 low_base_threshold = NULL,
+                hide_empty = FALSE,
                 label_mode = c("smart", "full", "suffix"),
                 helpers = NULL, stats = NULL, fuzzy_match = FALSE,
                 ...) {
@@ -428,7 +480,15 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     
     # Store filter specification for cell metadata
     base_filter_spec <- filter_parsed
-    base_filter_expr <- rlang::quo_get_expr(filter_quo)
+    
+    # Resolve variables in the filter expression for metadata
+    if (rlang::is_quosure(filter_quo)) {
+      env <- rlang::quo_get_env(filter_quo)
+      raw_expr <- rlang::quo_get_expr(filter_quo)
+      base_filter_expr <- resolve_external_variables(raw_expr, data, env, names(all_helpers))
+    } else {
+      base_filter_expr <- rlang::quo_get_expr(filter_quo)
+    }
   }
   
   ## Parse row and column specs ------------------------------------------------
@@ -783,6 +843,11 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Stage 2: Allocate to grid
   layout <- allocate_cells_to_grid(store, row_defs, col_defs, cell_pool)
   
+  # Optionally prune empty rows/columns while preserving summary semantics.
+  if (isTRUE(hide_empty)) {
+    layout <- .prune_empty_dimensions(layout)
+  }
+  
   # Preserve filter_rules in layout
   layout$filter_rules <- filter_rules
   
@@ -926,6 +991,135 @@ filter_low_base_cells <- function(layout, store, threshold) {
   )
   
   return(layout)
+}
+
+#' Prune empty rows and columns from a layout
+#'
+#' Removes rows and columns that are empty based on base semantics after
+#' allocation, while preserving summary rows and columns (e.g., NET/Total).
+#' A cell is considered empty if no cell is allocated OR its base is NA or 0.
+#' This operates at the layout level and uses the cell store for base checks.
+#'
+#' @param layout Layout list with grid, defs, and universe metadata
+#' @keywords internal
+.prune_empty_dimensions <- function(layout) {
+  grid <- layout$grid
+  if (is.null(grid) || length(grid) == 0) {
+    return(layout)
+  }
+  
+  n_rows <- nrow(grid)
+  n_cols <- ncol(grid)
+  
+  if (n_rows == 0L || n_cols == 0L) {
+    return(layout)
+  }
+  
+  # Identify summary rows using layout_defs when available
+  is_summary_row <- logical(n_rows)
+  if (!is.null(layout$row_defs) && length(layout$row_defs) == n_rows) {
+    for (i in seq_along(layout$row_defs)) {
+      row_def <- layout$row_defs[[i]]
+      if (!is.null(row_def$is_summary_row_matcher)) {
+        is_summary_row[i] <- TRUE
+      }
+    }
+  } else if (!is.null(layout$has_summary_row) && isTRUE(layout$has_summary_row)) {
+    is_summary_row[n_rows] <- TRUE
+  }
+  
+  # Identify summary columns using layout_defs when available
+  is_summary_col <- logical(n_cols)
+  if (!is.null(layout$col_defs) && length(layout$col_defs) == n_cols) {
+    for (j in seq_along(layout$col_defs)) {
+      col_def <- layout$col_defs[[j]]
+      if (!is.null(col_def$is_summary_col_matcher)) {
+        is_summary_col[j] <- TRUE
+      }
+    }
+  } else if (!is.null(layout$has_summary_col) && isTRUE(layout$has_summary_col)) {
+    is_summary_col[n_cols] <- TRUE
+  }
+  
+  row_universe <- layout$row_universe
+  col_universe <- layout$col_universe
+  if (is.null(row_universe) || length(row_universe) != n_rows) {
+    row_universe <- rep(NA_real_, n_rows)
+  }
+  if (is.null(col_universe) || length(col_universe) != n_cols) {
+    col_universe <- rep(NA_real_, n_cols)
+  }
+  
+  non_summary_cols <- which(!is_summary_col)
+  non_summary_rows <- which(!is_summary_row)
+  
+  row_empty_universe <- ifelse(is.na(row_universe), FALSE, row_universe == 0)
+  col_empty_universe <- ifelse(is.na(col_universe), FALSE, col_universe == 0)
+  
+  row_empty_grid <- if (length(non_summary_cols) == 0L) {
+    rep(FALSE, n_rows)
+  } else {
+    apply(grid[, non_summary_cols, drop = FALSE], 1L, function(row) all(is.na(row)))
+  }
+  
+  col_empty_grid <- if (length(non_summary_rows) == 0L) {
+    rep(FALSE, n_cols)
+  } else {
+    apply(grid[non_summary_rows, , drop = FALSE], 2L, function(col) all(is.na(col)))
+  }
+  
+  row_empty <- row_empty_universe | row_empty_grid
+  col_empty <- col_empty_universe | col_empty_grid
+  
+  # Keep rows/cols that are not empty OR are summary
+  rows_to_keep <- !row_empty | is_summary_row
+  cols_to_keep <- !col_empty | is_summary_col
+  
+  # Apply pruning if needed
+  if (!all(rows_to_keep)) {
+    grid <- grid[rows_to_keep, , drop = FALSE]
+    if (!is.null(layout$row_labels) && length(layout$row_labels) == n_rows) {
+      layout$row_labels <- layout$row_labels[rows_to_keep]
+    }
+    if (!is.null(layout$row_defs) && length(layout$row_defs) == n_rows) {
+      layout$row_defs <- layout$row_defs[rows_to_keep]
+    }
+    if (!is.null(layout$row_universe) && length(layout$row_universe) == n_rows) {
+      layout$row_universe <- layout$row_universe[rows_to_keep]
+    }
+    n_rows <- nrow(grid)
+  }
+  
+  if (!all(cols_to_keep)) {
+    grid <- grid[, cols_to_keep, drop = FALSE]
+    if (!is.null(layout$col_labels) && length(layout$col_labels) == n_cols) {
+      layout$col_labels <- layout$col_labels[cols_to_keep]
+    }
+    if (!is.null(layout$col_defs) && length(layout$col_defs) == n_cols) {
+      layout$col_defs <- layout$col_defs[cols_to_keep]
+    }
+    if (!is.null(layout$col_universe) && length(layout$col_universe) == n_cols) {
+      layout$col_universe <- layout$col_universe[cols_to_keep]
+    }
+    n_cols <- ncol(grid)
+  }
+  
+  layout$grid <- grid
+  
+  # Recompute summary flags based on remaining defs
+  if (!is.null(layout$row_defs) && length(layout$row_defs) == n_rows) {
+    layout$has_summary_row <- any(sapply(layout$row_defs, function(d) {
+      !is.null(d$is_summary_row_matcher)
+    }))
+  }
+  
+  if (!is.null(layout$col_defs) && length(layout$col_defs) == n_cols) {
+    layout$has_summary_col <- any(sapply(layout$col_defs, function(d) {
+      !is.null(d$is_summary_col_matcher)
+    }))
+  }
+  
+  layout
 }
 
 ##### Glue tab #####

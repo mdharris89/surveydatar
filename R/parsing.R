@@ -1,15 +1,140 @@
 # Parsing and Formula Conversion
 # 
 # This file handles the parse → expand → array pipeline:
-# 1. parse_table_formula: Parse NSE expressions into structured specifications
-# 2. expand_variables: Expand categorical variables and question groups
-# 3. formula_to_array: Convert specifications to numeric arrays for computation
-# 4. process_helper: Evaluate helper functions to get arrays (full processor)
-# 5. process_helper_for_specs: Extract components from spec generators (banner only)
-# 6. prepare_eval_data: Convert haven_labelled to numeric for expression evaluation
+# 1. resolve_external_variables: Inline external variable values, preserve helpers
+# 2. parse_table_formula: Parse NSE expressions into structured specifications
+# 3. expand_variables: Expand categorical variables and question groups
+# 4. formula_to_array: Convert specifications to numeric arrays for computation
+# 5. process_helper: Evaluate helper functions to get arrays (full processor)
+# 6. process_helper_for_specs: Extract components from spec generators (banner only)
+# 7. prepare_eval_data: Convert haven_labelled to numeric for expression evaluation
 #
 # Internal helpers:
 # - .process_banner_arguments: Shared banner argument processing logic
+
+
+#' Resolve External Variables to Values
+#'
+#' Walks expression tree and replaces external variables with their values.
+#' Preserves data column names and registered helper calls.
+#' Errors on unregistered function calls with guidance.
+#'
+#' @param expr R expression
+#' @param data Data frame (to identify data columns)
+#' @param env Environment to resolve external variables from
+#' @param helpers Character vector of registered helper names (to preserve helper calls)
+#' @return Expression with external variables replaced by values
+#' @keywords internal
+resolve_external_variables <- function(expr, data, env, helpers = NULL) {
+  
+  # Get helper names if not provided
+  if (is.null(helpers)) {
+    helpers <- names(.tab_registry$helpers)
+  }
+  
+  # Base cases
+  if (is.null(expr)) {
+    return(expr)
+  }
+  
+  # Literal values - return as-is
+  if (is.numeric(expr) || is.character(expr) || is.logical(expr)) {
+    return(expr)
+  }
+  
+  # Symbol: check priority order
+  if (is.symbol(expr)) {
+    var_name <- as.character(expr)
+    
+    # Priority 1: Data columns stay as symbols
+    if (var_name %in% names(data)) {
+      return(expr)
+    }
+    
+    # Priority 2: Check if it's an external variable
+    if (!is.null(env) && exists(var_name, envir = env, inherits = TRUE)) {
+      value <- get(var_name, envir = env, inherits = TRUE)
+      
+      # Functions are NOT allowed UNLESS they're from a package/namespace/base
+      if (is.function(value)) {
+        fn_env <- environment(value)
+        # Error only if it's NOT from a package/namespace/base
+        if (!is.null(fn_env) && !isNamespace(fn_env) && !identical(fn_env, baseenv())) {
+          stop(
+            "Function '", var_name, "' used in expression but not registered as helper.\n\n",
+            "To use functions in tab():\n",
+            "  1. Register as helper: create_helper('", var_name, "', processor = ...)\n",
+            "  2. Or evaluate outside tab() and use the result\n\n",
+            "Example registration:\n",
+            "  create_helper('", var_name, "', function(spec, data, dpdict, ...) {\n",
+            "    # Return numeric vector of length nrow(data)\n",
+            "  })",
+            call. = FALSE
+          )
+        }
+        # Package/base functions: keep as symbol (don't inline)
+        return(expr)
+      }
+      
+      # Non-function values get inlined
+      return(value)
+    }
+    
+    # Priority 3: Unknown symbols stay as-is (will error later if needed)
+    return(expr)
+  }
+  
+  # Call: check if registered helper, then recursively resolve
+  if (is.call(expr)) {
+    fn <- as.character(expr[[1]])
+    
+    # Registered helpers stay symbolic (but resolve their arguments)
+    if (fn %in% helpers) {
+      # Recursively resolve arguments safely (preserving NULLs)
+      expr_list <- as.list(expr)
+      args <- expr_list[-1]
+      resolved_args <- lapply(args, function(arg) {
+        resolve_external_variables(arg, data, env, helpers)
+      })
+      return(as.call(c(list(expr_list[[1]]), resolved_args)))
+    }
+    
+    # Check if it's an unregistered function call
+    if (!is.null(env) && exists(fn, envir = env, inherits = TRUE)) {
+      fn_value <- get(fn, envir = env, inherits = TRUE)
+      
+      if (is.function(fn_value)) {
+        fn_env <- environment(fn_value)
+        # Error only if it's NOT from a package/namespace/base
+        if (!is.null(fn_env) && !isNamespace(fn_env) && !identical(fn_env, baseenv())) {
+          stop(
+            "Function '", fn, "' used in expression but not registered as helper.\n\n",
+            "To use functions in tab():\n",
+            "  1. Register as helper: create_helper('", fn, "', processor = ...)\n",
+            "  2. Or evaluate outside tab() and use the result\n\n",
+            "Example registration:\n",
+            "  create_helper('", fn, "', function(spec, data, dpdict, ...) {\n",
+            "    # Return numeric vector of length nrow(data)\n",
+            "  })",
+            call. = FALSE
+          )
+        }
+      }
+    }
+    
+    # Standard R operators and other calls - recursively resolve arguments
+    expr_list <- as.list(expr)
+    args <- expr_list[-1]
+    resolved_args <- lapply(args, function(arg) {
+      resolve_external_variables(arg, data, env, helpers)
+    })
+    
+    return(as.call(c(list(expr_list[[1]]), resolved_args)))
+  }
+  
+  # For pairlists and other language objects, return as-is
+  expr
+}
 
 
 #' Parse table formula expressions using NSE
@@ -26,11 +151,24 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     helpers <- .tab_registry$helpers
   }
 
-  # Extract expression from quosure if needed
+  # Extract expression and environment from quosure if needed
   if (rlang::is_quosure(expr)) {
+    env <- rlang::quo_get_env(expr)
     actual_expr <- rlang::quo_get_expr(expr)
   } else {
+    env <- NULL
     actual_expr <- expr
+  }
+  
+  # Resolve external variables to values before parsing
+  # This inlines variable values but preserves helper calls and data columns
+  if (!is.null(env)) {
+    actual_expr <- resolve_external_variables(
+      actual_expr, 
+      data, 
+      env, 
+      helpers = names(helpers)
+    )
   }
 
   # Check if it's a tab_helper object (evaluated helper function)
@@ -46,7 +184,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     ))
   }
 
-  expr_text <- rlang::as_label(expr)
+  expr_text <- deparse1(actual_expr)
 
   # Handle simple variable names
   if (rlang::is_symbol(actual_expr)) {
@@ -63,7 +201,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     args <- rlang::call_args(actual_expr)
     return(list(
       type = "multiplication",
-      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict, all_helpers = all_helpers)),
+      components = lapply(args, function(x) parse_table_formula(x, data, dpdict, all_helpers = all_helpers)),
       label = expr_text
     ))
   }
@@ -73,7 +211,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     args <- rlang::call_args(actual_expr)
     return(list(
       type = "subtraction",
-      components = lapply(args, function(x) parse_table_formula(rlang::enquo(x), data, dpdict, all_helpers = all_helpers)),
+      components = lapply(args, function(x) parse_table_formula(x, data, dpdict, all_helpers = all_helpers)),
       label = expr_text
     ))
   }

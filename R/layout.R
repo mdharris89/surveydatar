@@ -3262,6 +3262,8 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
   # Initialize grid and collision tracker
   grid <- matrix(NA_character_, nrow = n_rows, ncol = n_cols)
   collision_tracker <- matrix(list(), nrow = n_rows, ncol = n_cols)
+  row_universe <- rep(NA_real_, n_rows)
+  col_universe <- rep(NA_real_, n_cols)
   
   # Get cells from pool
   if (length(cell_pool) == 0) {
@@ -3305,6 +3307,13 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
       } else if (length(qualifying_ids) == 1) {
         # Exactly one match - assign
         grid[i, j] <- qualifying_ids[1]
+        cell <- get_cell(store, grid[i, j])
+        if (is.na(row_universe[i]) && !is.null(cell$specification$row_universe)) {
+          row_universe[i] <- cell$specification$row_universe
+        }
+        if (is.na(col_universe[j]) && !is.null(cell$specification$col_universe)) {
+          col_universe[j] <- cell$specification$col_universe
+        }
       } else {
         # Collision - multiple cells qualify
         collision_tracker[[i, j]] <- qualifying_ids
@@ -3317,10 +3326,13 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
   
   if (has_collisions) {
     # Expand grid to handle collisions
-    return(expand_grid_for_collisions(grid, collision_tracker, row_defs, col_defs))
+    return(expand_grid_for_collisions(grid, collision_tracker, row_defs, col_defs, store))
   }
   
   # No collisions - return layout
+  row_universe[is.na(row_universe)] <- 0
+  col_universe[is.na(col_universe)] <- 0
+  
   list(
     type = "explicit_grid",
     grid = grid,
@@ -3329,7 +3341,9 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
     row_labels = sapply(row_defs, `[[`, "label"),
     col_labels = sapply(col_defs, `[[`, "label"),
     has_summary_row = any(sapply(row_defs, function(d) !is.null(d$is_summary_row_matcher))),
-    has_summary_col = any(sapply(col_defs, function(d) !is.null(d$is_summary_col_matcher)))
+    has_summary_col = any(sapply(col_defs, function(d) !is.null(d$is_summary_col_matcher))),
+    row_universe = row_universe,
+    col_universe = col_universe
   )
 }
 
@@ -3366,7 +3380,7 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
 #' @param col_defs List of layout_def objects for columns
 #' @return Layout object with expanded grid
 #' @keywords internal
-expand_grid_for_collisions <- function(grid, collision_tracker, row_defs, col_defs) {
+expand_grid_for_collisions <- function(grid, collision_tracker, row_defs, col_defs, store) {
   # Identify which rows and columns have collisions
   row_has_collision <- apply(collision_tracker, 1, function(row) {
     any(sapply(row, length) > 1)
@@ -3465,6 +3479,27 @@ expand_grid_for_collisions <- function(grid, collision_tracker, row_defs, col_de
     }
   }
   
+  row_universe <- rep(NA_real_, length(row_defs))
+  col_universe <- rep(NA_real_, length(col_defs))
+  
+  for (i in seq_len(nrow(new_grid))) {
+    for (j in seq_len(ncol(new_grid))) {
+      cid <- new_grid[i, j]
+      if (!is.na(cid)) {
+        cell <- get_cell(store, cid)
+        if (is.na(row_universe[i]) && !is.null(cell$specification$row_universe)) {
+          row_universe[i] <- cell$specification$row_universe
+        }
+        if (is.na(col_universe[j]) && !is.null(cell$specification$col_universe)) {
+          col_universe[j] <- cell$specification$col_universe
+        }
+      }
+    }
+  }
+  
+  row_universe[is.na(row_universe)] <- 0
+  col_universe[is.na(col_universe)] <- 0
+  
   # Return expanded layout
   list(
     type = "explicit_grid",
@@ -3474,7 +3509,9 @@ expand_grid_for_collisions <- function(grid, collision_tracker, row_defs, col_de
     row_labels = sapply(row_defs, `[[`, "label"),
     col_labels = sapply(col_defs, `[[`, "label"),
     has_summary_row = any(sapply(row_defs, function(d) !is.null(d$is_summary_row_matcher))),
-    has_summary_col = any(sapply(col_defs, function(d) !is.null(d$is_summary_col_matcher)))
+    has_summary_col = any(sapply(col_defs, function(d) !is.null(d$is_summary_col_matcher))),
+    row_universe = row_universe,
+    col_universe = col_universe
   )
 }
 
@@ -3547,6 +3584,12 @@ remove_empty_rows_cols <- function(tab_result) {
     tab_result$layout$col_defs <- tab_result$layout$col_defs[non_empty_cols]
     tab_result$layout$row_labels <- sapply(tab_result$layout$row_defs, `[[`, "label")
     tab_result$layout$col_labels <- sapply(tab_result$layout$col_defs, `[[`, "label")
+    if (!is.null(tab_result$layout$row_universe)) {
+      tab_result$layout$row_universe <- tab_result$layout$row_universe[non_empty_rows]
+    }
+    if (!is.null(tab_result$layout$col_universe)) {
+      tab_result$layout$col_universe <- tab_result$layout$col_universe[non_empty_cols]
+    }
   }
   
   tab_result

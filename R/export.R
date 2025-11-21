@@ -1213,6 +1213,12 @@ as.data.frame.tab_result <- function(x,
   attr(df, "statistic") <- x$statistic
   attr(df, "call") <- x$call
   attr(df, "layout") <- x$layout
+  if (!is.null(x$layout$row_universe)) {
+    attr(df, "row_universe") <- x$layout$row_universe
+  }
+  if (!is.null(x$layout$col_universe)) {
+    attr(df, "col_universe") <- x$layout$col_universe
+  }
   
   # Recreate arrays attribute (for add_sig compatibility)
   if (!is.null(x$arrays)) {

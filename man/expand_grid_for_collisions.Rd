@@ -4,9 +4,9 @@
 \alias{expand_grid_for_collisions}
 \title{Expand Grid for Collision Handling}
 \usage{
-expand_grid_for_collisions(grid, collision_tracker, row_defs, col_defs)
+expand_grid_for_collisions(grid, collision_tracker, row_defs, col_defs, store)
 
-expand_grid_for_collisions(grid, collision_tracker, row_defs, col_defs)
+expand_grid_for_collisions(grid, collision_tracker, row_defs, col_defs, store)
 }
 \arguments{
 \item{grid}{Current grid matrix (may have empty positions where collisions exist)}

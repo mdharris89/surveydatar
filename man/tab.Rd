@@ -16,6 +16,7 @@ tab(
   show_col_nets = TRUE,
   show_base = TRUE,
   low_base_threshold = NULL,
+  hide_empty = FALSE,
   label_mode = c("smart", "full", "suffix"),
   helpers = NULL,
   stats = NULL,
@@ -45,6 +46,9 @@ tab(
 \item{show_base}{Whether to display Base row/column. Base is always computed, this controls visibility.}
 
 \item{low_base_threshold}{Minimum base count threshold - cells/rows/cols with base below this are filtered out}
+
+\item{hide_empty}{Logical; if TRUE, remove rows and columns whose universe exposure
+(after filters/weights) drops to zero. Summary and base rows/columns are always preserved.}
 
 \item{label_mode}{How to display labels: "smart" (default - suffix for multi-item, full for single-item),
 "full" (complete variable label), or "suffix" (extract suffix after separator). Can be overridden
@@ -141,6 +145,44 @@ including \code{add_sig()}, \code{copy_tab()}, \code{sort_tab()}, \code{modify_l
 \code{tab_to_reactable()}, etc.
 }
 
+\section{Using External Variables}{
+
+tab() captures external variable values at creation time, making results
+self-contained and serializable:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{threshold <- 3
+result <- tab(data, A1_a > threshold)
+# Expression becomes: A1_a > 3
+
+saveRDS(result, "mytab.rds")  # Works - no environment dependency
+}\if{html}{\out{</div>}}
+
+Data columns take priority over external variables with the same name.
+}
+
+\section{Using Functions}{
+
+Functions must be registered as helpers to preserve semantic meaning:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Register your function
+create_helper("my_top_n", processor = function(spec, data, dpdict, ...) \{
+  # Your logic here - return numeric vector
+\})
+
+# Use in tab
+tab(data, my_top_n(satisfaction, 2))
+}\if{html}{\out{</div>}}
+
+For simple one-off logic, evaluate directly in the expression:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Instead of creating a function:
+tab(data, A1_a > 3 & B1 == 1)  # Direct expression
+}\if{html}{\out{</div>}}
+
+Attempting to use unregistered functions will produce a helpful error
+guiding you to register the function or restructure your code.
+}
+
 \examples{
 \dontrun{
 # Basic usage
@@ -160,5 +202,18 @@ result <- tab(data, satisfaction, region, filter = age > 18, weight = "wgt") \%>
   arrange_rows(.by = "North", .sort = "desc") \%>\%
   hide_rows("Don't know") \%>\%
   as.data.frame()
+
+# Using external variables (inlined automatically)
+desirable_values <- c(4, 5)
+result <- tab(data, satisfaction \%in\% desirable_values)
+# Result is self-contained with values inlined
+
+# External variables in filter
+min_age <- 25
+result <- tab(data, satisfaction, gender, filter = age > min_age)
+
+# External variables in helper arguments
+n_boxes <- 2
+result <- tab(data, top_box(satisfaction, n_boxes))
 }
 }
