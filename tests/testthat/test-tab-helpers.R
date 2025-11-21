@@ -1357,7 +1357,7 @@ test_that("filters support helpers with same expressiveness as rows", {
   expect_equal(dim(result1), dim(result2))  # Should give same result
 
   # Test 3: Helper with c() and unquoted names (previously failed)
-  result3 <- tab(data, satisfaction, gender, filter = any_positive(c(q1_1, q1_2)))
+  result3 <- tab(data, satisfaction, gender, filter = any_positive(c(q1_1, q1_2)), hide_empty = FALSE)
   expect_s3_class(result3, "tab_result")
   # Should have filtered to only respondents with q1_1 OR q1_2 positive
   base_row <- result3[result3$row_label == "Base (n)", ]
@@ -1374,7 +1374,7 @@ test_that("filters support helpers with same expressiveness as rows", {
 
   # Test 5: Verify filter and rows give same result when using same helper
   # Using in rows
-  result_rows <- tab(data, any_positive(q1), gender)
+  result_rows <- tab(data, any_positive(q1), gender, hide_empty = FALSE)
   any_positive_row <- result_rows[grep("any_positive", result_rows$row_label), ]
 
   # Using as filter
@@ -2081,7 +2081,7 @@ test_that("pivot_to_grid handles sparse data (zero responses)", {
   # Force all A2_4 responses to be 3 or 4 (no 1s or 2s)
   test_data_sparse$dat$A2_4[test_data_sparse$dat$A2_4 <= 2] <- 3
   
-  result <- tab(test_data_sparse, A2_a, statistic = "column_pct") %>% pivot_to_grid()
+  result <- tab(test_data_sparse, A2_a, statistic = "column_pct", hide_empty = FALSE) %>% pivot_to_grid()
   grid_df <- as.data.frame(result, show_base = FALSE)
   
   whiteboards_row <- grid_df[grid_df$row_label == "How often do you create - Whiteboards", ]

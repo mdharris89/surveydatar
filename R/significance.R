@@ -84,6 +84,13 @@ add_sig_all <- function(tab_result,
 
   # Get statistic info to identify summary columns
   statistic <- tab_result$statistic
+  
+  # Check for mixed-statistic tabs (cannot perform significance testing)
+  if (is.null(statistic)) {
+    stop("Cannot perform significance testing on mixed-statistic tabs. ",
+         "This tab was created by gluing tabs with different statistics. ",
+         "Apply add_sig() before gluing, or glue tabs with the same statistic.")
+  }
 
   # Build list of columns to exclude
   columns_to_exclude <- character()
@@ -616,6 +623,13 @@ add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
   grid <- tab_result$layout$grid
   arrays <- tab_result$arrays
   statistic <- tab_result$statistic
+  
+  # Check for mixed-statistic tabs (cannot perform significance testing)
+  if (is.null(statistic)) {
+    stop("Cannot perform significance testing on mixed-statistic tabs. ",
+         "This tab was created by gluing tabs with different statistics. ",
+         "Apply add_sig() before gluing, or glue tabs with the same statistic.")
+  }
   
   # Build result matrix directly from grid (no materialization)
   result_matrix <- extract_result_matrix_from_grid(store, grid)

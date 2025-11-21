@@ -549,8 +549,26 @@ display_reactable <- function(x,
       return(.format_base_value(value))
     }
     
+    # Determine which statistic to use for formatting
+    format_fn <- stat_info$stat$format_fn  # Default
+    
+    # For mixed-statistic tabs, lookup cell-specific statistic
+    if (isTRUE(stat_info$is_mixed)) {
+      # Map footer row index to original data row index
+      original_index <- which(x$data$row_label == row_label)[1]
+      if (!is.na(original_index)) {
+        cell_info <- .get_cell_spec_for_position(x, original_index, col_name)
+        if (!is.null(cell_info) && !is.null(cell_info$computation$statistic)) {
+          cell_stat <- get_statistic(cell_info$computation$statistic)
+          if (!is.null(cell_stat)) {
+            format_fn <- cell_stat$format_fn
+          }
+        }
+      }
+    }
+    
     # Format regular values with controlled decimal places
-    formatted <- .format_value_with_decimals(value, settings$decimal_places, stat_info$stat$format_fn)
+    formatted <- .format_value_with_decimals(value, settings$decimal_places, format_fn)
     
     # Add tooltip for data cells (not base or summary) if enabled
     if (settings$show_tooltips && !is_base_row && !is_base_col && !is_summary_row && !is_summary_col) {
@@ -998,8 +1016,22 @@ display_reactable <- function(x,
       return(.format_base_value(value))
     }
     
+    # Determine which statistic to use for formatting
+    format_fn <- stat_info$stat$format_fn  # Default
+    
+    # For mixed-statistic tabs, lookup cell-specific statistic
+    if (isTRUE(stat_info$is_mixed)) {
+      cell_info <- .get_cell_spec_for_position(x, index, col_name)
+      if (!is.null(cell_info) && !is.null(cell_info$computation$statistic)) {
+        cell_stat <- get_statistic(cell_info$computation$statistic)
+        if (!is.null(cell_stat)) {
+          format_fn <- cell_stat$format_fn
+        }
+      }
+    }
+    
     # Format regular values with controlled decimal places
-    formatted <- .format_value_with_decimals(value, settings$decimal_places, stat_info$stat$format_fn)
+    formatted <- .format_value_with_decimals(value, settings$decimal_places, format_fn)
     
     # Add significance symbol if enabled
     if (settings$sig_symbol && !is.null(metadata$sig_comparison)) {
@@ -1514,7 +1546,8 @@ display_reactable <- function(x,
   
   list(
     specification = cell$specification,
-    base = cell$base
+    base = cell$base,
+    computation = cell$computation
   )
 }
 

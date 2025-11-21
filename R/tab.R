@@ -177,7 +177,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 values = NULL,
                 show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
                 low_base_threshold = NULL,
-                hide_empty = FALSE,
+                hide_empty = TRUE,
                 label_mode = c("smart", "full", "suffix"),
                 helpers = NULL, stats = NULL, fuzzy_match = FALSE,
                 ...) {
@@ -1155,13 +1155,13 @@ glue_tab <- function(tab1, tab2,
     stop("glue_tab() requires tab_cell_collection objects from tab()")
   }
   
-  # Check compatibility
-  check_glue_compatibility(tab1, tab2, direction)
+  # Check compatibility and detect if statistics differ
+  stats_differ <- check_glue_compatibility(tab1, tab2, direction)
   
   if (direction == "cols") {
-    result <- glue_tabs_cols_cellbased(tab1, tab2, sep, prefix)
+    result <- glue_tabs_cols_cellbased(tab1, tab2, sep, prefix, stats_differ)
   } else {
-    result <- glue_tabs_rows_cellbased(tab1, tab2, sep, prefix)
+    result <- glue_tabs_rows_cellbased(tab1, tab2, sep, prefix, stats_differ)
   }
   
   return(result)
@@ -1170,12 +1170,17 @@ glue_tab <- function(tab1, tab2,
 #' Check if two tab results can be glued together
 #' @keywords internal
 check_glue_compatibility <- function(tab1, tab2, direction) {
-  # Check statistics match
-  stat1_id <- tab1$statistic$id
-  stat2_id <- tab2$statistic$id
+  # Check statistics match (handle NULL statistics from previously glued tabs)
+  stat1 <- tab1$statistic
+  stat2 <- tab2$statistic
   
-  if (stat1_id != stat2_id) {
-    warning("Gluing tabs with different statistics: ", stat1_id, " and ", stat2_id)
+  # If either is NULL (from a previous glue with mixed stats), they differ
+  if (is.null(stat1) || is.null(stat2)) {
+    stats_differ <- TRUE
+  } else {
+    stat1_id <- stat1$id
+    stat2_id <- stat2$id
+    stats_differ <- (stat1_id != stat2_id)
   }
   
   if (direction == "cols") {
@@ -1198,7 +1203,7 @@ check_glue_compatibility <- function(tab1, tab2, direction) {
     }
   }
   
-  invisible(TRUE)
+  invisible(stats_differ)
 }
 
 #' Merge two cell stores
@@ -1227,7 +1232,7 @@ merge_cell_stores <- function(store1, store2) {
 
 #' Glue tabs side-by-side (columns)
 #' @keywords internal
-glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
+glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FALSE) {
   # Merge cell stores
   merged_result <- merge_cell_stores(tab1$cell_store, tab2$cell_store)
   merged_store <- merged_result$store
@@ -1251,8 +1256,8 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
   
   # Copy cells from tab2 (right side, IDs remapped)
   tab2_grid_subset <- tab2$layout$grid[tab2_row_idx, , drop = FALSE]
-  for (i in 1:nrow(tab2_grid_subset)) {
-    for (j in 1:ncol(tab2_grid_subset)) {
+  for (i in seq_len(nrow(tab2_grid_subset))) {
+    for (j in seq_len(ncol(tab2_grid_subset))) {
       old_id <- tab2_grid_subset[i, j]
       if (!is.na(old_id)) {
         new_id <- id_mapping[[as.character(old_id)]]
@@ -1269,12 +1274,34 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
                        tab2$layout$col_labels
                      })
   
+  # Combine layout defs if available
+  new_row_defs <- if (!is.null(tab1$layout$row_defs)) {
+    tab1$layout$row_defs[tab1_row_idx]
+  } else {
+    NULL
+  }
+  
+  new_col_defs <- if (!is.null(tab1$layout$col_defs) && !is.null(tab2$layout$col_defs)) {
+    col_defs2 <- tab2$layout$col_defs
+    if (!is.null(prefix)) {
+      col_defs2 <- lapply(col_defs2, function(def) {
+        def$label <- paste0(prefix, sep, def$label)
+        def
+      })
+    }
+    c(tab1$layout$col_defs, col_defs2)
+  } else {
+    NULL
+  }
+  
   # Build new layout
   new_layout <- list(
     type = "explicit_grid",
     grid = new_grid,
     row_labels = common_rows,
     col_labels = new_col_labels,
+    row_defs = new_row_defs,
+    col_defs = new_col_defs,
     has_summary_row = tab1$layout$has_summary_row || tab2$layout$has_summary_row,
     has_summary_col = tab1$layout$has_summary_col || tab2$layout$has_summary_col
   )
@@ -1287,7 +1314,7 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
     values_array = tab1$arrays$values_array
   )
   
-  # Build result
+  # Build result - set statistic to NULL if different statistics were glued
   result <- structure(list(
     cell_store = merged_store,
     layout = new_layout,
@@ -1295,7 +1322,7 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
     base_spec = tab1$base_spec,
     data = tab1$data,
     dpdict = tab1$dpdict,
-    statistic = tab1$statistic,
+    statistic = if (stats_differ) NULL else tab1$statistic,
     calc_base = tab1$calc_base,
     derive_operations = list(),
     formatting = list(),
@@ -1307,7 +1334,7 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix) {
 
 #' Glue tabs vertically (rows)
 #' @keywords internal
-glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix) {
+glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FALSE) {
   # Merge cell stores
   merged_result <- merge_cell_stores(tab1$cell_store, tab2$cell_store)
   merged_store <- merged_result$store
@@ -1331,8 +1358,8 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix) {
   
   # Copy cells from tab2 (bottom, IDs remapped)
   tab2_grid_subset <- tab2$layout$grid[, tab2_col_idx, drop = FALSE]
-  for (i in 1:nrow(tab2_grid_subset)) {
-    for (j in 1:ncol(tab2_grid_subset)) {
+  for (i in seq_len(nrow(tab2_grid_subset))) {
+    for (j in seq_len(ncol(tab2_grid_subset))) {
       old_id <- tab2_grid_subset[i, j]
       if (!is.na(old_id)) {
         new_id <- id_mapping[[as.character(old_id)]]
@@ -1349,12 +1376,34 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix) {
                        tab2$layout$row_labels
                      })
   
+  # Combine layout defs if available
+  new_row_defs <- if (!is.null(tab1$layout$row_defs) && !is.null(tab2$layout$row_defs)) {
+    row_defs2 <- tab2$layout$row_defs
+    if (!is.null(prefix)) {
+      row_defs2 <- lapply(row_defs2, function(def) {
+        def$label <- paste0(prefix, sep, def$label)
+        def
+      })
+    }
+    c(tab1$layout$row_defs, row_defs2)
+  } else {
+    NULL
+  }
+  
+  new_col_defs <- if (!is.null(tab1$layout$col_defs)) {
+    tab1$layout$col_defs[tab1_col_idx]
+  } else {
+    NULL
+  }
+  
   # Build new layout
   new_layout <- list(
     type = "explicit_grid",
     grid = new_grid,
     row_labels = new_row_labels,
     col_labels = common_cols,
+    row_defs = new_row_defs,
+    col_defs = new_col_defs,
     has_summary_row = tab1$layout$has_summary_row || tab2$layout$has_summary_row,
     has_summary_col = tab1$layout$has_summary_col || tab2$layout$has_summary_col
   )
@@ -1367,7 +1416,7 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix) {
     values_array = tab1$arrays$values_array
   )
   
-  # Build result
+  # Build result - set statistic to NULL if different statistics were glued
   result <- structure(list(
     cell_store = merged_store,
     layout = new_layout,
@@ -1375,7 +1424,7 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix) {
     base_spec = tab1$base_spec,
     data = tab1$data,
     dpdict = tab1$dpdict,
-    statistic = tab1$statistic,
+    statistic = if (stats_differ) NULL else tab1$statistic,
     calc_base = tab1$calc_base,
     derive_operations = list(),
     formatting = list(),

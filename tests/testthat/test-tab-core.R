@@ -1204,6 +1204,174 @@ test_that("multi_tab handles custom groups and preserves labels", {
   expect_equal(attr(result, "multi_tab_groups"), c("High Satisfaction", "Low Satisfaction"))
 })
 
+##### Unit tests for mixed-statistic gluing #####
+
+test_that("glue_tab with different statistics sets statistic to NULL", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create tabs with different statistics
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, region, statistic = "index")
+  
+  # Glue them together
+  result <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Result should have NULL statistic (indicating mixed statistics)
+  expect_null(result$statistic)
+  
+  # Should still be a valid tab_result
+  expect_s3_class(result, "tab_result")
+  expect_s3_class(result, "tab_cell_collection")
+})
+
+test_that("glue_tab with same statistics preserves statistic", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create tabs with same statistic
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, satisfaction, statistic = "column_pct")
+  
+  # Glue them together
+  result <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Result should preserve the statistic
+  expect_false(is.null(result$statistic))
+  expect_equal(result$statistic$id, "column_pct")
+})
+
+test_that("mixed-statistic tabs format cells correctly", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create tabs with different statistics and different columns
+  tab_pct <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab_idx <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  
+  # Glue them together
+  result <- glue_tab(tab_pct, tab_idx, direction = "cols")
+  
+  # Materialize to data.frame
+  df <- as.data.frame(result)
+  
+  # Check that statistic_matrix was created
+  stat_matrix <- attr(df, "statistic_matrix")
+  expect_false(is.null(stat_matrix))
+  expect_equal(nrow(stat_matrix), nrow(df))
+  
+  # First columns should be column_pct, later columns should be index
+  n_pct_cols <- ncol(tab_pct$layout$grid)
+  expect_true(all(stat_matrix[1, 1:n_pct_cols] == "column_pct", na.rm = TRUE))
+  expect_true(all(stat_matrix[1, (n_pct_cols + 1):ncol(stat_matrix)] == "index", na.rm = TRUE))
+})
+
+test_that("print works with mixed-statistic tabs", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create tabs with different statistics and different columns
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  
+  # Glue them together
+  result <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Should print without error
+  expect_output(print(result), "mixed statistics")
+})
+
+test_that("significance testing fails on mixed-statistic tabs with clear error", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create tabs with different statistics and different columns
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  
+  # Glue them together
+  result <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Attempting to add significance should fail with informative error
+  expect_error(
+    add_sig(result, versus = "North"),
+    "Cannot perform significance testing on mixed-statistic tabs"
+  )
+})
+
+test_that("gluing already-mixed tabs works", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create first mixed tab with different columns
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  mixed1 <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Create another tab with yet another column spec
+  tab3 <- tab(test_survey_data, gender, brand, statistic = "count")
+  
+  # Should be able to glue mixed tab with regular tab
+  expect_no_error({
+    result <- glue_tab(mixed1, tab3, direction = "cols")
+  })
+  
+  # Result should still have NULL statistic
+  expect_null(result$statistic)
+})
+
+test_that("mixed-statistic tabs display correctly in different export formats", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create tabs with different statistics and different columns
+  tab_pct <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab_idx <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  
+  # Glue them together
+  result <- glue_tab(tab_pct, tab_idx, direction = "cols")
+  
+  # Test as.data.frame
+  df <- as.data.frame(result)
+  expect_s3_class(df, "data.frame")
+  expect_true("row_label" %in% names(df))
+  
+  # Test tab_to_flourish with informative message
+  expect_message(
+    tab_to_flourish(result),
+    "mixed statistics"
+  )
+})
+
+test_that("extract_stat_info_safe handles NULL statistic correctly", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create mixed-statistic tab with different columns
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  result <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Extract stat info - should not fail
+  stat_info <- surveydatar:::.extract_stat_info_safe(result)
+  
+  # Should have is_mixed flag
+  expect_true(stat_info$is_mixed)
+  
+  # Should have extracted a statistic from first cell as fallback
+  expect_false(is.null(stat_info$stat))
+  expect_true(stat_info$id %in% c("column_pct", "index"))
+})
+
+test_that("hide_summary works on mixed-statistic tabs", {
+  test_survey_data <- create_survey_data(create_tab_test_data(200))
+  
+  # Create mixed-statistic tab with different columns
+  tab1 <- tab(test_survey_data, gender, region, statistic = "column_pct")
+  tab2 <- tab(test_survey_data, gender, satisfaction, statistic = "index")
+  result <- glue_tab(tab1, tab2, direction = "cols")
+  
+  # Hide summary should work on cell-based mixed-stat tabs  
+  expect_no_error({
+    result2 <- hide_summary(result)
+  })
+  
+  # Result should still be valid
+  expect_s3_class(result2, "tab_result")
+})
+
 ##### Unit tests for more expressive filters #####
 test_that("filters support helpers with same expressiveness as rows", {
   # Use the standard test data
@@ -2541,7 +2709,7 @@ test_that("Data columns take priority over external variables", {
   threshold <- 3
   
   # Should use data column, not external variable
-  result <- tab(data, satisfaction > threshold)
+  result <- tab(data, satisfaction > threshold, hide_empty = FALSE)
   df <- as.data.frame(result)
   
   expect_true(nrow(df) > 0)
@@ -2692,7 +2860,7 @@ test_that("Empty external variables are handled correctly", {
   empty_vec <- numeric(0)
   
   # This should work but match nothing
-  result <- tab(data, satisfaction %in% empty_vec)
+  result <- tab(data, satisfaction %in% empty_vec, hide_empty = FALSE)
   df <- as.data.frame(result)
   
   # Should have rows (the labels) but all zeros or NAs
@@ -2723,19 +2891,19 @@ test_that("Base R functions work in expressions", {
   data <- create_tab_test_data(n = 100)
   
   # Use an expression that evaluates to logical/numeric
-  result1 <- tab(data, as.numeric(gender) > 1, region)
+  result1 <- tab(data, as.numeric(gender) > 1, region, hide_empty = FALSE)
   expect_s3_class(result1, "tab_cell_collection")
   df1 <- as.data.frame(result1)
   expect_true(nrow(df1) > 0)
   
   # as.character() should work
-  result2 <- tab(data, satisfaction, filter = as.character(region) == "North")
+  result2 <- tab(data, satisfaction, filter = as.character(region) == "North", hide_empty = FALSE)
   expect_s3_class(result2, "tab_cell_collection")
   df2 <- as.data.frame(result2)
   expect_true(nrow(df2) > 0)
   
   # c() should work
-  result3 <- tab(data, satisfaction %in% c(4, 5))
+  result3 <- tab(data, satisfaction %in% c(4, 5), hide_empty = FALSE)
   expect_s3_class(result3, "tab_cell_collection")
   df3 <- as.data.frame(result3)
   expect_true(nrow(df3) > 0)
@@ -3037,23 +3205,4 @@ test_that("hide_empty works with both rows and columns simultaneously", {
   expect_true("R2" %in% df$row_label)
   expect_true("C1" %in% names(df))
   expect_true("C2" %in% names(df))
-})
-
-test_that("hide_empty = FALSE is the default behavior", {
-  test_data <- create_hide_empty_test_data(n = 100)
-  test_data$test_var <- factor(
-    sample(c("A", "B"), nrow(test_data), replace = TRUE),
-    levels = c("A", "B", "C")
-  )
-  
-  # Tab without specifying hide_empty (should default to FALSE)
-  result <- tab(test_data, 
-                test_var, 
-                gender,
-                filter = test_var != "C")
-  
-  df <- as.data.frame(result)
-  
-  # "C" should still be present (empty row preserved by default)
-  expect_true("C" %in% df$row_label)
 })

@@ -46,7 +46,9 @@ print.tab_result <- function(x, label_mode = "smart", ...) {
     }
   }
 
-  statistic <- attr(x, "statistic")
+  statistic <- attr(x, "statistic", exact = TRUE)
+  statistic_matrix <- attr(x, "statistic_matrix")  # For mixed-statistic tabs
+  is_mixed_stat <- is.null(statistic)
 
   # Get values variable name if available
   values_var <- attr(x, "values_variable")
@@ -55,28 +57,43 @@ print.tab_result <- function(x, label_mode = "smart", ...) {
   all_sig <- attr(x, "significance")
 
   # Construct header
-  if (statistic$id == "mean" && !is.null(values_var)) {
-    cat("\nCross-tabulation (mean of ", values_var, ")\n", sep = "")
+  if (is_mixed_stat) {
+    cat("\nCross-tabulation (mixed statistics)\n", sep = "")
   } else {
-    cat("\nCross-tabulation (", statistic$id, ")\n", sep = "")
+    # Defensive check for atomic statistic
+    if (!is.list(statistic)) {
+      cat("\nCross-tabulation (", as.character(statistic), ")\n", sep = "")
+    } else if (statistic$id == "mean" && !is.null(values_var)) {
+      cat("\nCross-tabulation (mean of ", values_var, ")\n", sep = "")
+    } else {
+      cat("\nCross-tabulation (", statistic$id, ")\n", sep = "")
+    }
   }
   cat(rep("-", 50), "\n", sep = "")
+
+  # For mixed-stat tabs, get statistic info from first cell for base_label
+  if (is_mixed_stat) {
+    stat_info <- .extract_stat_info_safe(x)
+    statistic <- stat_info$stat  # Use first cell's statistic for structure
+  }
 
   # Create column letter mapping
   col_names <- names(x)[-1]
 
-  non_base_cols <- col_names[col_names != statistic$base_label]
+  # Defensive check for base_label access
+  base_label <- if (is.list(statistic)) statistic$base_label else "Base (n)"
+  non_base_cols <- col_names[col_names != base_label]
 
   col_letters <- LETTERS[seq_along(non_base_cols)]
   names(col_letters) <- non_base_cols
 
   # Create a copy for formatting to avoid modifying the original
   x_formatted        <- x
-  base_row_idx <- which(x_formatted$row_label == statistic$base_label)
+  base_row_idx <- which(x_formatted$row_label == base_label)
 
   # Identify data rows (exclude base and summary rows) for proper indexing
-  exclude_row_labels <- c(statistic$base_label)
-  if (!is.null(statistic$summary_row)) {
+  exclude_row_labels <- c(base_label)
+  if (is.list(statistic) && !is.null(statistic$summary_row)) {
     exclude_row_labels <- c(exclude_row_labels, statistic$summary_row)
   }
   data_row_mask <- !(x$row_label %in% exclude_row_labels)
@@ -90,7 +107,7 @@ print.tab_result <- function(x, label_mode = "smart", ...) {
     is_base_column <- FALSE
     if (!is.null(base_orientation) && base_orientation == "row") {
       # If base is displayed as a column (row orientation), check if this is it
-      is_base_column <- col == statistic$base_label
+      is_base_column <- col == base_label
     }
     if (is_base_column) {
       next  # Skip formatting for base column
@@ -100,7 +117,27 @@ print.tab_result <- function(x, label_mode = "smart", ...) {
       if (i %in% base_row_idx || is_base_column) {
         as.character(orig[i])
       } else if (is.numeric(orig[i]) && !is.na(orig[i])) {
-        formatted_val <- statistic$format_fn(orig[i])
+        # For mixed-statistic tabs, lookup cell-specific statistic
+        if (is_mixed_stat && !is.null(statistic_matrix)) {
+          stat_id <- statistic_matrix[i, col_idx]
+          if (!is.na(stat_id)) {
+            cell_stat <- get_statistic(stat_id)
+            if (!is.null(cell_stat)) {
+              formatted_val <- cell_stat$format_fn(orig[i])
+            } else {
+              formatted_val <- as.character(orig[i])
+            }
+          } else {
+            formatted_val <- as.character(orig[i])
+          }
+        } else {
+          # Defensive check
+          if (is.list(statistic)) {
+            formatted_val <- statistic$format_fn(orig[i])
+          } else {
+            formatted_val <- as.character(orig[i])
+          }
+        }
 
         # Add significance indicators from all tests
         if (!is.null(all_sig) && data_row_mask[i]) {
@@ -168,7 +205,7 @@ print.tab_result <- function(x, label_mode = "smart", ...) {
   letter_index <- 1
   for (i in seq_along(col_names)) {
     col_name <- col_names[i]
-    if (col_name == statistic$base_label) {
+    if (col_name == base_label) {
       # Don't add letter to base column
       new_col_name <- col_name
     } else {
@@ -273,7 +310,15 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   original_call <- attr(tab_result, "call")
 
   # Get the statistic type
-  statistic <- attr(tab_result, "statistic")
+  statistic <- attr(tab_result, "statistic", exact = TRUE)
+  statistic_matrix <- attr(tab_result, "statistic_matrix")  # For mixed-statistic tabs
+  is_mixed_stat <- is.null(statistic)
+  
+  # For mixed-stat tabs, get statistic info from first cell for base_label
+  if (is_mixed_stat) {
+    stat_info <- .extract_stat_info_safe(tab_result)
+    statistic <- stat_info$stat  # Use first cell's statistic for structure
+  }
 
   # Create a copy of the data for processing
   output_data <- tab_result
@@ -282,13 +327,16 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   x           <- output_data
 
   # Identify the base row
-  base_row_idx <- which(x_formatted$row_label == statistic$base_label)
+  base_label <- if (is.list(statistic)) statistic$base_label else "Base (n)"
+  base_row_idx <- which(x_formatted$row_label == base_label)
 
   # Apply formatting function to all non-base rows
   # Apply formatting function to all non-base rows
   for (col in names(output_data)[-1]) {
+    col_idx <- which(names(output_data)[-1] == col)
+    
     # Check if base column
-    is_base_column <- col == statistic$base_label
+    is_base_column <- col == base_label
     if (is_base_column) {
       next
     }
@@ -331,7 +379,22 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
                 return(as.character(rounded_val))
               }
             } else {
-              return(statistic$format_fn(val))
+              # For mixed-statistic tabs, lookup cell-specific statistic
+              if (is_mixed_stat && !is.null(statistic_matrix)) {
+                stat_id <- statistic_matrix[i, col_idx]
+                if (!is.na(stat_id)) {
+                  cell_stat <- get_statistic(stat_id)
+                  if (!is.null(cell_stat)) {
+                    return(cell_stat$format_fn(val))
+                  }
+                }
+              }
+              
+              if (is.list(statistic)) {
+                return(statistic$format_fn(val))
+              } else {
+                return(as.character(val))
+              }
             }
           }
         } else {
@@ -359,13 +422,14 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
     output_data <- rbind(output_data, empty_row)
 
     # Add source information row with original call
-    if (statistic$id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
+    if (is.list(statistic) && statistic$id == "mean" && !is.null(attr(tab_result, "values_variable"))) {
       values_var <- attr(tab_result, "values_variable")
       call_text <- deparse(original_call, width.cutoff = 500)
       source_info <- paste0("Table showing mean of '", values_var, "' generated by surveydatar::", paste(call_text, collapse = " "), ")")
     } else {
       call_text <- deparse(original_call, width.cutoff = 500)
-      source_info <- paste0("Table showing survey ", statistic$id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
+      stat_id <- if (is.list(statistic)) statistic$id else as.character(statistic)
+      source_info <- paste0("Table showing survey ", stat_id, " data generated by surveydatar::", paste(call_text, collapse = " "), ")")
     }
 
     source_row <- output_data[1, ]
@@ -447,18 +511,17 @@ hide_base <- function(tab_result, rows = TRUE, cols = TRUE) {
     stop("hide_base() requires a tab_result object")
   }
   
-  # Get statistic from the right location
-  if (inherits(tab_result, "tab_cell_collection")) {
-    stat <- tab_result$statistic
-  } else {
-    stat <- attr(tab_result, "statistic")
-  }
+  # Get statistic info (handles mixed-statistic tabs)
+  stat_info <- tryCatch(
+    .extract_stat_info_safe(tab_result),
+    error = function(e) NULL
+  )
   
-  if (is.null(stat) || is.null(stat$base_label)) {
+  if (is.null(stat_info) || is.null(stat_info$base_label) || length(stat_info$base_label) == 0) {
     return(tab_result)  # No base to hide
   }
   
-  base_label <- stat$base_label
+  base_label <- stat_info$base_label
   
   # Cell-based path - use filter_rules or hide_rows/hide_cols
   if (inherits(tab_result, "tab_cell_collection")) {
@@ -515,18 +578,17 @@ show_base <- function(tab_result, orientation = c("auto", "row", "column")) {
   
   orientation <- match.arg(orientation)
   
-  # Get statistic from the right location
-  if (inherits(tab_result, "tab_cell_collection")) {
-    stat <- tab_result$statistic
-  } else {
-    stat <- attr(tab_result, "statistic")
-  }
+  # Get statistic info (handles mixed-statistic tabs)
+  stat_info <- tryCatch(
+    .extract_stat_info_safe(tab_result),
+    error = function(e) NULL
+  )
   
-  if (is.null(stat) || is.null(stat$base_label)) {
+  if (is.null(stat_info) || is.null(stat_info$base_label) || length(stat_info$base_label) == 0) {
     stop("Cannot show base: statistic has no base_label")
   }
   
-  base_label <- stat$base_label
+  base_label <- stat_info$base_label
   
   # Cell-based path
   if (inherits(tab_result, "tab_cell_collection")) {
@@ -637,12 +699,11 @@ hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
     stop("hide_summary() requires a tab_result object")
   }
   
-  # Get statistic from the right location
-  if (inherits(tab_result, "tab_cell_collection")) {
-    stat <- tab_result$statistic
-  } else {
-    stat <- attr(tab_result, "statistic")
-  }
+  # Get statistic info (handles mixed-statistic tabs)
+  stat_info <- tryCatch(
+    .extract_stat_info_safe(tab_result),
+    error = function(e) NULL
+  )
   
   # Cell-based path - physically remove row_defs/col_defs
   if (inherits(tab_result, "tab_cell_collection")) {
@@ -681,16 +742,22 @@ hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
     return(tab_result)
   }
   
-  # Data.frame-based path  
-  if (rows && !is.null(stat$summary_row)) {
-    if (stat$summary_row %in% tab_result$row_label) {
-      tab_result <- hide_rows(tab_result, stat$summary_row)
+  # Data.frame-based path
+  # Check if we have statistic info
+  if (is.null(stat_info)) {
+    warning("Cannot hide summary: no statistic information available")
+    return(tab_result)
+  }
+  
+  if (rows && !is.null(stat_info$summary_row)) {
+    if (stat_info$summary_row %in% tab_result$row_label) {
+      tab_result <- hide_rows(tab_result, stat_info$summary_row)
     }
   }
   
-  if (cols && !is.null(stat$summary_col)) {
-    if (stat$summary_col %in% names(tab_result)) {
-      tab_result <- hide_cols(tab_result, stat$summary_col)
+  if (cols && !is.null(stat_info$summary_col)) {
+    if (stat_info$summary_col %in% names(tab_result)) {
+      tab_result <- hide_cols(tab_result, stat_info$summary_col)
     }
   }
   
@@ -733,9 +800,10 @@ hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
 #'
 #' Works with both cell-based and data.frame tab_results. Returns
 #' consistent structure with safe defaults for missing attributes.
+#' For mixed-statistic tabs (NULL statistic), extracts from first cell.
 #'
 #' @param tab_result A tab_result object (cell-based or data.frame)
-#' @return List with id, base_label, summary_row, summary_col, stat
+#' @return List with id, base_label, summary_row, summary_col, stat, is_mixed
 #' @keywords internal
 .extract_stat_info_safe <- function(tab_result) {
   # For cell-based tab_results, statistic is a list element
@@ -743,11 +811,42 @@ hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
   if (inherits(tab_result, "tab_cell_collection")) {
     stat <- tab_result$statistic
   } else {
-    stat <- attr(tab_result, "statistic")
+    stat <- attr(tab_result, "statistic", exact = TRUE)
   }
   
+  # Handle mixed-statistic tabs (NULL statistic from gluing different statistics)
   if (is.null(stat)) {
-    stop("tab_result has no statistic information")
+    # Get statistic from first cell for fallback info
+    if (inherits(tab_result, "tab_cell_collection")) {
+      # Cell-based - read from first cell
+      grid <- tab_result$layout$grid
+      if (!is.null(grid) && length(grid) > 0) {
+        first_cell_id <- grid[which(!is.na(grid))[1]]
+        if (!is.na(first_cell_id)) {
+          cell <- get_cell(tab_result$cell_store, first_cell_id)
+          if (!is.null(cell) && !is.null(cell$computation$statistic)) {
+            stat <- get_statistic(cell$computation$statistic)
+          }
+        }
+      }
+    } else {
+      # Materialized data.frame - use statistic_matrix if available
+      stat_matrix <- attr(tab_result, "statistic_matrix")
+      if (!is.null(stat_matrix) && length(stat_matrix) > 0) {
+        # Get first non-NA statistic ID from matrix
+        first_stat_id <- stat_matrix[which(!is.na(stat_matrix))[1]]
+        if (!is.na(first_stat_id)) {
+          stat <- get_statistic(first_stat_id)
+        }
+      }
+    }
+    # If still NULL, cannot proceed
+    if (is.null(stat)) {
+      stop("tab_result has no statistic information and could not extract from cells")
+    }
+    is_mixed <- TRUE
+  } else {
+    is_mixed <- FALSE
   }
   
   list(
@@ -755,7 +854,8 @@ hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
     id = stat$id,
     base_label = stat$base_label %||% character(0),
     summary_row = stat$summary_row,
-    summary_col = stat$summary_col
+    summary_col = stat$summary_col,
+    is_mixed = is_mixed
   )
 }
 
@@ -1049,8 +1149,8 @@ as.data.frame.tab_result <- function(x,
   n_cols <- base::ncol(grid)
   value_matrix <- matrix(NA_real_, n_rows, n_cols)
   
-  for (i in 1:n_rows) {
-    for (j in 1:n_cols) {
+  for (i in seq_len(n_rows)) {
+    for (j in seq_len(n_cols)) {
       cell_id <- grid[i, j]
       
       if (!is.na(cell_id) && has_cell(x$cell_store, cell_id)) {
@@ -1197,8 +1297,8 @@ as.data.frame.tab_result <- function(x,
     # Include full cell objects for each grid position
     cell_meta_matrix <- matrix(list(), n_rows, n_cols)
     
-    for (i in 1:n_rows) {
-      for (j in 1:n_cols) {
+    for (i in seq_len(n_rows)) {
+      for (j in seq_len(n_cols)) {
         cell_id <- grid[i, j]
         if (!is.na(cell_id)) {
           cell_meta_matrix[[i, j]] <- get_cell(x$cell_store, cell_id)
@@ -1227,8 +1327,8 @@ as.data.frame.tab_result <- function(x,
   
   # Recreate base_matrix (for compatibility)
   base_matrix <- matrix(NA_real_, n_rows, n_cols)
-  for (i in 1:n_rows) {
-    for (j in 1:n_cols) {
+  for (i in seq_len(n_rows)) {
+    for (j in seq_len(n_cols)) {
       cell_id <- grid[i, j]
       if (!is.na(cell_id)) {
         cell <- get_cell(x$cell_store, cell_id)
@@ -1238,13 +1338,30 @@ as.data.frame.tab_result <- function(x,
   }
   attr(df, "base_matrix") <- base_matrix
   
+  # Create statistic_matrix for mixed-statistic tabs (when tab-level statistic is NULL)
+  if (is.null(x$statistic)) {
+    statistic_matrix <- matrix(NA_character_, n_rows, n_cols)
+    for (i in seq_len(n_rows)) {
+      for (j in seq_len(n_cols)) {
+        cell_id <- grid[i, j]
+        if (!is.na(cell_id)) {
+          cell <- get_cell(x$cell_store, cell_id)
+          if (!is.null(cell) && !is.null(cell$computation$statistic)) {
+            statistic_matrix[i, j] <- cell$computation$statistic
+          }
+        }
+      }
+    }
+    attr(df, "statistic_matrix") <- statistic_matrix
+  }
+  
   ## Extract significance from cells if present ----------------------------------
   # Check if any cells have significance data
   has_sig <- FALSE
   all_sig_tests <- list()
   
-  for (i in 1:n_rows) {
-    for (j in 1:n_cols) {
+  for (i in seq_len(n_rows)) {
+    for (j in seq_len(n_cols)) {
       cell_id <- grid[i, j]
       if (!is.na(cell_id)) {
         cell <- get_cell(x$cell_store, cell_id)
@@ -1273,8 +1390,8 @@ as.data.frame.tab_result <- function(x,
       is_omnibus <- NULL
       
       # Extract significance from each cell
-      for (i in 1:n_rows) {
-        for (j in 1:n_cols) {
+      for (i in seq_len(n_rows)) {
+        for (j in seq_len(n_cols)) {
           cell_id <- grid[i, j]
           if (!is.na(cell_id)) {
             cell <- get_cell(x$cell_store, cell_id)
@@ -1320,7 +1437,7 @@ as.data.frame.tab_result <- function(x,
   
   ## Add visible base (using calculated base matrix) ------------------------------
   base_orientation <- NULL
-  if (show_base && !is.null(base_matrix) && !is.null(x$statistic)) {
+  if (show_base && !is.null(base_matrix) && is.list(x$statistic)) {
     # Determine orientation from the base_matrix structure
     display_as_row <- TRUE
     display_as_column <- TRUE

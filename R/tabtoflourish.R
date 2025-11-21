@@ -76,6 +76,13 @@ tab_to_flourish <- function(tab_result,
   # Extract metadata first (before any modifications)
   stat_info <- .extract_stat_info_safe(tab_result)
   
+  # Check for mixed-statistic tabs (from gluing different statistics)
+  if (isTRUE(stat_info$is_mixed)) {
+    message("Note: This tab contains mixed statistics (from gluing tabs with different statistics). ",
+            "Flourish chart will use the first cell's statistic (", stat_info$id, ") for display settings. ",
+            "Mixed-statistic tabs may not display optimally in Flourish charts.")
+  }
+  
   # Apply native operations if cell-based
   if (inherits(tab_result, "tab_cell_collection")) {
     # Flourish can't handle base - ensure it's removed
