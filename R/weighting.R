@@ -22,14 +22,16 @@ is_debug <- function() {
 #' @section Data Format Requirements:
 #'
 #' **Input:**
-#' - respondent_id (auto-generated if missing)
+#' - respondent_id (auto-generated if missing, configurable via config$cols$id)
 #' - Variables referenced in constraints must exist
 #'
-#' **Currently hardcoded (to be generalised):**
-#' - Country column as "Country"
-#' - h_Qualify_Doc_Types for occasion weighting
-#' - A2_1 through A2_18 for usage frequencies
-#' - Demographic mappings via config$demo_var_mapping
+#' **Configuration:**
+#' - Column names are configurable via config parameter (see create_weighting_config())
+#' - Default strata column: "Country" (can be changed to "market", "region", etc.)
+#' - Default ID column: "respondent_id"
+#' - Legacy mappings support backward compatibility (e.g., QCOUNTRY -> Country)
+#' - Constraint type patterns are configurable for custom naming conventions
+#' - Demographic variable mappings enable user-friendly constraint specification
 #'
 #' @section Core Objects:
 #'
@@ -147,48 +149,49 @@ extract_vars_from_constraint_name <- function(name) {
   return(unique(vars))
 }
 
-#' Extract country from a formula expression
+#' Extract strata value from a formula expression
 #' @param parsed_formula Parsed formula object
 #' @param data Data frame
 #' @param valid_rows Indices of rows that match the constraint
-#' @return Country name if constraint is country-specific, NA otherwise
+#' @param strata_col Name of the strata column (default "Country")
+#' @return Strata value if constraint is strata-specific, NA otherwise
 #' @noRd
-extract_country_from_formula <- function(parsed_formula, data, valid_rows) {
+extract_strata_from_formula <- function(parsed_formula, data, valid_rows, strata_col = "Country") {
   # Convert expression to string for analysis
   lhs_str <- deparse(parsed_formula$lhs_expr, width.cutoff = 500)
 
-  # Look for Country == "value" patterns
-  country_pattern <- 'Country\\s*==\\s*"([^"]+)"'
-  matches <- regmatches(lhs_str, regexec(country_pattern, lhs_str))
+  # Look for strata_col == "value" patterns (build pattern dynamically)
+  pattern1 <- sprintf('%s\\s*==\\s*"([^"]+)"', strata_col)
+  matches <- regmatches(lhs_str, regexec(pattern1, lhs_str))
 
   if (length(matches[[1]]) > 1) {
     return(matches[[1]][2])
   }
 
-  # Also check for 'Country == value' without quotes (for variables)
-  country_pattern2 <- "Country\\s*==\\s*([^\\s&*]+)"
-  matches2 <- regmatches(lhs_str, regexec(country_pattern2, lhs_str))
+  # Also check for 'strata_col == value' without quotes (for variables)
+  pattern2 <- sprintf("%s\\s*==\\s*([^\\s&*]+)", strata_col)
+  matches2 <- regmatches(lhs_str, regexec(pattern2, lhs_str))
 
   if (length(matches2[[1]]) > 1) {
-    country_val <- matches2[[1]][2]
+    strata_val <- matches2[[1]][2]
     # If it's not quoted, it might be a variable - try to evaluate it
-    if (!grepl('"', country_val) && !grepl("'", country_val)) {
-      # Check if all valid rows have the same country
-      if (length(valid_rows) > 0 && "Country" %in% names(data)) {
-        countries <- unique(data$Country[valid_rows])
-        if (length(countries) == 1) {
-          return(as.character(countries[1]))
+    if (!grepl('"', strata_val) && !grepl("'", strata_val)) {
+      # Check if all valid rows have the same strata value
+      if (length(valid_rows) > 0 && strata_col %in% names(data)) {
+        strata_values <- unique(data[[strata_col]][valid_rows])
+        if (length(strata_values) == 1) {
+          return(as.character(strata_values[1]))
         }
       }
     }
   }
 
-  # If we can't determine country from formula, check if all matching rows
-  # belong to the same country
-  if (length(valid_rows) > 0 && "Country" %in% names(data)) {
-    countries <- unique(data$Country[valid_rows])
-    if (length(countries) == 1) {
-      return(as.character(countries[1]))
+  # If we can't determine strata from formula, check if all matching rows
+  # belong to the same strata
+  if (length(valid_rows) > 0 && strata_col %in% names(data)) {
+    strata_values <- unique(data[[strata_col]][valid_rows])
+    if (length(strata_values) == 1) {
+      return(as.character(strata_values[1]))
     }
   }
 
@@ -804,10 +807,12 @@ expand_auto_constraint <- function(constr, data) {
 #' @param parsed_formula Output from parse_weighting_formula
 #' @param data Data frame
 #' @param stage_weights Optional weights from previous stage
+#' @param config Optional weighting configuration object
 #' @return List with rows, values, target, and name for the constraint
 #' @noRd
 build_constraint_from_parsed_formula <- function(parsed_formula, data,
-                                                 stage_weights = NULL) {
+                                                 stage_weights = NULL,
+                                                 config = NULL) {
   n <- nrow(data)
 
   # Create evaluation environment with all data columns
@@ -900,8 +905,9 @@ build_constraint_from_parsed_formula <- function(parsed_formula, data,
     }
   }
 
-  # Extract country from formula if present
-  country <- extract_country_from_formula(parsed_formula, data, valid_rows)
+  # Extract strata from formula if present
+  strata_col <- if (!is.null(config)) config$cols$strata else "Country"
+  country <- extract_strata_from_formula(parsed_formula, data, valid_rows, strata_col)
 
   list(
     rows = valid_rows,
@@ -999,7 +1005,7 @@ build_constraints_from_formulas <- function(formulas, data, stage_weights = NULL
     parsed$tolerance <- tolerance
 
     # Build matrix constraint from parsed formula
-    matrix_constr <- build_constraint_from_parsed_formula(parsed, data, stage_weights)
+    matrix_constr <- build_constraint_from_parsed_formula(parsed, data, stage_weights, config)
 
     # Use constraint's explicit country if set (non-NULL and non-NA)
     if (!is.null(constr$country) && !is.na(constr$country)) {
@@ -1054,9 +1060,10 @@ build_constraints_from_formulas <- function(formulas, data, stage_weights = NULL
 #' @param n_resp Number of respondents
 #' @param tol_config Tolerance configuration object
 #' @param data Data frame (required for percentage_point mode)
+#' @param config Optional weighting configuration object
 #' @return List with sparse constraint matrix X, targets, tolerances, and labels
 #' @noRd
-constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data = NULL) {
+constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data = NULL, config = NULL) {
 
   get_default_tol <- function(tc) {
     if (is.null(tc)) return(0.01)
@@ -1069,9 +1076,13 @@ constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data =
       stop("data required for percentage_point tolerances")
     }
 
-    country_vec <- data$Country
+    strata_col <- if (!is.null(config)) config$cols$strata else "Country"
+    if (!strata_col %in% names(data)) {
+      stop(sprintf("Strata column '%s' not found in data. Required for percentage_point mode.", strata_col))
+    }
+    country_vec <- data[[strata_col]]
     if (is.null(country_vec)) {
-      stop("data$Country is required for percentage_point mode")
+      stop(sprintf("data$%s is required for percentage_point mode", strata_col))
     }
     n_by_country <- table(country_vec)
   }
@@ -1300,9 +1311,10 @@ calculate_target_weights <- function(
 #' @param constraint_list List containing constraint matrix and metadata
 #' @param cap Weight cap
 #' @param data_size Number of respondents
+#' @param config Optional weighting configuration object
 #' @return Data frame with detailed constraint information
 #' @noRd
-create_constraint_diagnostics <- function(constraint_list, cap, data_size) {
+create_constraint_diagnostics <- function(constraint_list, cap, data_size, config = NULL) {
   n_constraints <- nrow(constraint_list$X)
 
   # Initialize result vectors
@@ -1360,10 +1372,17 @@ create_constraint_diagnostics <- function(constraint_list, cap, data_size) {
   }
 
   # Extract constraint type and details from labels
+  # Use patterns from config or defaults
+  patterns <- if (!is.null(config)) {
+    config$patterns
+  } else {
+    list(sum = "^Sum:|^Total:", occasion = "^Occ:", demo = "^Demo:")
+  }
+  
   constraint_type <- case_when(
-    grepl("^Occ:", constraint_name) ~ "occasion",
-    grepl("^Sum:", constraint_name) ~ "sum",
-    grepl("^Demo:", constraint_name) ~ "demographic",
+    grepl(patterns$occasion, constraint_name) ~ "occasion",
+    grepl(patterns$sum, constraint_name) ~ "sum",
+    grepl(patterns$demo, constraint_name) ~ "demographic",
     TRUE ~ "other"
   )
 
@@ -1421,7 +1440,8 @@ build_survey_weights <- function(dat_clean,
                                  cap = 3.5,
                                  tol_config = NULL,
                                  solver = "OSQP",
-                                 verbose = TRUE) {
+                                 verbose = TRUE,
+                                 config = NULL) {
 
   if (verbose) {
     message("Running unified constrained quadratic optimization with tolerance...")
@@ -1557,7 +1577,8 @@ build_survey_weights <- function(dat_clean,
     constraint_diagnostics <- create_constraint_diagnostics(
       constraint_list,
       cap,
-      N
+      N,
+      config
     )
 
     # Create result object with infeasibility information
@@ -1796,8 +1817,9 @@ build_survey_weights <- function(dat_clean,
 #' @param weights Current weight vector
 #' @param constraint_list List containing the constraint matrix and labels
 #' @param verbose Logical for detailed output
+#' @param config Optional weighting configuration object
 #' @return Updated weight vector with attributes
-adjust_fully_unconstrained <- function(data, weights, constraint_list, verbose = FALSE) {
+adjust_fully_unconstrained <- function(data, weights, constraint_list, verbose = FALSE, config = NULL) {
 
   if (verbose) message("\n  Checking for fully unconstrained respondents...")
 
@@ -1806,7 +1828,15 @@ adjust_fully_unconstrained <- function(data, weights, constraint_list, verbose =
   labels <- constraint_list$labels
 
   # Identify which constraints are demographic/occasion (not sum constraint)
-  sum_constraint_idx <- which(grepl("^Sum:", labels))
+  # Use patterns from config
+  patterns <- if (!is.null(config)) {
+    config$patterns
+  } else {
+    list(sum = "^Sum:|^Total:")
+  }
+  
+  # Find sum constraint using dynamic pattern
+  sum_constraint_idx <- which(grepl(patterns$sum, labels))
 
   if (length(sum_constraint_idx) == 0) {
     # Try alternative patterns
@@ -1999,24 +2029,50 @@ run_unified_weighting <- function(raw_data,
         } else {
           dat_clean <- raw_data
         }
-
-        ## Ensure basic columns and update to use friendly names if mapping provided
-        # Ensure basic columns
-        if (!"respondent_id" %in% names(dat_clean)) { # TO DO: generalise
-          dat_clean$respondent_id <- seq_len(nrow(dat_clean))
+        
+        # Use config or create default
+        if (is.null(config)) {
+          config <- default_weighting_config()
+          if (verbose) {
+            message("  Using default configuration")
+          }
         }
-
-        # Convert QCOUNTRY to Country if needed # TO DO: generalise
-        if ("QCOUNTRY" %in% names(dat_clean) && !"Country" %in% names(dat_clean)) {
-          dat_clean$Country <- sjlabelled::as_label(dat_clean$QCOUNTRY)
+        
+        # Apply legacy mappings for backward compatibility
+        if (!is.null(config$legacy_mappings)) {
+          for (old_name in names(config$legacy_mappings)) {
+            new_name <- config$legacy_mappings[[old_name]]
+            if (old_name %in% names(dat_clean) && !new_name %in% names(dat_clean)) {
+              dat_clean[[new_name]] <- sjlabelled::as_label(dat_clean[[old_name]])
+              if (verbose) {
+                message(sprintf("  Legacy mapping applied: %s -> %s", old_name, new_name))
+              }
+            }
+          }
         }
-
-        # Create friendly name columns if config provides mapping
-        if (!is.null(config) && !is.null(config$demo_var_mapping)) {
+        
+        # Ensure required columns exist
+        id_col <- config$cols$id
+        if (!id_col %in% names(dat_clean)) {
+          dat_clean[[id_col]] <- seq_len(nrow(dat_clean))
+          if (verbose) {
+            message(sprintf("  Generated %s column", id_col))
+          }
+        }
+        
+        # Verify strata column exists (if needed for constraints)
+        strata_col <- config$cols$strata
+        if (!strata_col %in% names(dat_clean)) {
+          if (verbose) {
+            message(sprintf("  Note: Strata column '%s' not found in data. This may cause issues if you have strata-specific constraints.", strata_col))
+          }
+        }
+        
+        # Apply demo_var_mapping (alias approach)
+        if (!is.null(config$demo_var_mapping)) {
           for (nice_name in names(config$demo_var_mapping)) {
             actual_col <- config$demo_var_mapping[[nice_name]]
             if (actual_col %in% names(dat_clean) && !nice_name %in% names(dat_clean)) {
-              # Create alias column with friendly name
               dat_clean[[nice_name]] <- dat_clean[[actual_col]]
               if (verbose) {
                 message(sprintf("  Created alias: %s -> %s", nice_name, actual_col))
@@ -2082,7 +2138,8 @@ run_unified_weighting <- function(raw_data,
         formula_constraints,
         nrow(dat_clean),
         stage_tol_config,
-        dat_clean
+        dat_clean,
+        config
       )
 
       # Add sum constraint
@@ -2215,7 +2272,8 @@ run_unified_weighting <- function(raw_data,
         alpha = stage_alpha,
         cap = cap,
         tol_config = stage_tol_config,
-        verbose = verbose
+        verbose = verbose,
+        config = config
       )
 
       # Check if optimization failed ------------------------------------------
@@ -2318,7 +2376,8 @@ run_unified_weighting <- function(raw_data,
         data = dat_clean,
         weights = final_weights,  # This is the numeric vector
         constraint_list = last_constraint_list,
-        verbose = verbose
+        verbose = verbose,
+        config = config
       )
 
       # Capture diagnostics from attributes

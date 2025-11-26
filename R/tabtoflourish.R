@@ -4,7 +4,21 @@ utils::globalVariables(c("row_label", "value"))
 #' Convert a surveydatar tab_result into a Flourish-ready object
 #'
 #' @param tab           A tab_result produced by surveydatar::tab()
-#' @param chart_type    Optional character; Flourish chart type
+#' @param chart_type    Optional character; Flourish chart type. If not specified, automatically 
+#'   selected based on data structure and statistic. Supported types:
+#'   \itemize{
+#'     \item \code{"table"} - Data table
+#'     \item \code{"bar_grouped"} - Grouped bar chart
+#'     \item \code{"bar_stacked"} - Stacked bar chart
+#'     \item \code{"bar_stacked_prop"} - Proportional stacked bar chart
+#'     \item \code{"column_grouped"} - Grouped column chart
+#'     \item \code{"column_stacked"} - Stacked column chart
+#'     \item \code{"column_stacked_prop"} - Proportional stacked column chart
+#'     \item \code{"line"} - Line chart
+#'     \item \code{"area"} - Area chart
+#'     \item \code{"area_stacked"} - Stacked area chart
+#'     \item \code{"donut"} - Donut/pie chart
+#'   }
 #' @param long          Should the data be pivoted to long format? (default TRUE)
 #' @param strip_summary_rows Remove NET / Avg rows? (default TRUE for non-table charts)
 #' @param strip_summary_cols Remove Total / NET columns? (default TRUE for non-table charts)

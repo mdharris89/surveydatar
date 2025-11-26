@@ -17,7 +17,21 @@ tab_to_flourish(
 )
 }
 \arguments{
-\item{chart_type}{Optional character; Flourish chart type}
+\item{chart_type}{Optional character; Flourish chart type. If not specified, automatically
+selected based on data structure and statistic. Supported types:
+\itemize{
+\item \code{"table"} - Data table
+\item \code{"bar_grouped"} - Grouped bar chart
+\item \code{"bar_stacked"} - Stacked bar chart
+\item \code{"bar_stacked_prop"} - Proportional stacked bar chart
+\item \code{"column_grouped"} - Grouped column chart
+\item \code{"column_stacked"} - Stacked column chart
+\item \code{"column_stacked_prop"} - Proportional stacked column chart
+\item \code{"line"} - Line chart
+\item \code{"area"} - Area chart
+\item \code{"area_stacked"} - Stacked area chart
+\item \code{"donut"} - Donut/pie chart
+}}
 
 \item{long}{Should the data be pivoted to long format? (default TRUE)}
 

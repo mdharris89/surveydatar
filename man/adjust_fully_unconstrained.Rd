@@ -4,7 +4,13 @@
 \alias{adjust_fully_unconstrained}
 \title{Identify and adjust weights for fully unconstrained respondents using constraint matrix}
 \usage{
-adjust_fully_unconstrained(data, weights, constraint_list, verbose = FALSE)
+adjust_fully_unconstrained(
+  data,
+  weights,
+  constraint_list,
+  verbose = FALSE,
+  config = NULL
+)
 }
 \arguments{
 \item{data}{Data frame with respondent information}
@@ -14,6 +20,8 @@ adjust_fully_unconstrained(data, weights, constraint_list, verbose = FALSE)
 \item{constraint_list}{List containing the constraint matrix and labels}
 
 \item{verbose}{Logical for detailed output}
+
+\item{config}{Optional weighting configuration object}
 }
 \value{
 Updated weight vector with attributes

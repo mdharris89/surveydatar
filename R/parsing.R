@@ -206,6 +206,16 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     ))
   }
 
+  # Handle & operator (logical AND) - treat same as multiplication for filtering
+  if (rlang::is_call(actual_expr, "&")) {
+    args <- rlang::call_args(actual_expr)
+    return(list(
+      type = "multiplication",
+      components = lapply(args, function(x) parse_table_formula(x, data, dpdict, all_helpers = all_helpers)),
+      label = expr_text
+    ))
+  }
+
   # Handle subtraction
   if (rlang::is_call(actual_expr, "-")) {
     args <- rlang::call_args(actual_expr)
@@ -311,7 +321,16 @@ expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, va
           result <- append(result, list(combined_spec))
         }
       }
-      return(lapply(result, normalize_spec_expression))
+      
+      res <- lapply(result, normalize_spec_expression)
+      
+      # If we have a user-provided label and the expansion resulted in a single spec,
+      # use the user label instead of the generated one
+      if (!is.null(var_spec$is_user_label) && isTRUE(var_spec$is_user_label) && length(res) == 1) {
+        res[[1]]$label <- var_spec$label
+      }
+      
+      return(res)
     }
 
     if (var_spec$type == "simple") {

@@ -12,7 +12,8 @@ build_survey_weights(
   cap = 3.5,
   tol_config = NULL,
   solver = "OSQP",
-  verbose = TRUE
+  verbose = TRUE,
+  config = NULL
 )
 }
 \arguments{

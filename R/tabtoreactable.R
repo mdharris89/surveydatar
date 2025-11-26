@@ -13,6 +13,7 @@
 #' @param color_palette Character vector of colors for gradients (NULL uses defaults)
 #' @param color_midpoint Numeric value, "mean", or "median" for diverging color scale (default "mean")
 #' @param color_top_n Integer: number of top values to highlight (required when color_mode = "top_n")
+#' @param color_exclude_cols Character vector of column names to exclude from color formatting (default character(0)). Applies to all color modes (heatmap, top_n, significance). Use exact column names as they appear in the table.
 #' @param sig_comparison Character: name of significance comparison to use (auto-selects if only one exists)
 #' @param sig_symbol Logical: whether to append significance symbols (default TRUE)
 #' @param show_tooltips Logical: whether to show hover tooltips with cell information (default TRUE)
@@ -77,6 +78,15 @@
 #'   add_sig(versus = "North") %>%
 #'   tab_to_reactable(color_mode = "significance", sig_symbol = TRUE)
 #' display_reactable(r_tab)
+#'
+#' # Exclude specific columns from color formatting
+#' r_tab <- data %>%
+#'   tab(satisfaction, region) %>%
+#'   tab_to_reactable(
+#'     color_mode = "heatmap",
+#'     color_exclude_cols = c("North", "Total")
+#'   )
+#' display_reactable(r_tab)
 #' }
 tab_to_reactable <- function(tab_result,
                              strip_summary_rows = FALSE,
@@ -87,6 +97,7 @@ tab_to_reactable <- function(tab_result,
                              color_palette = NULL,
                              color_midpoint = "mean",
                              color_top_n = NULL,
+                             color_exclude_cols = character(0),
                              sig_comparison = NULL,
                              sig_symbol = TRUE,
                              show_tooltips = TRUE,
@@ -186,6 +197,7 @@ tab_to_reactable <- function(tab_result,
     color_palette = color_palette,
     color_midpoint = color_midpoint,
     color_top_n = color_top_n,
+    color_exclude_cols = color_exclude_cols,
     sig_symbol = sig_symbol,
     show_tooltips = show_tooltips,
     freeze_headers = freeze_headers,
@@ -1118,15 +1130,18 @@ display_reactable <- function(x,
         style$background <- palette[length(palette)]
       }
     } else if (settings$color_mode == "significance") {
-      sig_result <- .get_significance_for_cell(
-        metadata$significance,
-        metadata$sig_comparison,
-        row_label,
-        col_name
-      )
-      
-      if (!is.null(sig_result) && sig_result$significant) {
-        style$background <- .get_significance_color(sig_result)
+      # Don't color excluded columns
+      if (!(col_name %in% settings$color_exclude_cols)) {
+        sig_result <- .get_significance_for_cell(
+          metadata$significance,
+          metadata$sig_comparison,
+          row_label,
+          col_name
+        )
+        
+        if (!is.null(sig_result) && sig_result$significant) {
+          style$background <- .get_significance_color(sig_result)
+        }
       }
     }
     
@@ -1170,6 +1185,11 @@ display_reactable <- function(x,
   
   # Don't color base or summary columns
   if (col_name %in% c(special$base_cols, special$summary_cols)) {
+    return(NULL)
+  }
+  
+  # Don't color excluded columns
+  if (col_name %in% settings$color_exclude_cols) {
     return(NULL)
   }
   
@@ -1239,6 +1259,11 @@ display_reactable <- function(x,
   
   # Don't highlight base or summary columns
   if (col_name %in% c(special$base_cols, special$summary_cols)) {
+    return(FALSE)
+  }
+  
+  # Don't highlight excluded columns
+  if (col_name %in% settings$color_exclude_cols) {
     return(FALSE)
   }
   

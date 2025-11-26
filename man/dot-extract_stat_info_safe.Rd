@@ -10,10 +10,11 @@
 \item{tab_result}{A tab_result object (cell-based or data.frame)}
 }
 \value{
-List with id, base_label, summary_row, summary_col, stat
+List with id, base_label, summary_row, summary_col, stat, is_mixed
 }
 \description{
 Works with both cell-based and data.frame tab_results. Returns
 consistent structure with safe defaults for missing attributes.
+For mixed-statistic tabs (NULL statistic), extracts from first cell.
 }
 \keyword{internal}

@@ -120,7 +120,7 @@
 #' @param data Data frame or survey_data object
 #' @param rows Row specification (variable, expression, or helper)
 #' @param cols Column specification (optional)
-#' @param filter Table-wide filter expression (optional)
+#' @param filter Table-wide filter expression. Use * or & to combine conditions (optional)
 #' @param weight Weight variable name (optional)
 #' @param statistic Type of statistic: "column_pct", "count", "row_pct", "mean"
 #' @param values Variable name to aggregate for value-based statistics
@@ -171,6 +171,15 @@
 #' # External variables in helper arguments
 #' n_boxes <- 2
 #' result <- tab(data, top_box(satisfaction, n_boxes))
+#'
+#' # Combining conditions with & or * (both work identically)
+#' result <- tab(data, satisfaction, gender, filter = age > 18 & income > 50000)
+#' result <- tab(data, satisfaction, gender, filter = age > 18 * (income > 50000))
+#'
+#' # Using & in row specifications
+#' result <- tab(data, gender & (age > 30), region)
+#'
+#' # Note: Mixing & and * in the same expression is discouraged for clarity
 #' }
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
@@ -525,6 +534,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
         nm <- names(rows_eval)[i]
         if (!is.null(nm) && nzchar(nm)) {
           parsed$label <- nm
+          parsed$is_user_label <- TRUE
         }
         parsed
       })
@@ -567,6 +577,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
           nm <- names(cols_eval)[i]
           if (!is.null(nm) && nzchar(nm)) {
             parsed$label <- nm
+            parsed$is_user_label <- TRUE
           }
           parsed
         })

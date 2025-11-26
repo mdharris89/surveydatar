@@ -1696,8 +1696,8 @@ hide_if <- function(tab_result, .condition) {
     # Evaluate condition for each cell
     cells_to_hide <- character()
     
-    for (cell_id in names(store)) {
-      cell <- store[[cell_id]]
+    for (cell_id in all_cell_ids(store)) {
+      cell <- get_cell(store, cell_id)
       # Evaluate condition on full cell object
       result <- tryCatch(
         .condition(cell),

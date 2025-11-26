@@ -16,7 +16,7 @@ tab(
   show_col_nets = TRUE,
   show_base = TRUE,
   low_base_threshold = NULL,
-  hide_empty = FALSE,
+  hide_empty = TRUE,
   label_mode = c("smart", "full", "suffix"),
   helpers = NULL,
   stats = NULL,
@@ -31,7 +31,7 @@ tab(
 
 \item{cols}{Column specification (optional)}
 
-\item{filter}{Table-wide filter expression (optional)}
+\item{filter}{Table-wide filter expression. Use * or & to combine conditions (optional)}
 
 \item{weight}{Weight variable name (optional)}
 
@@ -215,5 +215,14 @@ result <- tab(data, satisfaction, gender, filter = age > min_age)
 # External variables in helper arguments
 n_boxes <- 2
 result <- tab(data, top_box(satisfaction, n_boxes))
+
+# Combining conditions with & or * (both work identically)
+result <- tab(data, satisfaction, gender, filter = age > 18 & income > 50000)
+result <- tab(data, satisfaction, gender, filter = age > 18 * (income > 50000))
+
+# Using & in row specifications
+result <- tab(data, gender & (age > 30), region)
+
+# Note: Mixing & and * in the same expression is discouraged for clarity
 }
 }
