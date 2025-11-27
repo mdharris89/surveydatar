@@ -31,7 +31,7 @@ tab(
 
 \item{cols}{Column specification (optional)}
 
-\item{filter}{Table-wide filter expression. Use * or & to combine conditions (optional)}
+\item{filter}{Table-wide filter expression. Use & for logical AND, and * for structural variable intersections (optional)}
 
 \item{weight}{Weight variable name (optional)}
 
@@ -216,13 +216,13 @@ result <- tab(data, satisfaction, gender, filter = age > min_age)
 n_boxes <- 2
 result <- tab(data, top_box(satisfaction, n_boxes))
 
-# Combining conditions with & or * (both work identically)
+# Combining conditions
 result <- tab(data, satisfaction, gender, filter = age > 18 & income > 50000)
-result <- tab(data, satisfaction, gender, filter = age > 18 * (income > 50000))
 
-# Using & in row specifications
+# Using * for structural interaction (crosstabs/nesting)
+result <- tab(data, gender * region, satisfaction)
+
+# Using & for logical filtering in rows (subsetting)
 result <- tab(data, gender & (age > 30), region)
-
-# Note: Mixing & and * in the same expression is discouraged for clarity
 }
 }

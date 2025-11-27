@@ -667,6 +667,39 @@ test_that("filter parameter with complex expressions", {
   expect_true(all(as.numeric(base_row[-1]) > 0))
 })
 
+##### & Operator Tests #####
+
+test_that("& operator works in filter parameter", {
+  # Test & in filter parameter - comparing apples to apples
+  result_filter_star <- tab(test_survey_data, gender, region, 
+                            filter = (satisfaction >= 4) * (age > 30))
+  result_filter_amp <- tab(test_survey_data, gender, region, 
+                           filter = (satisfaction >= 4) & (age > 30))
+  
+  # Should have same dimensions
+  expect_equal(dim(result_filter_star), dim(result_filter_amp))
+  
+  # Should have same bases
+  base_star <- result_filter_star[result_filter_star$row_label == "Base (n)", ]
+  base_amp <- result_filter_amp[result_filter_amp$row_label == "Base (n)", ]
+  expect_equal(as.numeric(base_star[-1]), as.numeric(base_amp[-1]))
+})
+
+test_that("& operator works in rows_list helper", {
+  # Test in rows_list
+  result_list <- tab(test_survey_data,
+                     rows = rows_list(
+                       "High sat" = satisfaction >= 4,
+                       "High sat & Young" = (satisfaction >= 4) & (age < 35),
+                       "High sat & Old" = (satisfaction >= 4) & (age >= 35)
+                     ),
+                     cols = region)
+  
+  expect_s3_class(result_list, "tab_result")
+  expect_true("High sat & Young" %in% result_list$layout$row_labels)
+  expect_true("High sat & Old" %in% result_list$layout$row_labels)
+})
+
 ##### Low Base Threshold Tests #####
 
 test_that("low_base_threshold removes low-base rows", {

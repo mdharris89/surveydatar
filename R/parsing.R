@@ -206,16 +206,6 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     ))
   }
 
-  # Handle & operator (logical AND) - treat same as multiplication for filtering
-  if (rlang::is_call(actual_expr, "&")) {
-    args <- rlang::call_args(actual_expr)
-    return(list(
-      type = "multiplication",
-      components = lapply(args, function(x) parse_table_formula(x, data, dpdict, all_helpers = all_helpers)),
-      label = expr_text
-    ))
-  }
-
   # Handle subtraction
   if (rlang::is_call(actual_expr, "-")) {
     args <- rlang::call_args(actual_expr)

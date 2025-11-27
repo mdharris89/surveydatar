@@ -2691,3 +2691,97 @@ test_that("layout and hide operations can be combined", {
   expect_equal(nrow(df), 2)
   expect_true(all(df$row_label %in% c("4", "6")))
 })
+
+test_that("hide_if works without errors (bug fix for cell_store iteration)", {
+  mtcars_cat <- setup_factor_mtcars()
+  result <- tab(mtcars_cat, cyl, gear, show_row_nets = FALSE, show_col_nets = FALSE, show_base = FALSE)
+  
+  # This should not throw "$ operator is invalid for atomic vectors" error
+  # The bug was that hide_if iterated over names(store) instead of all_cell_ids(store)
+  expect_silent({
+    result_hidden <- hide_if(result, .condition = function(cell) {
+      cell$base < 5
+    })
+  })
+})
+
+test_that("hide_if hides cells based on custom condition", {
+  mtcars_cat <- setup_factor_mtcars()
+  result <- tab(mtcars_cat, cyl, gear, show_row_nets = FALSE, show_col_nets = FALSE, show_base = FALSE)
+  
+  # Hide cells with base < 6 (should match gear=5 which has 5)
+  result_hidden <- hide_if(result, .condition = function(cell) {
+    cell$base < 6
+  })
+  
+  # Verify that some cells were hidden (grid should have NA values)
+  expect_true(any(is.na(result_hidden$layout$grid)))
+  
+  # Verify the result can be materialized without error
+  df <- as.data.frame(result_hidden)
+  expect_true(inherits(df, "data.frame"))
+})
+
+test_that("hide_if preserves cells in store", {
+  mtcars_cat <- setup_factor_mtcars()
+  result <- tab(mtcars_cat, cyl, gear, show_row_nets = FALSE, show_col_nets = FALSE, show_base = FALSE)
+  
+  original_cell_count <- cell_count(result$cell_store)
+  
+  result_hidden <- hide_if(result, .condition = function(cell) {
+    cell$base < 5
+  })
+  
+  # Cells should still be in store (not deleted, just hidden from grid)
+  expect_equal(cell_count(result_hidden$cell_store), original_cell_count)
+})
+
+test_that("hide_if can filter based on cell labels", {
+  mtcars_cat <- setup_factor_mtcars()
+  result <- tab(mtcars_cat, cyl, gear, show_row_nets = FALSE, show_col_nets = FALSE, show_base = FALSE)
+  
+  # Hide cells where row label is "4"
+  result_hidden <- hide_if(result, .condition = function(cell) {
+    if (!is.null(cell$specification$meta$row_tags$value)) {
+      row_label <- cell$specification$meta$row_tags$value
+      return(row_label == "4")
+    }
+    FALSE
+  })
+  
+  # Verify the result can be materialized
+  df <- as.data.frame(result_hidden)
+  
+  # Row "4" should still exist in the data.frame (hide_if only hides cells, not entire rows)
+  # But some cells in that row should be hidden
+  expect_true(any(is.na(result_hidden$layout$grid)))
+})
+
+test_that("hide_if with label pattern matching (case-insensitive)", {
+  # Create test data with labeled variables
+  test_data <- data.frame(
+    category = factor(c(rep("AI Technology", 5), rep("Traditional Tech", 5), 
+                       rep("AI Solutions", 5), rep("Other", 5))),
+    value = rnorm(20)
+  )
+  
+  result <- tab(test_data, category, show_row_nets = FALSE, show_base = FALSE)
+  
+  # Hide rows where label doesn't contain "AI" (case-insensitive)
+  result_hidden <- hide_if(result, .condition = function(cell) {
+    label <- if (!is.null(cell$specification) && !is.null(cell$specification$label)) {
+      cell$specification$label
+    } else {
+      ""
+    }
+    !grepl("AI", label, ignore.case = TRUE)
+  })
+  
+  df <- as.data.frame(result_hidden)
+  
+  # Should have hidden some cells
+  expect_true(any(is.na(result_hidden$layout$grid)))
+  
+  # Verify result can be materialized
+  expect_true(inherits(df, "data.frame"))
+})

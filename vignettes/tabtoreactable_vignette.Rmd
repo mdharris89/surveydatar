@@ -173,6 +173,30 @@ data %>%
   display_reactable()
 ```
 
+### Excluding Columns from Color Formatting
+
+You can exclude specific columns from all color formatting (heatmap, top-n, and significance) using `color_exclude_cols`. This is useful when you want to highlight patterns in data columns while leaving summary columns (like NET or Total) uncolored for easier reference:
+
+```{r heatmap-exclude}
+# Exclude Total column from heatmap coloring
+data %>%
+  tab(satisfaction, region, show_col_nets = TRUE) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_exclude_cols = c("Total")
+  ) %>%
+  display_reactable()
+
+# Exclude multiple columns
+data %>%
+  tab(satisfaction, region) %>%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_exclude_cols = c("North", "South")
+  ) %>%
+  display_reactable()
+```
+
 ## Color Coding: Top N
 
 Highlight the top N values within a specified scope:

@@ -565,6 +565,135 @@ test_that("tab_to_reactable error handling works", {
   )
 })
 
+test_that("tab_to_reactable respects color_exclude_cols for heatmap mode", {
+  skip_if_not_installed("reactable")
+  
+  test_data <- data.frame(
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female")),
+    region = factor(c("North", "South", "East", "West", "North", "South")),
+    satisfaction = c(4, 5, 3, 4, 2, 5)
+  )
+  
+  tab_result <- tab(test_data, gender, region)
+  
+  # Test with excluded columns
+  rtab <- tab_to_reactable(
+    tab_result, 
+    color_mode = "heatmap",
+    color_exclude_cols = c("North", "South")
+  )
+  
+  expect_s3_class(rtab, "reactable_tab")
+  expect_equal(rtab$settings$color_exclude_cols, c("North", "South"))
+  
+  # Verify that the excluded columns are stored in settings
+  expect_true("color_exclude_cols" %in% names(rtab$settings))
+})
+
+test_that("tab_to_reactable respects color_exclude_cols for top_n mode", {
+  skip_if_not_installed("reactable")
+  
+  test_data <- data.frame(
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female")),
+    region = factor(c("North", "South", "East", "West", "North", "South")),
+    satisfaction = c(4, 5, 3, 4, 2, 5)
+  )
+  
+  tab_result <- tab(test_data, gender, region)
+  
+  # Test with excluded columns in top_n mode
+  rtab <- tab_to_reactable(
+    tab_result, 
+    color_mode = "top_n",
+    color_top_n = 2,
+    color_exclude_cols = c("East")
+  )
+  
+  expect_s3_class(rtab, "reactable_tab")
+  expect_equal(rtab$settings$color_exclude_cols, c("East"))
+})
+
+test_that("tab_to_reactable respects color_exclude_cols for significance mode", {
+  skip_if_not_installed("reactable")
+  skip_if_not("z_test_proportions" %in% list_tab_significance_tests(),
+              "Significance tests not registered")
+  
+  test_data <- create_tab_test_data(150)
+  test_survey <- suppressWarnings(create_survey_data(test_data))
+  
+  tab_result <- tab(test_survey, gender, region) %>%
+    add_sig(versus = "North")
+  
+  # Test with excluded columns in significance mode
+  rtab <- tab_to_reactable(
+    tab_result, 
+    color_mode = "significance",
+    color_exclude_cols = c("South")
+  )
+  
+  expect_s3_class(rtab, "reactable_tab")
+  expect_equal(rtab$settings$color_exclude_cols, c("South"))
+})
+
+test_that("tab_to_reactable works with empty color_exclude_cols (default)", {
+  skip_if_not_installed("reactable")
+  
+  test_data <- data.frame(
+    gender = factor(c("Male", "Female", "Male", "Female")),
+    region = factor(c("North", "South", "East", "West"))
+  )
+  
+  tab_result <- tab(test_data, gender, region)
+  
+  # Test default (no exclusions)
+  rtab <- tab_to_reactable(tab_result, color_mode = "heatmap")
+  
+  expect_s3_class(rtab, "reactable_tab")
+  expect_equal(rtab$settings$color_exclude_cols, character(0))
+})
+
+test_that("tab_to_reactable handles non-existent column names in color_exclude_cols", {
+  skip_if_not_installed("reactable")
+  
+  test_data <- data.frame(
+    gender = factor(c("Male", "Female", "Male", "Female")),
+    region = factor(c("North", "South", "East", "West"))
+  )
+  
+  tab_result <- tab(test_data, gender, region)
+  
+  # Should not error with non-existent column names
+  expect_no_error({
+    rtab <- tab_to_reactable(
+      tab_result, 
+      color_mode = "heatmap",
+      color_exclude_cols = c("NonExistent", "AlsoNotReal")
+    )
+  })
+})
+
+test_that("tab_to_reactable color_exclude_cols works with summary columns", {
+  skip_if_not_installed("reactable")
+  
+  test_data <- data.frame(
+    gender = factor(c("Male", "Female", "Male", "Female", "Male", "Female")),
+    region = factor(c("North", "South", "East", "West", "North", "South"))
+  )
+  
+  # Create tab with column nets (Total)
+  tab_result <- tab(test_data, gender, region, show_col_nets = TRUE)
+  
+  # Exclude the Total column from coloring
+  rtab <- tab_to_reactable(
+    tab_result, 
+    color_mode = "heatmap",
+    color_exclude_cols = c("Total")
+  )
+  
+  expect_s3_class(rtab, "reactable_tab")
+  expect_true("Total" %in% rtab$settings$color_exclude_cols)
+})
+
 test_that("show_summary() unhides summaries that were hidden", {
   mtcars_cat <- mtcars
   mtcars_cat$cyl <- factor(mtcars_cat$cyl)

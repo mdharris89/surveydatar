@@ -120,7 +120,7 @@
 #' @param data Data frame or survey_data object
 #' @param rows Row specification (variable, expression, or helper)
 #' @param cols Column specification (optional)
-#' @param filter Table-wide filter expression. Use * or & to combine conditions (optional)
+#' @param filter Table-wide filter expression. Use & for logical AND, and * for structural variable intersections (optional)
 #' @param weight Weight variable name (optional)
 #' @param statistic Type of statistic: "column_pct", "count", "row_pct", "mean"
 #' @param values Variable name to aggregate for value-based statistics
@@ -172,14 +172,14 @@
 #' n_boxes <- 2
 #' result <- tab(data, top_box(satisfaction, n_boxes))
 #'
-#' # Combining conditions with & or * (both work identically)
+#' # Combining conditions
 #' result <- tab(data, satisfaction, gender, filter = age > 18 & income > 50000)
-#' result <- tab(data, satisfaction, gender, filter = age > 18 * (income > 50000))
 #'
-#' # Using & in row specifications
+#' # Using * for structural interaction (crosstabs/nesting)
+#' result <- tab(data, gender * region, satisfaction)
+#'
+#' # Using & for logical filtering in rows (subsetting)
 #' result <- tab(data, gender & (age > 30), region)
-#'
-#' # Note: Mixing & and * in the same expression is discouraged for clarity
 #' }
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),

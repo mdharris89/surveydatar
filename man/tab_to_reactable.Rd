@@ -14,6 +14,7 @@ tab_to_reactable(
   color_palette = NULL,
   color_midpoint = "mean",
   color_top_n = NULL,
+  color_exclude_cols = character(0),
   sig_comparison = NULL,
   sig_symbol = TRUE,
   show_tooltips = TRUE,
@@ -47,6 +48,8 @@ tab_to_reactable(
 \item{color_midpoint}{Numeric value, "mean", or "median" for diverging color scale (default "mean")}
 
 \item{color_top_n}{Integer: number of top values to highlight (required when color_mode = "top_n")}
+
+\item{color_exclude_cols}{Character vector of column names to exclude from color formatting (default character(0)). Applies to all color modes (heatmap, top_n, significance). Use exact column names as they appear in the table.}
 
 \item{sig_comparison}{Character: name of significance comparison to use (auto-selects if only one exists)}
 
@@ -130,6 +133,15 @@ r_tab <- data \%>\%
   tab(satisfaction, region) \%>\%
   add_sig(versus = "North") \%>\%
   tab_to_reactable(color_mode = "significance", sig_symbol = TRUE)
+display_reactable(r_tab)
+
+# Exclude specific columns from color formatting
+r_tab <- data \%>\%
+  tab(satisfaction, region) \%>\%
+  tab_to_reactable(
+    color_mode = "heatmap",
+    color_exclude_cols = c("North", "Total")
+  )
 display_reactable(r_tab)
 }
 }
