@@ -4,7 +4,7 @@
 \alias{.build_cell_style_fn}
 \title{Build cell style function}
 \usage{
-.build_cell_style_fn(x, col_name)
+.build_cell_style_fn(x, col_name, data)
 }
 \description{
 Build cell style function

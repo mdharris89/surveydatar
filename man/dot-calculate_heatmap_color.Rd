@@ -4,7 +4,7 @@
 \alias{.calculate_heatmap_color}
 \title{Calculate heatmap color for a cell}
 \usage{
-.calculate_heatmap_color(x, col_name, value, index)
+.calculate_heatmap_color(x, col_name, value, index, data)
 }
 \description{
 Calculate heatmap color for a cell

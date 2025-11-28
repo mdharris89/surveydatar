@@ -4,7 +4,7 @@
 \alias{.build_cell_render_fn}
 \title{Build cell rendering function}
 \usage{
-.build_cell_render_fn(x, col_name)
+.build_cell_render_fn(x, col_name, data)
 }
 \description{
 Build cell rendering function

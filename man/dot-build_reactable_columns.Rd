@@ -4,7 +4,7 @@
 \alias{.build_reactable_columns}
 \title{Build column definitions for reactable}
 \usage{
-.build_reactable_columns(x)
+.build_reactable_columns(x, data)
 }
 \description{
 Build column definitions for reactable

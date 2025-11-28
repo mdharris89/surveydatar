@@ -4,7 +4,7 @@
 \alias{.is_top_n_value}
 \title{Check if a value is in top N}
 \usage{
-.is_top_n_value(x, col_name, value, index)
+.is_top_n_value(x, col_name, value, index, data)
 }
 \description{
 Check if a value is in top N

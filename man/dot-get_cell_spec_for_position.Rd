@@ -4,7 +4,7 @@
 \alias{.get_cell_spec_for_position}
 \title{Get cell specification for a given row/column position}
 \usage{
-.get_cell_spec_for_position(x, row_index, col_name)
+.get_cell_spec_for_position(x, row_index, col_name, data)
 }
 \arguments{
 \item{x}{A reactable_tab object}

@@ -4,7 +4,7 @@
 \alias{.build_row_style_fn}
 \title{Build row style function}
 \usage{
-.build_row_style_fn(x)
+.build_row_style_fn(x, data)
 }
 \description{
 Build row style function

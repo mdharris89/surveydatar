@@ -1064,12 +1064,18 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
           # For haven_labelled, use the labels if available, otherwise values
           labels_attr <- attr(var_data, "labels")
           if (!is.null(labels_attr) && length(labels_attr) > 0) {
-            # Map values to their labels
-            var_data <- vapply(var_data, function(val) {
-              if (is.na(val)) return(NA_character_)
-              label_match <- names(labels_attr)[labels_attr == val]
-              if (length(label_match) > 0) label_match[1] else as.character(val)
-            }, character(1))
+            # Create lookup vector for vectorized mapping (value -> label)
+            lookup <- setNames(names(labels_attr), as.character(labels_attr))
+            
+            # Store original values for fallback
+            original_values <- as.character(var_data)
+            
+            # Vectorized lookup: match all values at once
+            var_data <- lookup[original_values]
+            
+            # For values without labels, use the original value
+            no_label <- is.na(var_data)
+            var_data[no_label] <- original_values[no_label]
           } else {
             var_data <- as.character(var_data)
           }

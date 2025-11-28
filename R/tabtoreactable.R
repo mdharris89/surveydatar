@@ -433,10 +433,10 @@ display_reactable <- function(x,
 #' @keywords internal
 .create_main_table <- function(x, data, height, width, ...) {
   # Build column definitions
-  columns <- .build_reactable_columns(x)
+  columns <- .build_reactable_columns(x, data)
   
   # Build row style function
-  row_style_fn <- .build_row_style_fn(x)
+  row_style_fn <- .build_row_style_fn(x, data)
   
   # Configure pagination
   pagination_setting <- if (is.numeric(x$settings$pagination) && x$settings$pagination > 0) {
@@ -478,7 +478,7 @@ display_reactable <- function(x,
   columns <- .build_footer_columns(x, data)
   
   # Build row style function
-  row_style_fn <- .build_row_style_fn(x)
+  row_style_fn <- .build_row_style_fn(x, data)
   
   # Create static footer table
   reactable::reactable(
@@ -566,15 +566,11 @@ display_reactable <- function(x,
     
     # For mixed-statistic tabs, lookup cell-specific statistic
     if (isTRUE(stat_info$is_mixed)) {
-      # Map footer row index to original data row index
-      original_index <- which(x$data$row_label == row_label)[1]
-      if (!is.na(original_index)) {
-        cell_info <- .get_cell_spec_for_position(x, original_index, col_name)
-        if (!is.null(cell_info) && !is.null(cell_info$computation$statistic)) {
-          cell_stat <- get_statistic(cell_info$computation$statistic)
-          if (!is.null(cell_stat)) {
-            format_fn <- cell_stat$format_fn
-          }
+      cell_info <- .get_cell_spec_for_position(x, index, col_name, footer_data)
+      if (!is.null(cell_info) && !is.null(cell_info$computation$statistic)) {
+        cell_stat <- get_statistic(cell_info$computation$statistic)
+        if (!is.null(cell_stat)) {
+          format_fn <- cell_stat$format_fn
         }
       }
     }
@@ -584,25 +580,19 @@ display_reactable <- function(x,
     
     # Add tooltip for data cells (not base or summary) if enabled
     if (settings$show_tooltips && !is_base_row && !is_base_col && !is_summary_row && !is_summary_col) {
-      # Map footer row index to original data row index
-      # Footer data is a subset of x$data, need to find the original row index
-      original_index <- which(x$data$row_label == row_label)[1]
+      # Get cell specification for this position
+      cell_info <- .get_cell_spec_for_position(x, index, col_name, footer_data)
       
-      if (!is.na(original_index)) {
-        # Get cell specification for this position
-        cell_info <- .get_cell_spec_for_position(x, original_index, col_name)
+      if (!is.null(cell_info)) {
+        # Build tooltip text
+        tooltip_text <- .build_tooltip_text(
+          cell_info$specification,
+          stat_info$id,
+          cell_info$base
+        )
         
-        if (!is.null(cell_info)) {
-          # Build tooltip text
-          tooltip_text <- .build_tooltip_text(
-            cell_info$specification,
-            stat_info$id,
-            cell_info$base
-          )
-          
-          # Wrap with tooltip
-          formatted <- .wrap_with_tooltip(formatted, tooltip_text)
-        }
+        # Wrap with tooltip
+        formatted <- .wrap_with_tooltip(formatted, tooltip_text)
       }
     }
     
@@ -647,8 +637,8 @@ display_reactable <- function(x,
 #' Create single table (when no split needed)
 #' @keywords internal
 .create_single_table <- function(x, height, width, ...) {
-  columns <- .build_reactable_columns(x)
-  row_style_fn <- .build_row_style_fn(x)
+  columns <- .build_reactable_columns(x, x$data)
+  row_style_fn <- .build_row_style_fn(x, x$data)
   
   pagination_setting <- if (is.numeric(x$settings$pagination) && x$settings$pagination > 0) {
     TRUE
@@ -968,7 +958,7 @@ display_reactable <- function(x,
 
 #' Build column definitions for reactable
 #' @keywords internal
-.build_reactable_columns <- function(x) {
+.build_reactable_columns <- function(x, data) {
   settings <- x$settings
   
   cols <- list()
@@ -984,15 +974,15 @@ display_reactable <- function(x,
   )
   
   # Data columns - standard width, right-aligned
-  data_cols <- setdiff(names(x$data), "row_label")
+  data_cols <- setdiff(names(data), "row_label")
   
   for (col_name in data_cols) {
     cols[[col_name]] <- reactable::colDef(
       name = col_name,
       minWidth = 100,
       align = "right",
-      cell = .build_cell_render_fn(x, col_name),
-      style = .build_cell_style_fn(x, col_name),
+      cell = .build_cell_render_fn(x, col_name, data),
+      style = .build_cell_style_fn(x, col_name, data),
       headerStyle = list(fontWeight = "bold"),
       sortable = settings$enable_sorting,
       html = TRUE  # Allow HTML rendering for tooltips
@@ -1004,7 +994,7 @@ display_reactable <- function(x,
 
 #' Build cell rendering function
 #' @keywords internal
-.build_cell_render_fn <- function(x, col_name) {
+.build_cell_render_fn <- function(x, col_name, data) {
   metadata <- x$metadata
   settings <- x$settings
   special <- x$special_elements
@@ -1013,7 +1003,7 @@ display_reactable <- function(x,
   is_summary_col <- col_name %in% special$summary_cols
   
   function(value, index) {
-    df <- x$data
+    df <- data
     row_label <- df$row_label[index]
     is_base_row <- row_label %in% special$base_rows
     is_summary_row <- row_label %in% special$summary_rows
@@ -1033,7 +1023,7 @@ display_reactable <- function(x,
     
     # For mixed-statistic tabs, lookup cell-specific statistic
     if (isTRUE(stat_info$is_mixed)) {
-      cell_info <- .get_cell_spec_for_position(x, index, col_name)
+      cell_info <- .get_cell_spec_for_position(x, index, col_name, data)
       if (!is.null(cell_info) && !is.null(cell_info$computation$statistic)) {
         cell_stat <- get_statistic(cell_info$computation$statistic)
         if (!is.null(cell_stat)) {
@@ -1063,7 +1053,7 @@ display_reactable <- function(x,
     # Add tooltip for data cells (not base or summary) if enabled
     if (settings$show_tooltips && !is_base_row && !is_base_col && !is_summary_row && !is_summary_col) {
       # Get cell specification for this position
-      cell_info <- .get_cell_spec_for_position(x, index, col_name)
+      cell_info <- .get_cell_spec_for_position(x, index, col_name, data)
       
       if (!is.null(cell_info)) {
         # Build tooltip text
@@ -1084,7 +1074,7 @@ display_reactable <- function(x,
 
 #' Build cell style function
 #' @keywords internal
-.build_cell_style_fn <- function(x, col_name) {
+.build_cell_style_fn <- function(x, col_name, data) {
   metadata <- x$metadata
   settings <- x$settings
   special <- x$special_elements
@@ -1092,7 +1082,7 @@ display_reactable <- function(x,
   is_summary_col <- col_name %in% special$summary_cols
   
   function(value, index) {
-    df <- x$data
+    df <- data
     row_label <- df$row_label[index]
     is_base_row <- row_label %in% special$base_rows
     is_summary_row <- row_label %in% special$summary_rows
@@ -1120,12 +1110,12 @@ display_reactable <- function(x,
     
     # Apply color mode
     if (settings$color_mode == "heatmap") {
-      color <- .calculate_heatmap_color(x, col_name, value, index)
+      color <- .calculate_heatmap_color(x, col_name, value, index, data)
       if (!is.null(color)) {
         style$background <- color
       }
     } else if (settings$color_mode == "top_n") {
-      if (.is_top_n_value(x, col_name, value, index)) {
+      if (.is_top_n_value(x, col_name, value, index, data)) {
         palette <- settings$color_palette %||% .get_default_palette(diverging = FALSE)
         style$background <- palette[length(palette)]
       }
@@ -1151,11 +1141,11 @@ display_reactable <- function(x,
 
 #' Build row style function
 #' @keywords internal
-.build_row_style_fn <- function(x) {
+.build_row_style_fn <- function(x, data) {
   special <- x$special_elements
   
   function(index) {
-    df <- x$data
+    df <- data
     row_label <- df$row_label[index]
     
     style <- list()
@@ -1172,8 +1162,8 @@ display_reactable <- function(x,
 
 #' Calculate heatmap color for a cell
 #' @keywords internal
-.calculate_heatmap_color <- function(x, col_name, value, index) {
-  df <- x$data
+.calculate_heatmap_color <- function(x, col_name, value, index, data) {
+  df <- data
   settings <- x$settings
   special <- x$special_elements
   
@@ -1200,12 +1190,12 @@ display_reactable <- function(x,
     mask <- !(df$row_label %in% c(special$base_rows, special$summary_rows))
     values <- values[mask]
   } else if (settings$color_scope == "row") {
-    # All values in this row (excluding row_label, base, and summary columns)
-    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols))
+    # All values in this row (excluding row_label, base, summary, and excluded columns)
+    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols, settings$color_exclude_cols))
     values <- as.numeric(df[index, data_cols])
   } else if (settings$color_scope == "table") {
-    # All values in table (excluding base/summary rows and base/summary columns)
-    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols))
+    # All values in table (excluding base/summary rows and base/summary/excluded columns)
+    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols, settings$color_exclude_cols))
     mask <- !(df$row_label %in% c(special$base_rows, special$summary_rows))
     values <- unlist(df[mask, data_cols])
   }
@@ -1246,8 +1236,8 @@ display_reactable <- function(x,
 
 #' Check if a value is in top N
 #' @keywords internal
-.is_top_n_value <- function(x, col_name, value, index) {
-  df <- x$data
+.is_top_n_value <- function(x, col_name, value, index, data) {
+  df <- data
   settings <- x$settings
   special <- x$special_elements
   
@@ -1275,10 +1265,10 @@ display_reactable <- function(x,
     mask <- !(df$row_label %in% c(special$base_rows, special$summary_rows))
     values <- values[mask]
   } else if (settings$color_scope == "row") {
-    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols))
+    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols, settings$color_exclude_cols))
     values <- as.numeric(df[index, data_cols])
   } else if (settings$color_scope == "table") {
-    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols))
+    data_cols <- setdiff(names(df), c("row_label", special$base_cols, special$summary_cols, settings$color_exclude_cols))
     mask <- !(df$row_label %in% c(special$base_rows, special$summary_rows))
     values <- unlist(df[mask, data_cols])
   }
@@ -1526,7 +1516,7 @@ display_reactable <- function(x,
 #' @param col_name Character column name
 #' @return List with cell specification and base n, or NULL if unavailable
 #' @keywords internal
-.get_cell_spec_for_position <- function(x, row_index, col_name) {
+.get_cell_spec_for_position <- function(x, row_index, col_name, data) {
   # Check if we have cell metadata available
   if (is.null(x$metadata$cell_store) || is.null(x$metadata$layout)) {
     return(NULL)
@@ -1540,6 +1530,15 @@ display_reactable <- function(x,
     return(NULL)
   }
   
+  # Map from display data row index to original x$data row index
+  # This is necessary when data has been split (main_data vs footer_data)
+  row_label <- data$row_label[row_index]
+  original_row_index <- match(row_label, x$data$row_label)
+  
+  if (is.na(original_row_index)) {
+    return(NULL)
+  }
+  
   # Map column name to column index
   # Column names in data frame exclude row_label, but grid includes all columns
   data_col_names <- setdiff(names(x$data), "row_label")
@@ -1549,14 +1548,14 @@ display_reactable <- function(x,
     return(NULL)
   }
   
-  # Check bounds
-  if (row_index < 1 || row_index > nrow(grid) || 
+  # Check bounds (use original row index for grid lookup)
+  if (original_row_index < 1 || original_row_index > nrow(grid) || 
       col_index < 1 || col_index > ncol(grid)) {
     return(NULL)
   }
   
-  # Get cell ID from grid
-  cell_id <- grid[row_index, col_index]
+  # Get cell ID from grid (use original row index)
+  cell_id <- grid[original_row_index, col_index]
   
   if (is.na(cell_id)) {
     return(NULL)
