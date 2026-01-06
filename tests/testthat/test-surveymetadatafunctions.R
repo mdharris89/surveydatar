@@ -616,6 +616,79 @@ test_that("get_updated_seps works", {
   expect_equal(no_sep_updated$new_variable_labels, c("Question 1", "Question 2")) # Should be unchanged
 })
 
+test_that("get_updated_seps correctly handles separator position indexing", {
+  # This test specifically addresses the bug where matched_sep (position in sep_portion)
+  # was incorrectly used as an index into the full string
+
+  # Test case 1: Variable names with different lengths before separator
+  # This ensures the fix correctly converts sep_portion indices to full string indices
+  test_dat1 <- data.frame(
+    A_1 = 1,           # Short prefix before sep
+    ABC_2 = 2,         # Medium prefix before sep
+    ABCDEF_3 = 3,      # Long prefix before sep
+    Q1.test = 4        # Different sep to be updated
+  )
+  attr(test_dat1$A_1, "label") <- "A: Label 1 - Statement 1"
+  attr(test_dat1$ABC_2, "label") <- "ABC: Label 2 - Statement 2"
+  attr(test_dat1$ABCDEF_3, "label") <- "ABCDEF: Label 3 - Statement 3"
+  attr(test_dat1$Q1.test, "label") <- "Q1. Label 4 - Statement 4"
+
+  sep_analysis1 <- check_seps(test_dat1)
+  seps_to_use1 <- list(var_name_sep = "_", prefix_sep = ": ", statement_sep = " - ")
+  result1 <- get_updated_seps(test_dat1, sep_analysis1, seps_to_use = seps_to_use1)
+
+  # All variable names should have consistent "_" separator
+  expect_equal(result1$new_variable_names, c("A_1", "ABC_2", "ABCDEF_3", "Q1_test"))
+
+  # All labels should have consistent separators
+  expect_equal(result1$new_variable_labels,
+               c("A: Label 1 - Statement 1",
+                 "ABC: Label 2 - Statement 2",
+                 "ABCDEF: Label 3 - Statement 3",
+                 "Q1: Label 4 - Statement 4"))
+
+  # Verify the separator was found at the correct position for each variable
+  expect_equal(result1$var_name_seps_found, c("_", "_", "_", "."))
+
+  # Test case 2: Mix of separators at different positions
+  test_dat2 <- data.frame(
+    X.A = 1,
+    YY_B = 2,
+    ZZZ.C = 3
+  )
+  attr(test_dat2$X.A, "label") <- "X. Prefix A - Stat"
+  attr(test_dat2$YY_B, "label") <- "YY: Prefix B - Stat"
+  attr(test_dat2$ZZZ.C, "label") <- "ZZZ. Prefix C - Stat"
+
+  sep_analysis2 <- check_seps(test_dat2)
+  seps_to_use2 <- list(var_name_sep = ".", prefix_sep = ". ", statement_sep = " - ")
+  result2 <- get_updated_seps(test_dat2, sep_analysis2, seps_to_use = seps_to_use2)
+
+  # Should correctly update separators regardless of prefix length
+  expect_equal(result2$new_variable_names, c("X.A", "YY.B", "ZZZ.C"))
+  expect_equal(result2$new_variable_labels,
+               c("X. Prefix A - Stat",
+                 "YY. Prefix B - Stat",
+                 "ZZZ. Prefix C - Stat"))
+
+  # Test case 3: Verify actual character replacement happens at correct position
+  # Create a case where the bug would manifest if not fixed
+  test_dat3 <- data.frame(LONG_VAR_NAME_test = 1)
+  attr(test_dat3$LONG_VAR_NAME_test, "label") <- "LONG_VAR_NAME. Something"
+
+  sep_analysis3 <- check_seps(test_dat3)
+  seps_to_use3 <- list(var_name_sep = "_", prefix_sep = ": ", statement_sep = " - ")
+  result3 <- get_updated_seps(test_dat3, sep_analysis3, seps_to_use = seps_to_use3)
+
+  # The separator before "test" should be correctly identified and replaced
+  expect_equal(result3$new_variable_names, "LONG_VAR_NAME_test")
+  expect_equal(result3$var_name_seps_found, "_")
+
+  # Ensure the prefix separator is also correctly updated
+  expect_equal(result3$new_variable_labels, "LONG_VAR_NAME: Something")
+  expect_equal(result3$prefix_seps_found, ".")
+})
+
 test_that("split_into_question_groups works", {
 
   n = 10
