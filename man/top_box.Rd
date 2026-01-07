@@ -18,5 +18,5 @@ Expression for use in tab()
 Select top n response options
 }
 \examples{
-tab(data, top_box(satisfaction, 2), gender)
+top_box(satisfaction, 2)
 }

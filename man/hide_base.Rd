@@ -22,11 +22,11 @@ Removes the base (sample size) row and/or column from the visible grid.
 Base values remain in cell metadata and can be restored with show_base().
 }
 \examples{
-\dontrun{
-tab(data, satisfaction, region) \%>\%
+# Hide base in tab results
+dat <- get_basic_test_dat()
+tab(dat, labelledordinal, binarycategoricalasfactor) \%>\%
   hide_base()  # Hide both base row and column
   
-tab(data, satisfaction, region) \%>\%
+tab(dat, labelledordinal, binarycategoricalasfactor) \%>\%
   hide_base(rows = TRUE, cols = FALSE)  # Hide only base row
-}
 }

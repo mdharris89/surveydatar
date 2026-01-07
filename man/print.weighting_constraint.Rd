@@ -6,6 +6,11 @@
 \usage{
 \method{print}{weighting_constraint}(x, ...)
 }
+\arguments{
+\item{x}{A weighting_constraint object}
+
+\item{...}{Additional arguments (ignored)}
+}
 \description{
 Print method for constraints
 }

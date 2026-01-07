@@ -6,6 +6,11 @@
 \usage{
 \method{print}{formula_with_tolerance}(x, ...)
 }
+\arguments{
+\item{x}{A formula_with_tolerance object}
+
+\item{...}{Additional arguments (ignored)}
+}
 \description{
 Print method for formula_with_tolerance
 }

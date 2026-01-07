@@ -420,7 +420,6 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
         } else if (metadata_field == "label") {
           group_label <- first_meta$label %||% group_key
         } else {
-          # Try accessing field directly for backward compatibility
           group_label <- first_meta[[metadata_field]] %||% group_key
         }
       }
@@ -486,7 +485,6 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
         } else if (metadata_field == "label") {
           group_label <- first_meta$label %||% group_key
         } else {
-          # Try accessing field directly for backward compatibility
           group_label <- first_meta[[metadata_field]] %||% group_key
         }
       }
@@ -542,10 +540,10 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
 #' @return A derive specification object
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- tab(data, satisfaction, gender) %>%
-#'   derive(delta_vs("Male", "Female"))
-#' }
+#' # Basic usage with test data
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor) %>%
+#'   derive(delta_vs("Yes", "No"))
 delta_vs <- function(from_col, to_col = NULL, label = NULL) {
   new_derive_spec("delta_vs",
                   from_col = from_col,
@@ -818,10 +816,10 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
 #' @return A derive specification object
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- tab(data, satisfaction, gender) %>%
+#' # Basic usage with test data
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor, show_col_nets = TRUE) %>%
 #'   derive(index_vs("Total"))
-#' }
 index_vs <- function(base_col, multiplier = 100, label = NULL, cols = NULL) {
   new_derive_spec("index_vs",
                   base_col = base_col,
@@ -1008,10 +1006,10 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
 #' @return A derive specification object
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- tab(data, satisfaction, gender) %>%
+#' # Basic usage with test data
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   derive(share_of_sum(by = "row"))
-#' }
 share_of_sum <- function(by = c("row", "col"), label = NULL) {
   by <- match.arg(by)
   new_derive_spec("share_of_sum",

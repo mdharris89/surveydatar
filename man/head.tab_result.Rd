@@ -6,6 +6,13 @@
 \usage{
 \method{head}{tab_result}(x, n = 6L, ...)
 }
+\arguments{
+\item{x}{A tab_result object}
+
+\item{n}{Number of rows to return (default 6)}
+
+\item{...}{Passed to the underlying method}
+}
 \description{
 Get first n rows of tab_result
 }

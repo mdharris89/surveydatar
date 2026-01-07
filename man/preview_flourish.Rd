@@ -17,6 +17,8 @@ preview_flourish(
 
 \item{api_key}{Flourish API key. Defaults to FLOURISH_API_KEY environment variable}
 
+\item{display}{How to display the widget ("inline" or "viewer")}
+
 \item{viewer}{Function to use for displaying the chart. Defaults to getOption("viewer")
 or utils::browseURL if not available}
 

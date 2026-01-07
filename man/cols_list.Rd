@@ -16,5 +16,5 @@ List for use in tab()
 Create named list of column specifications
 }
 \examples{
-tab(data, gender, cols = cols_list("Total" = q1, "Young" = q1 * (age < 30)))
+cols_list("Total" = q1, "Young" = q1 * (age < 30))
 }

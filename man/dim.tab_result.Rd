@@ -6,6 +6,9 @@
 \usage{
 \method{dim}{tab_result}(x)
 }
+\arguments{
+\item{x}{A tab_result object}
+}
 \description{
 Get dimensions of tab_result
 }

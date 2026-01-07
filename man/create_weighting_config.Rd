@@ -24,9 +24,8 @@ Auto-generated if missing in data.}
 Example: list(Gender = "SC1", Age = "SC2merged").
 Creates alias columns for easier constraint specification.}
 
-\item{legacy_mappings}{Named list of automatic column renamings for backward compatibility.
-Default: list(QCOUNTRY = "Country") converts QCOUNTRY to Country automatically.
-Set to NULL to disable legacy mappings.}
+\item{legacy_mappings}{Named list of automatic column renamings.
+Default: list(QCOUNTRY = "Country").}
 
 \item{constraint_patterns}{Named list of regex patterns for identifying constraint types.
 Used for diagnostic reporting and constraint categorization.
@@ -37,7 +36,7 @@ A weighting_config object (list with class "weighting_config")
 }
 \description{
 Creates a configuration object for the weighting system that defines
-column names, constraint type patterns, and backward compatibility mappings.
+column names, constraint type patterns, and optional legacy mappings.
 This allows the weighting functions to work with any dataset structure
 without hardcoding specific column names.
 }
@@ -61,8 +60,8 @@ config <- create_weighting_config(
   )
 )
 
-# Disable legacy mappings
-config <- create_weighting_config(legacy_mappings = NULL)
+# Apply custom legacy mappings
+config <- create_weighting_config(legacy_mappings = list(QMARKET = "market"))
 
 # Use in weighting
 result <- run_unified_weighting(

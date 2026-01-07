@@ -1,4 +1,24 @@
+---
+title: "Guide to built-in statistics and helpers"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Guide to built-in statistics and helpers}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
 # Guide to built-in statistics and helpers
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+library(surveydatar)
+
+# Minimal example dataset used by the code snippets below
+data <- create_survey_data(get_big_test_dat(200))
+```
 
 ## Statistics
 

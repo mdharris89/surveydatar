@@ -6,8 +6,12 @@
 \usage{
 compute_cells_as_bundle(
   base_array,
+  data,
+  dpdict,
   row_arrays,
+  row_u_arrays,
   col_arrays,
+  col_u_arrays,
   rows_expanded,
   cols_expanded,
   base_filter_spec,

@@ -511,8 +511,8 @@ update_labelled_values <- function(x,
 #'   Q1_1 = sjlabelled::set_labels(c(1, NA, NA, 1), labels = c("Yes" = 1)),
 #'   Q1_2 = sjlabelled::set_labels(c(NA, 1, NA, NA), labels = c("Yes" = 1)),
 #'   Q1_3 = sjlabelled::set_labels(c(NA, NA, 1, NA), labels = c("Yes" = 1)),
-#'   Q2_1 = sjlabelled::set_labels(c(NA, NA, NA, NA)),
-#'   Q2_2 = sjlabelled::set_labels(c(NA, NA, NA, NA))
+#'   Q2_1 = sjlabelled::set_labels(c(NA, NA, NA, NA), labels = c("Yes" = 1)),
+#'   Q2_2 = sjlabelled::set_labels(c(NA, NA, NA, NA), labels = c("Yes" = 1))
 #' )
 #'
 #' # Create dpdict
@@ -749,7 +749,7 @@ collapse_wide_question <- function(temp_dat, vars_to_collapse, collapse_on,
   all_vars <- vars_to_collapse
 
   if (length(all_vars) == 0) {
-    cat("No variables found with prefix:", question_prefix, "\n")
+    cat("No variables found to collapse.\n")
     return(invisible(NULL))
   }
 
@@ -920,6 +920,12 @@ collapse_wide_question <- function(temp_dat, vars_to_collapse, collapse_on,
       new_label <- var_labels[1]
     } else {
       # No labels found
+      new_label <- new_var_name
+    }
+
+    # If we couldn't infer a non-empty label (e.g. labels don't contain var_label_sep),
+    # fall back to the new variable name rather than propagating a blank label.
+    if (!is.character(new_label) || length(new_label) != 1 || !nzchar(trimws(new_label))) {
       new_label <- new_var_name
     }
 

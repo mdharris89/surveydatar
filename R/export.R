@@ -324,7 +324,6 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   output_data <- tab_result
 
   x_formatted <- output_data
-  x           <- output_data
 
   # Identify the base row
   base_label <- if (is.list(statistic)) statistic$base_label else "Base (n)"
@@ -459,10 +458,20 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   invisible(output_data)
 }
 
-# Copy df to clipboard
-#
-# Useful for any dataframe manipulation of tab objects before copying
-#'@export
+#' Copy a data.frame to the system clipboard
+#'
+#' Convenience helper for copying a data.frame (often derived from a `tab_result`)
+#' to the clipboard for pasting into spreadsheet tools.
+#'
+#' On macOS this uses `pbcopy`. On Windows it uses the `"clipboard"` connection.
+#'
+#' @param df A data.frame to copy.
+#' @param row.names Logical; include row names (default FALSE).
+#' @param sep Field separator (default tab).
+#' @return Invisibly returns `df`.
+#' @export
+#' @examples
+#' copy_df(head(mtcars))
 copy_df <- function(df, row.names = FALSE, sep = "\t") {
   # Ensure input is a data frame
   if (!is.data.frame(df)) {
@@ -473,16 +482,17 @@ copy_df <- function(df, row.names = FALSE, sep = "\t") {
   os <- Sys.info()[["sysname"]]
 
   if (os == "Windows") {
-    write.table(df, "clipboard", sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
+    utils::write.table(df, "clipboard", sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
     message("Data copied to Windows clipboard.")
   } else if (os == "Darwin") {  # macOS
     clip <- pipe("pbcopy", "w")
-    write.table(df, file = clip, sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
+    utils::write.table(df, file = clip, sep = sep, row.names = row.names, col.names = TRUE, quote = FALSE)
     close(clip)
     message("Data copied to clipboard.")
   } else {
     stop("Clipboard functionality not implemented on this OS.")
   }
+  invisible(df)
 }
 
 ##### Export Helper Functions #####
@@ -499,13 +509,13 @@ copy_df <- function(df, row.names = FALSE, sep = "\t") {
 #' @return Modified tab_result with base hidden
 #' @export
 #' @examples
-#' \dontrun{
-#' tab(data, satisfaction, region) %>%
+#' # Hide base in tab results
+#' dat <- get_basic_test_dat()
+#' tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   hide_base()  # Hide both base row and column
 #'   
-#' tab(data, satisfaction, region) %>%
+#' tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   hide_base(rows = TRUE, cols = FALSE)  # Hide only base row
-#' }
 hide_base <- function(tab_result, rows = TRUE, cols = TRUE) {
   if (!inherits(tab_result, "tab_result")) {
     stop("hide_base() requires a tab_result object")
@@ -564,13 +574,13 @@ hide_base <- function(tab_result, rows = TRUE, cols = TRUE) {
 #' @return Modified tab_result with base added
 #' @export
 #' @examples
-#' \dontrun{
-#' tab(data, satisfaction, region, show_base = FALSE) %>%
+#' # Show base in tab results
+#' dat <- get_basic_test_dat()
+#' tab(dat, labelledordinal, binarycategoricalasfactor, show_base = FALSE) %>%
 #'   show_base()  # Add base back with automatic orientation
 #'   
-#' tab(data, satisfaction, region, show_base = FALSE) %>%
+#' tab(dat, labelledordinal, binarycategoricalasfactor, show_base = FALSE) %>%
 #'   show_base(orientation = "row")  # Force base as row
-#' }
 show_base <- function(tab_result, orientation = c("auto", "row", "column")) {
   if (!inherits(tab_result, "tab_result")) {
     stop("show_base() requires a tab_result object")
@@ -687,13 +697,13 @@ show_base <- function(tab_result, orientation = c("auto", "row", "column")) {
 #' @return Modified tab_result with summaries hidden
 #' @export
 #' @examples
-#' \dontrun{
-#' tab(data, satisfaction, region, show_col_nets = TRUE) %>%
+#' # Hide summary rows/columns
+#' dat <- get_basic_test_dat()
+#' tab(dat, labelledordinal, binarycategoricalasfactor, show_col_nets = TRUE) %>%
 #'   hide_summary(cols = TRUE)  # Hide "Total" column
 #'   
-#' tab(data, satisfaction, region) %>%
+#' tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   hide_summary()  # Hide both summary row and column if present
-#' }
 hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
   if (!inherits(tab_result, "tab_result")) {
     stop("hide_summary() requires a tab_result object")
@@ -946,10 +956,10 @@ hide_summary <- function(tab_result, rows = TRUE, cols = TRUE) {
 #' @return Modified tab_result with updated formatting metadata
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- tab(data, satisfaction, gender) %>%
+#' # Format cells in tab results
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   format_cells(digits = 1, empty_zeros = TRUE)
-#' }
 format_cells <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display = "NA") {
   if (!inherits(tab_result, "tab_result")) {
     stop("format_cells() requires a tab_result object")
@@ -979,7 +989,7 @@ format_cells <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_disp
 #' @examples
 #' \dontrun{
 #' result <- tab(data, satisfaction, gender) %>%
-#'   format_row("Mean", function(x) sprintf("%.3f", x))
+#'   format_row("Satisfied", function(x) sprintf("%.1f", x))
 #' }
 format_row <- function(tab_result, row_label, format_fn) {
   if (!inherits(tab_result, "tab_result")) {
@@ -1025,10 +1035,10 @@ format_row <- function(tab_result, row_label, format_fn) {
 #' @return Modified tab_result with updated formatting metadata
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- tab(data, satisfaction, gender) %>%
-#'   format_col("Male", function(x) sprintf("%.0f%%", x))
-#' }
+#' # Format specific column
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor) %>%
+#'   format_col("Yes", function(x) sprintf("%.0f%%", x))
 format_col <- function(tab_result, col_label, format_fn) {
   if (!inherits(tab_result, "tab_result")) {
     stop("format_col() requires a tab_result object")
@@ -1313,11 +1323,11 @@ as.data.frame.tab_result <- function(x,
   attr(df, "statistic") <- x$statistic
   attr(df, "call") <- x$call
   attr(df, "layout") <- x$layout
-  if (!is.null(x$layout$row_universe)) {
-    attr(df, "row_universe") <- x$layout$row_universe
+  if (!is.null(x$layout$row_exposure)) {
+    attr(df, "row_exposure") <- x$layout$row_exposure
   }
-  if (!is.null(x$layout$col_universe)) {
-    attr(df, "col_universe") <- x$layout$col_universe
+  if (!is.null(x$layout$col_exposure)) {
+    attr(df, "col_exposure") <- x$layout$col_exposure
   }
   
   # Recreate arrays attribute (for add_sig compatibility)
@@ -1580,8 +1590,8 @@ extract_base_matrix <- function(tab_result) {
   grid <- tab_result$layout$grid
   base_matrix <- matrix(NA_real_, nrow(grid), ncol(grid))
   
-  for (i in 1:nrow(grid)) {
-    for (j in 1:ncol(grid)) {
+  for (i in seq_len(nrow(grid))) {
+    for (j in seq_len(ncol(grid))) {
       cell_id <- grid[i, j]
       if (!is.na(cell_id) && has_cell(tab_result$cell_store, cell_id)) {
         cell <- get_cell(tab_result$cell_store, cell_id)
@@ -1695,8 +1705,23 @@ view_base_matrix <- function(tab_result) {
     
     # Get column names (excluding row_label)
     col_names <- names(tab_result)[-1]
+
+    # Determine base label (if a visible base row/column was added during materialization)
+    stat_info <- attr(tab_result, "statistic")
+    base_label <- "Base (n)"
+    if (is.list(stat_info) && !is.null(stat_info$base_label) && nzchar(stat_info$base_label)) {
+      base_label <- stat_info$base_label
+    }
     
     # Check dimensions match
+    # Common case: materialized result includes a presentation "Base (n)" row, but base_matrix is
+    # stored only for the data grid. Drop the base row label to align without warning.
+    if (nrow(base_matrix) == (length(row_labels) - 1L) && base_label %in% row_labels) {
+      base_row_idx <- match(base_label, row_labels)
+      if (!is.na(base_row_idx)) {
+        row_labels <- row_labels[-base_row_idx]
+      }
+    }
     if (nrow(base_matrix) != length(row_labels)) {
       warning("Base matrix rows (", nrow(base_matrix), ") don't match data rows (", 
               length(row_labels), "). Using available data.")
@@ -1706,6 +1731,13 @@ view_base_matrix <- function(tab_result) {
       row_labels <- row_labels[1:min_rows]
     }
     
+    # Symmetric case: materialized result includes a presentation base column (less common).
+    if (ncol(base_matrix) == (length(col_names) - 1L) && base_label %in% col_names) {
+      base_col_idx <- match(base_label, col_names)
+      if (!is.na(base_col_idx)) {
+        col_names <- col_names[-base_col_idx]
+      }
+    }
     if (ncol(base_matrix) != length(col_names)) {
       warning("Base matrix columns (", ncol(base_matrix), ") don't match data columns (", 
               length(col_names), "). Using available data.")

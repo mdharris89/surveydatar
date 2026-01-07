@@ -26,11 +26,8 @@ Selects and reorders existing column positions based on matching criteria.
 Symmetric to select_rows().
 }
 \examples{
-\dontrun{
-# Match by expression
-result \%>\% select_cols(gender == 1, gender == 2)
-
-# Match by label
-result \%>\% select_cols("Male", "Female", .match = "label")
-}
+# Select columns by label
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor)
+result \%>\% select_cols("Yes", "No", .match = "label")
 }

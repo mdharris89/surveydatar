@@ -19,7 +19,11 @@ add_sig(
 \item{versus}{Column to compare against: "first_col", "last_col",
 column name, or column index}
 
-\item{test}{Test to use: "auto", "z_test_proportions", "t_test", etc.}
+\item{test}{Test to use. \code{"auto"} selects safe defaults for supported
+statistics (e.g., \code{column_pct}, \code{mean}, and \code{median} when unweighted).
+When weights are present, \code{"auto"} selects weighted tests where available.
+For other statistics (e.g., \code{count}, \code{row_pct}, \code{sd}, \code{cv}), \code{"auto"} errors;
+choose an explicit test.}
 
 \item{level}{Significance level (default 0.05)}
 

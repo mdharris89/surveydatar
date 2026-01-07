@@ -1,12 +1,10 @@
-# Tests for Tab Helpers and Extensibility Features
-# This file tests:
-# - Helper functions (top_box, bottom_box, value_range, pattern, percentile, etc.)
-# - Custom statistic and helper creation
-# - Significance testing
-# - Derive operations
-# - Layout and hide operations
-# - Grid macro
+## tab() helper/extensibility tests
+##
+## tab() turns helper specifications into row/col arrays and uses those arrays to compute/store cells before
+## layout operations allocate them to the visible grid. The tests in this file check helper behaviour, custom
+## registry extensibility, and downstream operations that act on tab results (derive/layout/significance).
 ##### Setup #####
+# Sets up registry state and realistic fixtures used to exercise helper parsing, array creation, and downstream operations.
 # Ensure clean state for each test file
 # Note: Functions loaded via helper-load-tab.R
 clear_tab_registry()
@@ -319,6 +317,7 @@ mini_survey_data <- create_survey_data(mini_data)
 grid_test_data <- create_grid_test_data()
 
 ##### Basic Helper Functionality Tests #####
+# Checks that common helpers produce usable row/col specifications and integrate with tab() output.
 
 test_that("top and bottom box helper functions return correct format", {
   # Test top_box helper
@@ -346,6 +345,7 @@ test_that("multiple helpers work with rows_list", {
 })
 
 ##### Helper target resolution tests #####
+# Checks how helpers resolve targets (variables, stems, question groups) into per-variable outputs.
 
 test_that("helpers resolve question group names to per-variable outputs", {
   # Use test_survey_data and add new variables with proper labels
@@ -450,6 +450,7 @@ test_that("helpers error cleanly for unknown target names", {
 })
 
 ##### Helper Mathematical Accuracy Tests #####
+# Checks that helper-generated arrays produce the expected numeric results when tabulated.
 
 test_that("top_box helper selects correct values", {
   # Test top 2 box on satisfaction (values 4 and 5)
@@ -552,6 +553,7 @@ test_that("helpers handle missing data correctly", {
 })
 
 ##### Unit tests for all_matching helper #####
+# Checks all_matching() behaviour when selecting individual variables from a group by label pattern.
 
 test_that("all_matching helper returns individual matching variables", {
   # Use existing test data
@@ -589,8 +591,10 @@ test_that("all_matching helper returns individual matching variables", {
 })
 
 ##### Built-in Statistics Tests #####
+# Checks that built-in statistics are registered and usable through tab().
 
 ##### STATISTICS MATHEMATICAL ACCURACY TESTS #####
+# Checks mathematical correctness of built-in statistics when applied to known fixtures.
 
 test_that("count statistic calculates exact counts", {
 
@@ -840,6 +844,7 @@ test_that("correlation statistic calculates Pearson correlation correctly", {
 })
 
 ##### WEIGHTED STATISTICS TESTS #####
+# Checks that statistics behave correctly when weights are applied via base_array.
 
 test_that("weighted statistics calculate correctly", {
   # Create test data
@@ -918,6 +923,7 @@ test_that("weighted and unweighted calculations maintain consistent relationship
 })
 
 ##### MULTIPLE STATISTIC VALIDATION #####
+# Checks statistic validation rules (e.g., requires_values) across different inputs.
 
 test_that("different statistics are consistent with each other", {
   test_data <- create_tab_test_data(100)
@@ -939,6 +945,7 @@ test_that("different statistics are consistent with each other", {
 })
 
 ##### Custom Statistics and Helpers Creation Tests #####
+# Checks registry extensibility: creating and using custom helpers/statistics in tab().
 
 test_that("custom statistic creation and usage works", {
   # Save current state
@@ -947,8 +954,8 @@ test_that("custom statistic creation and usage works", {
   # Create a simple custom statistic
   test_stat <- create_statistic(
     id = "test_double",
-    processor = function(base_array, row_array, col_array, ...) {
-      sum(base_array * row_array * col_array) * 2
+    processor = function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
+      sum(base_array * row_m * col_m, na.rm = TRUE) * 2
     },
     base_calculator = base_column_total,
     format_fn = function(x) paste0(x, "x")
@@ -986,6 +993,7 @@ test_that("custom helper creation and usage works", {
 })
 
 ##### Unit tests for banner helper ######
+# Checks banner() expansion and base context behaviour for outer/inner specifications.
 
 test_that("banner helper function works correctly", {
   test_data <- data.frame(
@@ -1173,6 +1181,7 @@ test_that("banner helper works with different separators", {
 })
 
 ##### Validation Functions Tests #####
+# Checks helper/statistic validation utilities and error messaging for invalid inputs.
 
 test_that("validate_statistic_variables catches inappropriate variable types", {
   mean_stat <- get_statistic("mean")
@@ -1218,6 +1227,7 @@ test_that("helpers error cleanly for unknown target names", {
 })
 
 ##### response_match Helper Tests #####
+# Checks response_match() behaviour for pattern/value matching within question groups.
 
 test_that("response_match automatic label extraction works", {
   # Use mini test data which has A2_1, A2_2, A2_3 variables
@@ -1304,6 +1314,7 @@ test_that("response_match automatic label extraction works", {
 })
 
 ##### all_matching Helper Tests #####
+# Checks all_matching() behaviour in common usage and edge cases (drop_empty, pattern types).
 
 test_that("all_matching helper returns individual matching variables", {
   # Use existing test data
@@ -1341,6 +1352,7 @@ test_that("all_matching helper returns individual matching variables", {
 })
 
 ##### any_positive Helper in Filter Tests #####
+# Checks any_positive() when used as a table-wide filter and how it composes with other filters/helpers.
 
 test_that("filters support helpers with same expressiveness as rows", {
   # Use the standard test data
@@ -1399,6 +1411,7 @@ test_that("filters support helpers with same expressiveness as rows", {
 })
 
 ##### Significance Testing Tests #####
+# Checks adding significance testing results to tab outputs and preserving expected structure.
 # Setup test data for significance tests
 setup_sig_test_data <- function() {
   set.seed(42)
@@ -1606,11 +1619,12 @@ test_that("Custom significance test works correctly", {
     id = "practical_sig",
     name = "Practical significance test",
     description = "Tests if absolute difference in proportions exceeds threshold",
-    processor = function(base_array, row_array, col_array_1, col_array_2, threshold = 0.1, ...) {
-      n1 <- sum(base_array * row_array * col_array_1, na.rm = TRUE)
-      N1 <- sum(base_array * col_array_1, na.rm = TRUE)
-      n2 <- sum(base_array * row_array * col_array_2, na.rm = TRUE)
-      N2 <- sum(base_array * col_array_2, na.rm = TRUE)
+    processor = function(base_array, row_m, row_u, col_m_1, col_u_1, col_m_2, col_u_2,
+                         values = NULL, threshold = 0.1, ...) {
+      n1 <- sum(base_array * row_m * col_m_1, na.rm = TRUE)
+      N1 <- sum(base_array * col_m_1 * row_u, na.rm = TRUE)
+      n2 <- sum(base_array * row_m * col_m_2, na.rm = TRUE)
+      N2 <- sum(base_array * col_m_2 * row_u, na.rm = TRUE)
 
       if (is.na(N1) || N1 == 0 || is.na(N2) || N2 == 0) {
         return(list(p_value = NA_real_, statistic = NA_real_))
@@ -1832,6 +1846,7 @@ test_that("Weighted data produces different results than unweighted", {
 })
 
 ##### Mathematical Accuracy Tests #####
+# Checks additional accuracy scenarios across helpers/statistics beyond the core fixtures.
 
 test_that("pivot_to_grid basic row percentage accuracy - rows sum to 100%", {
   result <- tab(grid_test_data, A2_a, statistic = "column_pct") %>% pivot_to_grid()
@@ -1982,6 +1997,7 @@ test_that("pivot_to_grid with filtered data produces correct results", {
 })
 
 ##### Layout Correctness Tests #####
+# Checks that helper- and derive-generated outputs allocate correctly into the tab layout grid.
 
 test_that("pivot_to_grid produces correct grid dimensions", {
   result <- tab(grid_test_data, A2_a, statistic = "column_pct") %>% pivot_to_grid()
@@ -2045,6 +2061,7 @@ test_that("pivot_to_grid cell correspondence is correct", {
 })
 
 ##### Edge Cases and Data Quality #####
+# Checks behaviour on messy inputs (missingness, small bases, empty results) with clear errors/warnings.
 
 test_that("pivot_to_grid handles missing data correctly", {
   # Create version with NAs
@@ -2112,6 +2129,7 @@ test_that("pivot_to_grid works with count statistic", {
 })
 
 ##### Custom Extractors #####
+# Checks custom extractor hooks used by reshaping/display helpers (e.g., pivoting/grid behaviour).
 
 test_that("pivot_to_grid works with formula-based extractors", {
   # Test using formula syntax (should produce same result as default)
@@ -2158,6 +2176,7 @@ test_that("pivot_to_grid custom extractors for transposed layout", {
 })
 
 ##### Integration Tests #####
+# Checks multi-feature end-to-end scenarios combining helpers, stats, and downstream operations.
 
 test_that("pivot_to_grid works with chained hide operations", {
   result <- tab(grid_test_data, A2_a, statistic = "column_pct") %>%
@@ -2210,6 +2229,7 @@ test_that("pivot_to_grid result exports to data.frame correctly", {
 })
 
 ##### Error Handling #####
+# Checks error messages and failure modes for invalid helper/statistic usage.
 
 test_that("pivot_to_grid requires cell-based tab_result", {
   # Create a data.frame result (not cell-based)
@@ -2239,6 +2259,7 @@ test_that("pivot_to_grid handles extraction failures gracefully", {
 })
 
 ##### Derive Operations Tests #####
+# Checks derived-cell creation and how derived results integrate with the existing layout.
 
 # Helper to setup factor mtcars for derive tests
 setup_factor_mtcars <- function() {
@@ -2492,6 +2513,7 @@ test_that("multiple derive operations can be chained", {
 })
 
 ##### Layout Operations Tests #####
+# Checks post-compute layout operations (ordering/moving) on tab results.
 
 test_that("arrange_rows reorders grid correctly by column values", {
   mtcars_cat <- setup_factor_mtcars()
@@ -2584,6 +2606,7 @@ test_that("move_row moves row to bottom", {
 })
 
 ##### Hide Operations Tests #####
+# Checks visibility controls that hide rows/cols while preserving the underlying cell collection.
 
 test_that("hide_rows removes rows from grid", {
   mtcars_cat <- setup_factor_mtcars()

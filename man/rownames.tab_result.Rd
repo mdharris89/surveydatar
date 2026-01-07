@@ -6,6 +6,9 @@
 \usage{
 rownames.tab_result(x)
 }
+\arguments{
+\item{x}{A tab_result object}
+}
 \description{
 Get row names of tab_result
 }

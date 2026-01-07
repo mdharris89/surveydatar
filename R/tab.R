@@ -128,8 +128,12 @@
 #' @param show_col_nets Whether to display NET/summary columns (NET column for row_pct, Total for count, etc.). Summary columns are always computed, this controls visibility.
 #' @param show_base Whether to display Base row/column. Base is always computed, this controls visibility.
 #' @param low_base_threshold Minimum base count threshold - cells/rows/cols with base below this are filtered out
-#' @param hide_empty Logical; if TRUE, remove rows and columns whose universe exposure
-#'   (after filters/weights) drops to zero. Summary and base rows/columns are always preserved.
+#' @param hide_empty Logical; if TRUE, prune rows and columns with zero exposure after table-wide
+#'   filters/weights. Exposure is a *marginal* quantity (one-dimensional mass):
+#'   \code{row_exposure = sum(base_array * row_m)} and \code{col_exposure = sum(base_array * col_m)}.
+#'   This is sufficient for \code{hide_empty} because it makes a row/column-level decision
+#'   (“does this entire row/column have any mass in the table base?”), not a per-cell decision.
+#'   Summary and base rows/columns are always preserved.
 #' @param label_mode How to display labels: "smart" (default - suffix for multi-item, full for single-item), 
 #'   "full" (complete variable label), or "suffix" (extract suffix after separator). Can be overridden 
 #'   in as.data.frame(). Stored in result for use during materialization.
@@ -484,8 +488,8 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
     
     filter_parsed <- parse_table_formula(filter_to_parse, data, dpdict, all_helpers)
-    filter_logic <- formula_to_array(filter_parsed, data, dpdict, all_helpers)
-    base_array <- base_array * filter_logic
+    filter_arrays <- formula_to_arrays(filter_parsed, data, dpdict, all_helpers = all_helpers)
+    base_array <- base_array * filter_arrays$m
     
     # Store filter specification for cell metadata
     base_filter_spec <- filter_parsed
@@ -650,17 +654,19 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Create arrays for each specification
   
   row_arrays <- list()
+  row_u_arrays <- list()
   rows_expanded_final <- list()
   
   for (spec in rows_expanded) {
-    array_result <- formula_to_array(spec, data, dpdict, all_helpers = all_helpers)
+    array_result <- formula_to_arrays(spec, data, dpdict, all_helpers = all_helpers)
     
     # Check if helper returned multiple arrays
     if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
       for (i in seq_along(names(array_result))) {
         row_name <- names(array_result)[i]
-        member_array <- array_result[[row_name]]
-        row_arrays <- append(row_arrays, list(member_array))
+        member_arrays <- array_result[[row_name]]
+        row_arrays <- append(row_arrays, list(member_arrays$m))
+        row_u_arrays <- append(row_u_arrays, list(member_arrays$u))
         
         # Add .member_index to original expression for uniqueness
         specialized_expr <- if (is.call(spec$expr)) {
@@ -678,36 +684,49 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
           helper_type = spec$helper_type,
           label = row_name,
           expr = specialized_expr,
-          dsl = attr(member_array, "meta")$dsl
+          dsl = attr(member_arrays$m, "meta")$dsl
         )
         
         rows_expanded_final <- append(rows_expanded_final, list(new_spec))
       }
     } else {
-      row_arrays <- append(row_arrays, list(array_result))
+      row_arrays <- append(row_arrays, list(array_result$m))
+      row_u_arrays <- append(row_u_arrays, list(array_result$u))
       rows_expanded_final <- append(rows_expanded_final, list(spec))
     }
   }
   
   rows_expanded <- rows_expanded_final
   
-  col_arrays <- if (!is.null(cols_parsed)) {
+  col_arrays <- list()
+  col_u_arrays <- list()
+
+  if (!is.null(cols_parsed)) {
     arrays_list <- list()
+    u_arrays_list <- list()
     expanded_specs <- list()
     
     for (spec in cols_expanded) {
       if (spec$type == "total") {
-        array <- rep(1, nrow(data))
+        array <- set_array_meta(
+          rep(1, nrow(data)),
+          dsl = quote(TRUE),
+          variables = NULL,
+          tags = list(type = "total"),
+          label = spec$label %||% "Total"
+        )
         arrays_list <- append(arrays_list, list(array))
+        u_arrays_list <- append(u_arrays_list, list(rep(1, nrow(data))))
         expanded_specs <- append(expanded_specs, list(spec))
       } else {
-        array_result <- formula_to_array(spec, data, dpdict, all_helpers = all_helpers)
+        array_result <- formula_to_arrays(spec, data, dpdict, all_helpers = all_helpers)
         
         if (is.list(array_result) && isTRUE(attr(array_result, "is_multi_column"))) {
           for (i in seq_along(names(array_result))) {
             col_name <- names(array_result)[i]
-            member_array <- array_result[[col_name]]
-            arrays_list <- append(arrays_list, list(member_array))
+            member_arrays <- array_result[[col_name]]
+            arrays_list <- append(arrays_list, list(member_arrays$m))
+            u_arrays_list <- append(u_arrays_list, list(member_arrays$u))
             
             # Add .member_index to original expression for uniqueness
             specialized_expr <- if (is.call(spec$expr)) {
@@ -724,23 +743,32 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
               helper_type = spec$helper_type,
               label = col_name,
               expr = specialized_expr,
-              dsl = attr(member_array, "meta")$dsl
+              dsl = attr(member_arrays$m, "meta")$dsl
             )
             
             expanded_specs <- append(expanded_specs, list(new_spec))
           }
         } else {
-          arrays_list <- append(arrays_list, list(array_result))
+          arrays_list <- append(arrays_list, list(array_result$m))
+          u_arrays_list <- append(u_arrays_list, list(array_result$u))
           expanded_specs <- append(expanded_specs, list(spec))
         }
       }
     }
     
     cols_expanded <- expanded_specs
-    arrays_list
+    col_arrays <- arrays_list
+    col_u_arrays <- u_arrays_list
   } else {
-    array <- rep(1, nrow(data))
-    list(array)
+    array <- set_array_meta(
+      rep(1, nrow(data)),
+      dsl = quote(TRUE),
+      variables = NULL,
+      tags = list(type = "total"),
+      label = "Total"
+    )
+    col_arrays <- list(array)
+    col_u_arrays <- list(rep(1, nrow(data)))
   }
   
   # Create values array if needed
@@ -797,8 +825,12 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # and enables dimension-agnostic operations.
   compute_result <- compute_cells_as_bundle(
     base_array = base_array,
+    data = data,
+    dpdict = dpdict,
     row_arrays = row_arrays,
+    row_u_arrays = row_u_arrays,
     col_arrays = col_arrays,
+    col_u_arrays = col_u_arrays,
     rows_expanded = rows_expanded,
     cols_expanded = cols_expanded,
     base_filter_spec = base_filter_spec,
@@ -813,6 +845,8 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   summary_row_spec <- compute_result$summary_row_spec
   summary_col_array <- compute_result$summary_col_array
   summary_col_spec <- compute_result$summary_col_spec
+  summary_row_u_array <- compute_result$summary_row_u_array
+  summary_col_u_array <- compute_result$summary_col_u_array
   
   # Store dimensions for layout construction
   n_rows <- length(row_arrays)
@@ -866,10 +900,14 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   arrays <- list(
     base_array = base_array,
     row_arrays = row_arrays,
+    row_u_arrays = row_u_arrays,
     col_arrays = col_arrays,
+    col_u_arrays = col_u_arrays,
     values_array = values_array,
     summary_row_array = summary_row_array,
-    summary_col_array = summary_col_array
+    summary_col_array = summary_col_array,
+    summary_row_u_array = summary_row_u_array,
+    summary_col_u_array = summary_col_u_array
   )
   
   ## Build cell-based tab_result -----------------------------------------------
@@ -1006,12 +1044,17 @@ filter_low_base_cells <- function(layout, store, threshold) {
 
 #' Prune empty rows and columns from a layout
 #'
-#' Removes rows and columns that are empty based on base semantics after
-#' allocation, while preserving summary rows and columns (e.g., NET/Total).
-#' A cell is considered empty if no cell is allocated OR its base is NA or 0.
-#' This operates at the layout level and uses the cell store for base checks.
+#' Removes rows and columns that are empty after allocation, while preserving summary rows and columns
+#' (e.g., NET/Total/Base).
 #'
-#' @param layout Layout list with grid, defs, and universe metadata
+#' Emptiness is determined using *marginal exposure* (row_exposure / col_exposure) plus a grid check:
+#' - Exposure is the marginal “membership mass under the table base” for a row/column spec.
+#' - For \code{hide_empty} we only need a row/column-level decision (not a per-cell measure), so marginal
+#'   exposure is sufficient: if row_exposure == 0 then every cell in that row must have zero mass.
+#' - Rows/cols are also treated as empty if, after allocation, all their non-summary grid positions are NA
+#'   (e.g., because layout defs or filters removed everything).
+#'
+#' @param layout Layout list with grid, defs, and exposure metadata
 #' @keywords internal
 .prune_empty_dimensions <- function(layout) {
   grid <- layout$grid
@@ -1052,20 +1095,20 @@ filter_low_base_cells <- function(layout, store, threshold) {
     is_summary_col[n_cols] <- TRUE
   }
   
-  row_universe <- layout$row_universe
-  col_universe <- layout$col_universe
-  if (is.null(row_universe) || length(row_universe) != n_rows) {
-    row_universe <- rep(NA_real_, n_rows)
+  row_exposure <- layout$row_exposure
+  col_exposure <- layout$col_exposure
+  if (is.null(row_exposure) || length(row_exposure) != n_rows) {
+    row_exposure <- rep(NA_real_, n_rows)
   }
-  if (is.null(col_universe) || length(col_universe) != n_cols) {
-    col_universe <- rep(NA_real_, n_cols)
+  if (is.null(col_exposure) || length(col_exposure) != n_cols) {
+    col_exposure <- rep(NA_real_, n_cols)
   }
   
   non_summary_cols <- which(!is_summary_col)
   non_summary_rows <- which(!is_summary_row)
   
-  row_empty_universe <- ifelse(is.na(row_universe), FALSE, row_universe == 0)
-  col_empty_universe <- ifelse(is.na(col_universe), FALSE, col_universe == 0)
+  row_empty_exposure <- ifelse(is.na(row_exposure), FALSE, row_exposure == 0)
+  col_empty_exposure <- ifelse(is.na(col_exposure), FALSE, col_exposure == 0)
   
   row_empty_grid <- if (length(non_summary_cols) == 0L) {
     rep(FALSE, n_rows)
@@ -1079,8 +1122,8 @@ filter_low_base_cells <- function(layout, store, threshold) {
     apply(grid[non_summary_rows, , drop = FALSE], 2L, function(col) all(is.na(col)))
   }
   
-  row_empty <- row_empty_universe | row_empty_grid
-  col_empty <- col_empty_universe | col_empty_grid
+  row_empty <- row_empty_exposure | row_empty_grid
+  col_empty <- col_empty_exposure | col_empty_grid
   
   # Keep rows/cols that are not empty OR are summary
   rows_to_keep <- !row_empty | is_summary_row
@@ -1095,8 +1138,8 @@ filter_low_base_cells <- function(layout, store, threshold) {
     if (!is.null(layout$row_defs) && length(layout$row_defs) == n_rows) {
       layout$row_defs <- layout$row_defs[rows_to_keep]
     }
-    if (!is.null(layout$row_universe) && length(layout$row_universe) == n_rows) {
-      layout$row_universe <- layout$row_universe[rows_to_keep]
+    if (!is.null(layout$row_exposure) && length(layout$row_exposure) == n_rows) {
+      layout$row_exposure <- layout$row_exposure[rows_to_keep]
     }
     n_rows <- nrow(grid)
   }
@@ -1109,8 +1152,8 @@ filter_low_base_cells <- function(layout, store, threshold) {
     if (!is.null(layout$col_defs) && length(layout$col_defs) == n_cols) {
       layout$col_defs <- layout$col_defs[cols_to_keep]
     }
-    if (!is.null(layout$col_universe) && length(layout$col_universe) == n_cols) {
-      layout$col_universe <- layout$col_universe[cols_to_keep]
+    if (!is.null(layout$col_exposure) && length(layout$col_exposure) == n_cols) {
+      layout$col_exposure <- layout$col_exposure[cols_to_keep]
     }
     n_cols <- ncol(grid)
   }
@@ -1687,7 +1730,7 @@ parse_by_parameter <- function(by_quo, data, dpdict = NULL) {
     return(groups)
   }
 
-  # Case 6: Direct evaluation (for backward compatibility)
+  # Case 6: Direct evaluation
   # Try to evaluate the expression - might return a list
   result <- tryCatch(
     rlang::eval_tidy(by_quo, data),

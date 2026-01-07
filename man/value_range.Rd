@@ -23,6 +23,6 @@ Creates a binary indicator for respondents whose values fall within
 the specified numeric range.
 }
 \examples{
-tab(data, value_range(age, 25, 45), gender)
-tab(data, value_range(income, 50000, 100000, inclusive = FALSE), region)
+value_range(age, 25, 45)
+value_range(income, 50000, 100000, inclusive = FALSE)
 }

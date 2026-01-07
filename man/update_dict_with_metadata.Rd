@@ -50,8 +50,8 @@ metadata included:
 \itemize{
 \item variable-level metadata: question_group, variable class, and then checks for single variable question, dichotomous variable, variable with value labels, and multiresponse variable, which are in turn used to define questiontype
 \item question-level metadata: question_alias, question_description, question_suffix, alias_with_suffix, and question_folder
-\item question_alias is intended as a user-defined identifier for the question but takes the values of question_group by default
-\item question_description, question_suffix, and alias_with_suffix are useful when creating tables and visualisations
+\item question_alias, question_description, question_folder, and alias_with_suffix are user-defined fields for custom labelling and organization (not currently integrated with tab() or export functions)
+\item question_suffix is used by get_display_label() when label_mode = "suffix" or "smart" in tab() and export functions
 }
 
 The function performs several steps:

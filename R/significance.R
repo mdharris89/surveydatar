@@ -21,7 +21,11 @@
 #' @param tab_result A tab_result object from tab()
 #' @param versus Column to compare against: "first_col", "last_col",
 #'   column name, or column index
-#' @param test Test to use: "auto", "z_test_proportions", "t_test", etc.
+#' @param test Test to use. `"auto"` selects safe defaults for supported
+#'   statistics (e.g., `column_pct`, `mean`, and `median` when unweighted).
+#'   When weights are present, `"auto"` selects weighted tests where available.
+#'   For other statistics (e.g., `count`, `row_pct`, `sd`, `cv`), `"auto"` errors;
+#'   choose an explicit test.
 #' @param level Significance level (default 0.05)
 #' @param adjust Multiple comparison adjustment: "none", "bonferroni", "BH", etc.
 #' @param name Optional name for this comparison (defaults to versus value)
@@ -61,7 +65,8 @@ add_sig <- function(tab_result,
 #' Add significance testing versus all columns
 #'
 #' @param tab_result A tab_result object from tab()
-#' @param test Test to use for all comparisons
+#' @param test Test to use for all comparisons (see `add_sig()` for `"auto"`
+#'   behavior and limitations)
 #' @param level Significance level
 #' @param adjust Multiple comparison adjustment
 #' @param exclude Columns to exclude from testing (e.g., "Total")
@@ -125,6 +130,12 @@ add_sig_all <- function(tab_result,
     warning("No columns left to test after excluding summary/base columns")
     return(tab_result)
   }
+  
+  # Resolve 'auto' once up-front (fail early with a single clear error)
+  if (identical(test, "auto")) {
+    has_weights <- .sig_has_weights(tab_result$arrays$base_array)
+    test <- .resolve_auto_sig_test(statistic$id, has_weights)
+  }
 
   # Add significance vs each remaining column
   for (col in col_names) {
@@ -146,7 +157,7 @@ add_sig_all <- function(tab_result,
 
 #' Compute significance matrix for tab results
 #' @keywords internal
-compute_significance <- function(base_array, row_arrays, col_arrays,
+compute_significance <- function(base_array, row_arrays, row_u_arrays, col_arrays, col_u_arrays,
                                  result_matrix, statistic, values_array = NULL,
                                  sig_config = list(), row_labels = NULL) {
 
@@ -178,26 +189,20 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
   # Filter to data-only elements
   result_matrix <- result_matrix[data_rows, data_cols, drop = FALSE]
   row_arrays <- row_arrays[data_rows]
+  row_u_arrays <- row_u_arrays[data_rows]
   col_arrays <- col_arrays[data_cols]
+  col_u_arrays <- col_u_arrays[data_cols]
   if (!is.null(row_labels)) {
     row_labels <- row_labels[data_rows]
   }
   col_names <- colnames(result_matrix)
+  
+  # Detect weighting for safer auto selection
+  has_weights <- .sig_has_weights(base_array)
 
   # Determine test to use
   if (config$test == "auto") {
-    # Auto-determine based on statistic type
-    test_id <- switch(
-      statistic$id,
-      "column_pct" = "z_test_proportions",
-      "count" = "z_test_proportions",
-      "row_pct" = "z_test_proportions",
-      "mean" = "t_test",
-      "median" = "mann_whitney",
-      "sd" = "t_test",
-      "cv" = "t_test",
-      stop("No default test for statistic '", statistic$id, "'")
-    )
+    test_id <- .resolve_auto_sig_test(statistic$id, has_weights)
   } else {
     test_id <- config$test
   }
@@ -255,6 +260,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
 
   sig_matrix <- matrix("", nrow = n_data_rows, ncol = n_cols)
   p_matrix <- matrix(NA_real_, nrow = n_data_rows, ncol = n_cols)
+  effect_matrix <- matrix(NA_real_, nrow = n_data_rows, ncol = n_cols)
 
   # Set row and column names
   if (length(data_rows) > 0) {
@@ -290,20 +296,25 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
       array_indices <- array_indices[seq_len(length(row_arrays))]
     }
     data_row_arrays <- row_arrays[array_indices]
+    data_row_u_arrays <- row_u_arrays[array_indices]
 
     # For omnibus tests, also exclude summary columns
     data_col_arrays <- col_arrays
+    data_col_u_arrays <- col_u_arrays
     if (!is.null(statistic$summary_col)) {
       # Find indices of data columns (excluding summary column)
       data_col_indices <- which(col_names != statistic$summary_col)
       data_col_arrays <- col_arrays[data_col_indices]
+      data_col_u_arrays <- col_u_arrays[data_col_indices]
     }
 
     # Run omnibus test once
     test_result <- test_obj$processor(
       base_array = base_array,
       row_arrays = data_row_arrays,
+      row_u_arrays = data_row_u_arrays,
       col_arrays = data_col_arrays,
+      col_u_arrays = data_col_u_arrays,
       values = values_array
     )
 
@@ -313,7 +324,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
       p_matrix[,] <- test_result$p_value
 
       # Mark all cells as "omnibus" in sig_matrix
-      sig_matrix[,] <- if (test_result$p_value < config$level) "significant" else ""
+      sig_matrix[,] <- if (test_result$p_value < config$level) "omnibus" else ""
     }
 
     return(list(
@@ -329,6 +340,7 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
 
   # Perform pairwise tests
   base_col_array <- col_arrays[[base_col]]
+  base_col_u <- col_u_arrays[[base_col]]
 
   # Remove base array from end of row_arrays if present
   if (length(row_arrays) > n_data_rows) {
@@ -351,13 +363,19 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
       tryCatch({
         test_result <- test_obj$processor(
           base_array = base_array,
-          row_array = row_arrays[[array_idx]],
-          col_array_1 = base_col_array,
-          col_array_2 = col_arrays[[j]],
+          row_m = row_arrays[[array_idx]],
+          row_u = row_u_arrays[[array_idx]],
+          col_m_1 = base_col_array,
+          col_u_1 = base_col_u,
+          col_m_2 = col_arrays[[j]],
+          col_u_2 = col_u_arrays[[j]],
           values = values_array
         )
 
         p_matrix[i, j] <- test_result$p_value
+        if (!is.null(test_result$effect)) {
+          effect_matrix[i, j] <- as.numeric(test_result$effect)
+        }
       }, error = function(e) {
         # If test fails, leave as NA
         warning("Test failed for row ", i, ", col ", j, ": ", e$message)
@@ -397,15 +415,24 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
       if (sig_matrix[i, j] == "base") {
         next
       } else if (!is.na(p_matrix[i, j]) && p_matrix[i, j] < config$level) {
-        # Determine direction based on values
-        val_current <- result_matrix[row_idx, j]
-        val_base <- result_matrix[row_idx, base_col]
-
-        if (!is.na(val_current) && !is.na(val_base)) {
-          if (val_current > val_base) {
+        # Determine direction (prefer test-provided effect when available)
+        eff <- effect_matrix[i, j]
+        if (!is.na(eff) && is.finite(eff)) {
+          if (eff > 0) {
             sig_matrix[i, j] <- "higher"
-          } else if (val_current < val_base) {
+          } else if (eff < 0) {
             sig_matrix[i, j] <- "lower"
+          }
+        } else {
+          # Fallback: compare displayed values
+          val_current <- result_matrix[row_idx, j]
+          val_base <- result_matrix[row_idx, base_col]
+          if (!is.na(val_current) && !is.na(val_base)) {
+            if (val_current > val_base) {
+              sig_matrix[i, j] <- "higher"
+            } else if (val_current < val_base) {
+              sig_matrix[i, j] <- "lower"
+            }
           }
         }
       }
@@ -420,6 +447,63 @@ compute_significance <- function(base_array, row_arrays, col_arrays,
     versus = paste0("column ", base_col, ": ", col_names[base_col]),
     config = config
   ))
+}
+
+# Internal helpers ---------------------------------------------------------------
+
+.sig_has_weights <- function(base_array) {
+  if (is.null(base_array) || !is.numeric(base_array)) {
+    return(FALSE)
+  }
+  x <- base_array[!is.na(base_array) & base_array != 0]
+  if (length(x) == 0) {
+    return(FALSE)
+  }
+  any(x != 1)
+}
+
+.resolve_auto_sig_test <- function(statistic_id, has_weights) {
+  if (is.null(statistic_id) || length(statistic_id) != 1 || is.na(statistic_id)) {
+    stop("Cannot resolve auto significance test: invalid statistic id")
+  }
+  
+  # Strict defaults: only auto-resolve when the test matches the statistic.
+  if (isTRUE(has_weights)) {
+    if (identical(statistic_id, "column_pct")) return("z_test_weighted")
+    if (identical(statistic_id, "mean")) return("t_test_weighted")
+    if (identical(statistic_id, "median")) {
+      stop("test = 'auto' is not available for weighted median comparisons. ",
+           "Weighted Mann-Whitney is not implemented. ",
+           "Choose test = 'mann_whitney' (unweighted) explicitly, or remove weights.")
+    }
+  } else {
+    if (identical(statistic_id, "column_pct")) return("z_test_proportions")
+    if (identical(statistic_id, "mean")) return("t_test")
+    if (identical(statistic_id, "median")) return("mann_whitney")
+  }
+  
+  if (identical(statistic_id, "count")) {
+    stop("test = 'auto' is not available for statistic = 'count'. ",
+         "For pairwise proportion tests, use statistic = 'column_pct' with test = 'z_test_proportions' ",
+         "(or 'z_test_weighted' when weighted). ",
+         "For overall association, use test = 'chi_square'.")
+  }
+  
+  if (identical(statistic_id, "row_pct")) {
+    stop("test = 'auto' is not available for statistic = 'row_pct'. ",
+         "If you want pairwise comparisons between column groups, use statistic = 'column_pct' ",
+         "with an appropriate z-test. ",
+         "If you want an overall association test, use test = 'chi_square'.")
+  }
+  
+  if (identical(statistic_id, "sd") || identical(statistic_id, "cv")) {
+    stop("test = 'auto' is not available for statistic = '", statistic_id, "'. ",
+         "Mean tests (t-test) do not test differences in dispersion. ",
+         "Choose an explicit test (none built-in for sd/cv yet), or tab means instead.")
+  }
+  
+  stop("No default significance test for statistic = '", statistic_id, "'. ",
+       "Choose an explicit test (see list_tab_significance_tests()).")
 }
 
 # Cell-Native Significance Implementation ----------------------------------------
@@ -524,7 +608,7 @@ identify_meta_indices <- function(store, grid, dimension = c("row", "col")) {
 #' 
 #' @param n_positions Total number of positions in grid dimension
 #' @param meta_indices Integer vector of positions to skip (meta rows/cols)
-#' @return Integer vector where mapping[grid_pos] = sig_matrix_pos
+#' @return Integer vector where `mapping[grid_pos] = sig_matrix_pos`
 #' @keywords internal
 build_sig_index_mapping <- function(n_positions, meta_indices) {
   mapping <- integer(n_positions)
@@ -644,7 +728,9 @@ add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
   
   result_matrix_data <- result_matrix[data_rows, data_cols, drop = FALSE]
   row_arrays_data <- arrays$row_arrays[data_rows]
+  row_u_arrays_data <- arrays$row_u_arrays[data_rows]
   col_arrays_data <- arrays$col_arrays[data_cols]
+  col_u_arrays_data <- arrays$col_u_arrays[data_cols]
   
   # Get row labels for data rows
   row_labels_data <- if (!is.null(tab_result$layout$row_labels)) {
@@ -676,7 +762,9 @@ add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
   sig_result <- compute_significance(
     base_array = arrays$base_array,
     row_arrays = row_arrays_data,
+    row_u_arrays = row_u_arrays_data,
     col_arrays = col_arrays_data,
+    col_u_arrays = col_u_arrays_data,
     result_matrix = result_matrix_data,
     statistic = statistic,
     values_array = arrays$values_array,

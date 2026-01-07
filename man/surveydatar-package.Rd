@@ -4,9 +4,17 @@
 \name{surveydatar-package}
 \alias{surveydatar}
 \alias{surveydatar-package}
-\title{surveydatar: Tools for data processing survey data in a market research setting}
+\title{surveydatar: Tools for Processing and Analysing Market Research Survey Data}
 \description{
-Functions to support the full data processing workflow for a typical market research project using survey data, from ingestion to basic formatting to the efficient creation of new variables.
+Tools for processing and analysing survey data for market research, including metadata management via the survey_data and dpdict framework and flexible cross-tabulation with tab().
+}
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/mdharris89/surveydatar}
+  \item Report bugs at \url{https://github.com/mdharris89/surveydatar/issues}
+}
+
 }
 \author{
 \strong{Maintainer}: Matt Harris \email{mdharris89@gmail.com}

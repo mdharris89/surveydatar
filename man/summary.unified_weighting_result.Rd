@@ -6,6 +6,11 @@
 \usage{
 \method{summary}{unified_weighting_result}(object, ...)
 }
+\arguments{
+\item{object}{A unified_weighting_result object}
+
+\item{...}{Additional arguments (ignored)}
+}
 \description{
 Summary method for unified weighting results
 }

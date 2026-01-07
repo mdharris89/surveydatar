@@ -160,6 +160,8 @@ create_macro <- function(id, expander, description = NULL) {
 #' @param base_calculator Function that calculates base for each cell
 #' @param summary_row Type of summary row ("NET", "Avg", "Total", or NULL)
 #' @param summary_col Type of summary column ("NET", "Avg", "Total", or NULL)
+#' @param summary_row_calculator Optional base calculator used for the summary row.
+#' @param summary_col_calculator Optional base calculator used for the summary column.
 #' @param format_fn Function to format values for display
 #' @param requires_values Whether this statistic requires a 'values' parameter
 #' @param base_label Label for the base row
@@ -200,8 +202,10 @@ create_statistic <- function(id, processor,
     # Test with dummy data
     test_result <- obj$base_calculator(
       base_array = c(1, 1, 1),
-      row_array = c(1, 0, 1),
-      col_array = c(1, 1, 0),
+      row_m = c(1, 0, 1),
+      row_u = c(1, 1, 1),
+      col_m = c(1, 1, 0),
+      col_u = c(1, 1, 1),
       values_array = c(1, 2, 3)
     )
 
@@ -359,144 +363,100 @@ list_tab_significance_tests <- function() {
   names(.tab_registry$sig_tests)
 }
 
-#' Built-in base calculator: Column total
-#' @description Base is the total count in the column
-#' @keywords internal
-base_column_total <- function(base_array, row_array, col_array, values_array = NULL, 
-                              col_filter = NULL, row_filter = NULL, ...) {
-  # For banners, col_filter defines the base context (e.g., "Germany")
-  # Use col_filter INSTEAD of col_array if present
-  if (!is.null(col_filter)) {
-    intersection <- base_array * as.numeric(col_filter)
-  } else {
-    intersection <- base_array * col_array
-  }
-  if (!is.null(row_filter)) {
-    intersection <- intersection * as.numeric(row_filter)
-  }
+## Built-in base calculator: Column total
+## Base is the total count in the column
+base_column_total <- function(base_array, row_m, row_u, col_m, col_u,
+                              values_array = NULL, ...) {
+  intersection <- base_array * col_m * row_u
   sum(intersection, na.rm = TRUE)
 }
 
-#' Built-in base calculator: Row total
-#' @description Base is the total count in the row
-#' @keywords internal
-base_row_total <- function(base_array, row_array, col_array, values_array = NULL, 
-                          col_filter = NULL, row_filter = NULL, ...) {
-  # For banners, row_filter defines the base context
-  # Use row_filter INSTEAD of row_array if present
-  if (!is.null(row_filter)) {
-    intersection <- base_array * as.numeric(row_filter)
-  } else {
-    intersection <- base_array * row_array
-  }
-  if (!is.null(col_filter)) {
-    intersection <- intersection * as.numeric(col_filter)
-  }
+## Built-in base calculator: Row total
+## Base is the total count in the row
+base_row_total <- function(base_array, row_m, row_u, col_m, col_u,
+                           values_array = NULL, ...) {
+  # Row base is defined by row membership intersected with the column eligibility.
+  intersection <- base_array * row_m * col_u
   sum(intersection, na.rm = TRUE)
 }
 
-#' Built-in base calculator: Cell count
-#' @description Base is the count in the specific cell
-#' @keywords internal
-base_cell_count <- function(base_array, row_array, col_array, values_array = NULL, 
-                           col_filter = NULL, row_filter = NULL, ...) {
-  # Cell count is just the intersection - banner filters are already in row/col arrays
-  intersection <- base_array * row_array * col_array
-  # Note: For cell counts, banner filters are already incorporated into the arrays
-  # so we don't apply them separately
-  if (!is.null(col_filter)) {
-    intersection <- intersection * as.numeric(col_filter)
-  }
-  if (!is.null(row_filter)) {
-    intersection <- intersection * as.numeric(row_filter)
-  }
+## Built-in base calculator: Cell count
+## Base is the count in the specific cell
+base_cell_count <- function(base_array, row_m, row_u, col_m, col_u,
+                            values_array = NULL, ...) {
+  intersection <- base_array * row_m * col_m
   sum(intersection, na.rm = TRUE)
 }
 
-#' Built-in base calculator: Grand total
-#' @description Base is the total count across all data
-#' @keywords internal
-base_grand_total <- function(base_array, row_array, col_array, values_array = NULL, 
-                            col_filter = NULL, row_filter = NULL, ...) {
-  # Grand total is always just base_array, but apply banner filters if present
-  intersection <- base_array
-  if (!is.null(col_filter)) {
-    intersection <- intersection * as.numeric(col_filter)
-  }
-  if (!is.null(row_filter)) {
-    intersection <- intersection * as.numeric(row_filter)
-  }
-  sum(intersection, na.rm = TRUE)
+## Built-in base calculator: Grand total
+## Base is the total count across all data
+base_grand_total <- function(base_array, row_m, row_u, col_m, col_u,
+                             values_array = NULL, ...) {
+  sum(base_array, na.rm = TRUE)
 }
 
-#' Built-in base calculator: Column total excluding NA values
-#' @description Base is the column total excluding NA in values array
-#' @keywords internal
-base_column_total_valid <- function(base_array, row_array, col_array, values_array = NULL, 
-                                   col_filter = NULL, row_filter = NULL, ...) {
-  # For banners, col_filter defines the base context
-  # Use col_filter INSTEAD of col_array if present
-  if (!is.null(col_filter)) {
-    intersection <- base_array * as.numeric(col_filter)
-  } else {
-    intersection <- base_array * col_array
-  }
+## Built-in base calculator: Pairwise valid total
+## Base is the total count for respondents valid for both row and column universes
+base_pair_total <- function(base_array, row_m, row_u, col_m, col_u,
+                            values_array = NULL, ...) {
+  sum(base_array * row_u * col_u, na.rm = TRUE)
+}
+
+## Built-in base calculator: Column total excluding NA values
+## Base is the column total excluding NA in values array
+base_column_total_valid <- function(base_array, row_m, row_u, col_m, col_u,
+                                    values_array = NULL, ...) {
+  intersection <- base_array * col_m * row_u
   if (!is.null(values_array)) {
-    valid_mask <- !is.na(values_array)
-    intersection <- intersection * valid_mask
-  }
-  if (!is.null(row_filter)) {
-    intersection <- intersection * as.numeric(row_filter)
+    intersection <- intersection * (!is.na(values_array))
   }
   sum(intersection, na.rm = TRUE)
 }
 
-#' Built-in base calculator: Row total excluding NA values
-#' @description Base is the row total excluding NA in values array
-#' @keywords internal
-base_row_total_valid <- function(base_array, row_array, col_array, values_array = NULL, 
-                                col_filter = NULL, row_filter = NULL, ...) {
-  # For banners, row_filter defines the base context
-  # Use row_filter INSTEAD of row_array if present
-  if (!is.null(row_filter)) {
-    intersection <- base_array * as.numeric(row_filter)
-  } else {
-    intersection <- base_array * row_array
-  }
+## Built-in base calculator: Row total excluding NA values
+## Base is the row total excluding NA in values array
+base_row_total_valid <- function(base_array, row_m, row_u, col_m, col_u,
+                                 values_array = NULL, ...) {
+  intersection <- base_array * row_m * col_u
   if (!is.null(values_array)) {
-    valid_mask <- !is.na(values_array)
-    intersection <- intersection * valid_mask
-  }
-  if (!is.null(col_filter)) {
-    intersection <- intersection * as.numeric(col_filter)
+    intersection <- intersection * (!is.na(values_array))
   }
   sum(intersection, na.rm = TRUE)
 }
 
-#' Built-in base calculator: Cell count excluding NA values
-#' @description Base is the cell count excluding NA in values array
-#' @keywords internal
-base_cell_count_valid <- function(base_array, row_array, col_array, values_array = NULL, 
-                                 col_filter = NULL, row_filter = NULL, ...) {
-  # Cell count uses both row and col, but respects banner filters
-  # Banner filters don't change cell count behavior (still use the intersection)
-  intersection <- base_array * row_array * col_array
+## Built-in base calculator: Cell count excluding NA values
+## Base is the cell count excluding NA in values array
+base_cell_count_valid <- function(base_array, row_m, row_u, col_m, col_u,
+                                  values_array = NULL, ...) {
+  intersection <- base_array * row_m * col_m
   if (!is.null(values_array)) {
-    valid_mask <- !is.na(values_array)
-    intersection <- intersection * valid_mask
-  }
-  # Note: For cell counts, we don't replace row/col with filters, just apply them
-  if (!is.null(col_filter)) {
-    intersection <- intersection * as.numeric(col_filter)
-  }
-  if (!is.null(row_filter)) {
-    intersection <- intersection * as.numeric(row_filter)
+    intersection <- intersection * (!is.na(values_array))
   }
   sum(intersection, na.rm = TRUE)
 }
 
-#' Export base calculators for user access
-#' @rdname base_calculators
+#' Base calculator functions
+#'
+#' Base calculators are functions that compute the base (denominator, typically an
+#' unweighted count) for each cell in a \code{\link{tab}} result. They are used
+#' internally by statistics, and can also be supplied when defining custom
+#' statistics (see \code{\link{create_statistic}}).
+#'
+#' All base calculators share the same interface: they take respondent-level
+#' \code{base_array} plus row/column membership and eligibility masks, and return a
+#' single numeric value.
+#'
+#' @param base_array Numeric vector (usually 0/1/NA) defining the overall base.
+#' @param row_m Numeric vector (usually 0/1) defining row membership.
+#' @param row_u Numeric vector (0/1) defining row eligibility for denominators.
+#' @param col_m Numeric vector (usually 0/1) defining column membership.
+#' @param col_u Numeric vector (0/1) defining column eligibility/base context.
+#' @param values_array Optional numeric vector of values for statistics that
+#'   require a valid-values base.
+#' @param ... Reserved for future use.
+#'
+#' @return A single numeric value.
+#'
 #' @name base_calculators
 NULL
 

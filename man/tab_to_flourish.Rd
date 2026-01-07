@@ -17,6 +17,8 @@ tab_to_flourish(
 )
 }
 \arguments{
+\item{tab_result}{A tab_result produced by \code{\link{tab}}}
+
 \item{chart_type}{Optional character; Flourish chart type. If not specified, automatically
 selected based on data structure and statistic. Supported types:
 \itemize{
@@ -43,9 +45,9 @@ selected based on data structure and statistic. Supported types:
 
 \item{settings}{Named list corresponding to flourish settings with dot notation e.g. "number_format.suffix" = "\%"}
 
-\item{...}{Future arguments}
+\item{label_mode}{Label display mode for exported labels (default "full")}
 
-\item{tab}{A tab_result produced by surveydatar::tab()}
+\item{...}{Future arguments}
 }
 \value{
 An object of class "flourish_tab" containing:
@@ -101,7 +103,9 @@ with each column scaled from its minimum to maximum value.
 }
 }
 \examples{
-f_tab <- data \%>\% tab(q1, gender) \%>\% tab_to_flourish()
-f_tab                      # shows bindings + head(data)
+survey_obj <- create_survey_data(get_basic_test_dat(n = 50))
+x <- tab(survey_obj, labelledcategorical, labelledordinal)
+f_tab <- tab_to_flourish(x)
+f_tab
 # flourishcharts::flourish(f_tab$data, f_tab$chart_type, bindings = f_tab$bindings)
 }

@@ -3,3 +3,9 @@
 ^LICENSE\.md$
 ^doc$
 ^Meta$
+^\.cursorrules$
+^AGENTS\.md$
+^design_notes\.md$
+^notes_on_grammar_based_inference\.md$
+^todo\.md$
+^cran-comments\.md$

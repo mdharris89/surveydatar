@@ -6,6 +6,15 @@
 \usage{
 \method{[}{tab_result}(x, i, j, drop = FALSE)
 }
+\arguments{
+\item{x}{A tab_result object}
+
+\item{i}{Row indices}
+
+\item{j}{Column indices}
+
+\item{drop}{Logical; passed to base subsetting (default FALSE)}
+}
 \description{
 Subset tab_result (materializes first)
 }

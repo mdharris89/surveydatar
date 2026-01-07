@@ -708,7 +708,9 @@ concatenate_by_group <- function(temp_dat, group_var){
     dplyr::ungroup()
 
   # Arrange by row_id and remove temporary columns
-  temp_dat <- temp_dat %>% dplyr::arrange(first_row_id) %>% dplyr::select(-first_row_id)
+  temp_dat <- temp_dat %>%
+    dplyr::arrange(.data$first_row_id) %>%
+    dplyr::select(-dplyr::all_of("first_row_id"))
 
   return(temp_dat)
 
@@ -884,7 +886,7 @@ all_duplicated <- function(x, return_type = "logical") {
 #' }
 append_oe_to_oe_duplicates <- function(temp_dat, temp_dpdict){
   # gets all variable labels that are oes with labels that are duplicates of the non oe version
-  duplicates_to_oes <- unname(all_duplicated(temp_dpdict$variable_labels) & unlist(map_vec(temp_dat, is.character)))
+  duplicates_to_oes <- unname(all_duplicated(temp_dpdict$variable_labels) & vapply(temp_dat, is.character, logical(1)))
   # appends "oe" to variable name prefix for these variables
   temp_dpdict$variable_labels[duplicates_to_oes] <- gsub("^([A-Za-z0-9]+)( - )", "\\1oe\\2", temp_dpdict$variable_labels[duplicates_to_oes])
   return(temp_dpdict)
@@ -893,8 +895,8 @@ append_oe_to_oe_duplicates <- function(temp_dat, temp_dpdict){
 #' Null-coalescing operator `%||%`
 #'
 #' Returns the first argument that is **not** `NULL`.
-#' It is handy for providing concise “default-value” fall-backs:
-#' `x %||% y` reads as *“give me `x`, otherwise `y`”*.
+#' It is handy for providing concise "default-value" fall-backs:
+#' `x %||% y` reads as *"give me `x`, otherwise `y`"*.
 #'
 #' @usage a \%||\% b
 #'
@@ -909,7 +911,8 @@ append_oe_to_oe_duplicates <- function(temp_dat, temp_dpdict){
 #' 1:3  %||% 0         #> 1 2 3
 #'
 #' @export
-#' @name %||%
+#' @name or_or
+#' @aliases %||%
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 

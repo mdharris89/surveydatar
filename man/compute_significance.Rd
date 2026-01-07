@@ -7,7 +7,9 @@
 compute_significance(
   base_array,
   row_arrays,
+  row_u_arrays,
   col_arrays,
+  col_u_arrays,
   result_matrix,
   statistic,
   values_array = NULL,

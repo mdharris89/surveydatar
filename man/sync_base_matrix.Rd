@@ -4,7 +4,15 @@
 \alias{sync_base_matrix}
 \title{Sync base matrix with current row and column arrays}
 \usage{
-sync_base_matrix(row_arrays, col_arrays, base_array, values_array, statistic)
+sync_base_matrix(
+  row_arrays,
+  col_arrays,
+  base_array,
+  row_u_arrays = NULL,
+  col_u_arrays = NULL,
+  values_array,
+  statistic
+)
 }
 \arguments{
 \item{row_arrays}{List of row arrays}

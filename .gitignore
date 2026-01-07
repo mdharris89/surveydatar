@@ -13,3 +13,6 @@ debugging_utils.R
 todo.md
 design_notes.md
 notes_on_grammar_based_inference.md
+*.Rcheck
+*.tar.gz
+vignettes/*.html

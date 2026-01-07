@@ -31,11 +31,11 @@ Creates a grouping structure for columns. Actual hierarchical rendering
 depends on export/display function support. Symmetric to group_rows().
 }
 \examples{
-\dontrun{
-# Group by labels
-result \%>\% group_cols("Male", "Female", .group_label = "Gender")
+# Group columns by labels
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor)
+result \%>\% group_cols("Yes", "No", .group_label = "Response")
 
 # Group by indices
 result \%>\% group_cols(1, 2, .match = "index", .group_label = "First two")
-}
 }

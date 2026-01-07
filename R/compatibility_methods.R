@@ -99,6 +99,7 @@
 }
 
 #' Get number of rows in tab_result
+#' @param x A tab_result object
 #' @export
 nrow.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -119,6 +120,7 @@ nrow.tab_result <- function(x) {
 }
 
 #' Get number of columns in tab_result
+#' @param x A tab_result object
 #' @export
 ncol.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -139,6 +141,7 @@ ncol.tab_result <- function(x) {
 }
 
 #' Get column names from tab_result
+#' @param x A tab_result object
 #' @export
 names.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -162,6 +165,10 @@ names.tab_result <- function(x) {
 }
 
 #' Subset tab_result (materializes first)
+#' @param x A tab_result object
+#' @param i Row indices
+#' @param j Column indices
+#' @param drop Logical; passed to base subsetting (default FALSE)
 #' @export
 `[.tab_result` <- function(x, i, j, drop = FALSE) {
   if (inherits(x, "tab_cell_collection")) {
@@ -173,6 +180,8 @@ names.tab_result <- function(x) {
 }
 
 #' Extract column or cell from tab_result
+#' @param x A tab_result object
+#' @param i Element name or index
 #' @export
 `[[.tab_result` <- function(x, i) {
   if (inherits(x, "tab_cell_collection")) {
@@ -194,6 +203,8 @@ names.tab_result <- function(x) {
 }
 
 #' Extract element from tab_result using $
+#' @param x A tab_result object
+#' @param name Element name
 #' @export
 `$.tab_result` <- function(x, name) {
   if (inherits(x, "tab_cell_collection")) {
@@ -214,6 +225,7 @@ names.tab_result <- function(x) {
 }
 
 #' Get dimensions of tab_result
+#' @param x A tab_result object
 #' @export
 dim.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -236,6 +248,7 @@ dim.tab_result <- function(x) {
 }
 
 #' Get dimension names (row and column names) of tab_result
+#' @param x A tab_result object
 #' @export
 dimnames.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -264,6 +277,10 @@ dimnames.tab_result <- function(x) {
 }
 
 #' Get first n rows of tab_result
+#' @param x A tab_result object
+#' @param n Number of rows to return (default 6)
+#' @param ... Passed to the underlying method
+#' @importFrom utils head tail str
 #' @export
 head.tab_result <- function(x, n = 6L, ...) {
   if (inherits(x, "tab_cell_collection")) {
@@ -278,6 +295,9 @@ head.tab_result <- function(x, n = 6L, ...) {
 }
 
 #' Get last n rows of tab_result
+#' @param x A tab_result object
+#' @param n Number of rows to return (default 6)
+#' @param ... Passed to the underlying method
 #' @export
 tail.tab_result <- function(x, n = 6L, ...) {
   if (inherits(x, "tab_cell_collection")) {
@@ -292,6 +312,7 @@ tail.tab_result <- function(x, n = 6L, ...) {
 }
 
 #' Get column names of tab_result
+#' @param x A tab_result object
 #' @export
 colnames.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -307,6 +328,7 @@ colnames.tab_result <- function(x) {
 }
 
 #' Get row names of tab_result
+#' @param x A tab_result object
 #' @export
 rownames.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
@@ -322,6 +344,8 @@ rownames.tab_result <- function(x) {
 }
 
 #' Display structure of tab_result
+#' @param object A tab_result object
+#' @param ... Passed to the underlying method
 #' @export
 str.tab_result <- function(object, ...) {
   if (inherits(object, "tab_cell_collection")) {

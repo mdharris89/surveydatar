@@ -6,6 +6,11 @@
 \usage{
 \method{$}{tab_result}(x, name)
 }
+\arguments{
+\item{x}{A tab_result object}
+
+\item{name}{Element name}
+}
 \description{
 Extract element from tab_result using $
 }

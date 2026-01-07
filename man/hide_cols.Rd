@@ -25,11 +25,8 @@ Modified tab_result with updated visibility metadata
 Hides columns based on matching criteria. Symmetric to hide_rows().
 }
 \examples{
-\dontrun{
-# Hide by label (default)
-result \%>\% hide_cols("Don't know")
-
-# Hide by expression
-result \%>\% hide_cols(gender == 3, .match = "expr")
-}
+# Hide columns by label
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor)
+result \%>\% hide_cols("Yes")
 }

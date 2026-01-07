@@ -9,78 +9,105 @@
 \alias{base_column_total_valid}
 \alias{base_row_total_valid}
 \alias{base_cell_count_valid}
-\title{Export base calculators for user access}
+\title{Base calculator functions}
 \usage{
 base_column_total(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 
 base_row_total(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 
 base_cell_count(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 
 base_grand_total(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 
 base_column_total_valid(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 
 base_row_total_valid(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 
 base_cell_count_valid(
   base_array,
-  row_array,
-  col_array,
+  row_m,
+  row_u,
+  col_m,
+  col_u,
   values_array = NULL,
-  col_filter = NULL,
-  row_filter = NULL,
   ...
 )
 }
+\arguments{
+\item{base_array}{Numeric vector (usually 0/1/NA) defining the overall base.}
+
+\item{row_m}{Numeric vector (usually 0/1) defining row membership.}
+
+\item{row_u}{Numeric vector (0/1) defining row eligibility for denominators.}
+
+\item{col_m}{Numeric vector (usually 0/1) defining column membership.}
+
+\item{col_u}{Numeric vector (0/1) defining column eligibility/base context.}
+
+\item{values_array}{Optional numeric vector of values for statistics that
+require a valid-values base.}
+
+\item{...}{Reserved for future use.}
+}
+\value{
+A single numeric value.
+}
 \description{
-Export base calculators for user access
+Base calculators are functions that compute the base (denominator, typically an
+unweighted count) for each cell in a \code{\link{tab}} result. They are used
+internally by statistics, and can also be supplied when defining custom
+statistics (see \code{\link{create_statistic}}).
+}
+\details{
+All base calculators share the same interface: they take respondent-level
+\code{base_array} plus row/column membership and eligibility masks, and return a
+single numeric value.
 }

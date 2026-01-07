@@ -1,4 +1,8 @@
-# Tests for weighting configuration system
+## Weighting configuration tests
+##
+## Weighting configuration defines how downstream weighting functions interpret raw data columns and
+## how constraints are identified/expanded. The tests in this file check defaults, custom overrides,
+## input validation, and a small end-to-end configuration usage path.
 
 test_that("create_weighting_config works with defaults", {
   config <- create_weighting_config()
@@ -197,7 +201,6 @@ test_that("run_unified_weighting applies legacy mappings", {
   # Add labels to QCOUNTRY
   attr(test_data$QCOUNTRY, "labels") <- c("US" = 1, "UK" = 2)
   
-  # Default config includes QCOUNTRY -> Country mapping
   result <- run_unified_weighting(
     raw_data = test_data,
     stages = list(
@@ -205,7 +208,7 @@ test_that("run_unified_weighting applies legacy mappings", {
         gender ~ c(Male = 0.48, Female = 0.52)
       )
     ),
-    config = NULL,  # Will use default
+    config = NULL,  # uses default config, which includes QCOUNTRY -> Country
     verbose = FALSE
   )
   
@@ -220,7 +223,7 @@ test_that("run_unified_weighting applies legacy mappings", {
   expect_true("Country" %in% names(final_data))
 })
 
-test_that("run_unified_weighting works without config (backward compatibility)", {
+test_that("run_unified_weighting works without config", {
   skip_if_not_installed("CVXR")
   
   set.seed(123)

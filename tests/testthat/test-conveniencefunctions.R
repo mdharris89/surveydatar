@@ -1,3 +1,8 @@
+## Convenience function tests
+##
+## Many user-facing workflows rely on small string/label utilities.
+## The tests in this file check core behaviour and edge cases (errors, NA/empty handling, and options).
+
 test_that("any_grepl works", {
 
   # Error cases

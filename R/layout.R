@@ -807,13 +807,13 @@ group_rows <- function(tab_result, ...,
 #' @return Modified tab_result with updated col_groups metadata
 #' @export
 #' @examples
-#' \dontrun{
-#' # Group by labels
-#' result %>% group_cols("Male", "Female", .group_label = "Gender")
+#' # Group columns by labels
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor)
+#' result %>% group_cols("Yes", "No", .group_label = "Response")
 #'
 #' # Group by indices
 #' result %>% group_cols(1, 2, .match = "index", .group_label = "First two")
-#' }
 group_cols <- function(tab_result, ..., 
                       .match = c("label", "index", "custom"),
                       .group_label = NULL,
@@ -1273,7 +1273,6 @@ expand_grid_for_collisions <- function(tab_result, mappings, row_keys, col_keys)
     r <- expanded_rows[[i]]
     row_key <- r$key
     row_label <- row_labels[i]
-    sub_idx <- r$sub_index
     
     new_layout_def(
       row_dsl_matcher = function(row_dsl) {
@@ -1522,13 +1521,10 @@ hide_rows <- function(tab_result, ...,
 #' @return Modified tab_result with updated visibility metadata
 #' @export
 #' @examples
-#' \dontrun{
-#' # Hide by label (default)
-#' result %>% hide_cols("Don't know")
-#'
-#' # Hide by expression
-#' result %>% hide_cols(gender == 3, .match = "expr")
-#' }
+#' # Hide columns by label
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor)
+#' result %>% hide_cols("Yes")
 hide_cols <- function(tab_result, ..., 
                      .match = c("label", "expr", "base", "value", "custom")) {
   if (!inherits(tab_result, "tab_result")) {
@@ -2418,13 +2414,10 @@ select_rows <- function(tab_result, ...,
 #' @return Modified tab_result with selected and reordered columns
 #' @export
 #' @examples
-#' \dontrun{
-#' # Match by expression
-#' result %>% select_cols(gender == 1, gender == 2)
-#'
-#' # Match by label
-#' result %>% select_cols("Male", "Female", .match = "label")
-#' }
+#' # Select columns by label
+#' dat <- get_basic_test_dat()
+#' result <- tab(dat, labelledordinal, binarycategoricalasfactor)
+#' result %>% select_cols("Yes", "No", .match = "label")
 select_cols <- function(tab_result, ..., 
                        .match = c("expr", "label", "base", "value", 
                                  "statistic", "custom")) {
@@ -3262,8 +3255,8 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
   # Initialize grid and collision tracker
   grid <- matrix(NA_character_, nrow = n_rows, ncol = n_cols)
   collision_tracker <- matrix(list(), nrow = n_rows, ncol = n_cols)
-  row_universe <- rep(NA_real_, n_rows)
-  col_universe <- rep(NA_real_, n_cols)
+  row_exposure <- rep(NA_real_, n_rows)
+  col_exposure <- rep(NA_real_, n_cols)
   
   # Get cells from pool
   if (length(cell_pool) == 0) {
@@ -3308,11 +3301,11 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
         # Exactly one match - assign
         grid[i, j] <- qualifying_ids[1]
         cell <- get_cell(store, grid[i, j])
-        if (is.na(row_universe[i]) && !is.null(cell$specification$row_universe)) {
-          row_universe[i] <- cell$specification$row_universe
+        if (is.na(row_exposure[i]) && !is.null(cell$specification$row_exposure)) {
+          row_exposure[i] <- cell$specification$row_exposure
         }
-        if (is.na(col_universe[j]) && !is.null(cell$specification$col_universe)) {
-          col_universe[j] <- cell$specification$col_universe
+        if (is.na(col_exposure[j]) && !is.null(cell$specification$col_exposure)) {
+          col_exposure[j] <- cell$specification$col_exposure
         }
       } else {
         # Collision - multiple cells qualify
@@ -3330,8 +3323,8 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
   }
   
   # No collisions - return layout
-  row_universe[is.na(row_universe)] <- 0
-  col_universe[is.na(col_universe)] <- 0
+  row_exposure[is.na(row_exposure)] <- 0
+  col_exposure[is.na(col_exposure)] <- 0
   
   list(
     type = "explicit_grid",
@@ -3342,8 +3335,8 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
     col_labels = sapply(col_defs, `[[`, "label"),
     has_summary_row = any(sapply(row_defs, function(d) !is.null(d$is_summary_row_matcher))),
     has_summary_col = any(sapply(col_defs, function(d) !is.null(d$is_summary_col_matcher))),
-    row_universe = row_universe,
-    col_universe = col_universe
+    row_exposure = row_exposure,
+    col_exposure = col_exposure
   )
 }
 
@@ -3357,11 +3350,11 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
 #' 
 #' - **Row-only collisions**: When multiple cells match a single row position
 #'   (but each has a unique column), the row is expanded into sub-rows labeled
-#'   "RowName [1]", "RowName [2]", etc. Each sub-row gets one of the colliding cells.
+#'   `"RowName [1]"`, `"RowName [2]"`, etc. Each sub-row gets one of the colliding cells.
 #' 
 #' - **Column-only collisions**: When multiple cells match a single column position
 #'   (but each has a unique row), the column is expanded into sub-columns labeled
-#'   "ColName [1]", "ColName [2]", etc.
+#'   `"ColName [1]"`, `"ColName [2]"`, etc.
 #' 
 #' - **Simultaneous row and column collisions**: When both dimensions have collisions
 #'   at the same position, both are expanded. The cell assignment uses the row 
@@ -3371,7 +3364,7 @@ allocate_cells_to_grid <- function(store, row_defs, col_defs, cell_pool) {
 #' **Implementation Details:**
 #' - Each expanded position gets a deep copy of the original layout_def
 #' - A `sub_index` field is added to track which sub-position each def represents
-#' - The original label is appended with " [N]" where N is the sub-index
+#' - The original label is appended with `" [N]"` where `N` is the sub-index
 #' - Empty sub-positions (NA) may occur if collision counts vary across dimensions
 #'
 #' @param grid Current grid matrix (may have empty positions where collisions exist)
@@ -3479,26 +3472,26 @@ expand_grid_for_collisions <- function(grid, collision_tracker, row_defs, col_de
     }
   }
   
-  row_universe <- rep(NA_real_, length(row_defs))
-  col_universe <- rep(NA_real_, length(col_defs))
+  row_exposure <- rep(NA_real_, length(row_defs))
+  col_exposure <- rep(NA_real_, length(col_defs))
   
   for (i in seq_len(nrow(new_grid))) {
     for (j in seq_len(ncol(new_grid))) {
       cid <- new_grid[i, j]
       if (!is.na(cid)) {
         cell <- get_cell(store, cid)
-        if (is.na(row_universe[i]) && !is.null(cell$specification$row_universe)) {
-          row_universe[i] <- cell$specification$row_universe
+        if (is.na(row_exposure[i]) && !is.null(cell$specification$row_exposure)) {
+          row_exposure[i] <- cell$specification$row_exposure
         }
-        if (is.na(col_universe[j]) && !is.null(cell$specification$col_universe)) {
-          col_universe[j] <- cell$specification$col_universe
+        if (is.na(col_exposure[j]) && !is.null(cell$specification$col_exposure)) {
+          col_exposure[j] <- cell$specification$col_exposure
         }
       }
     }
   }
   
-  row_universe[is.na(row_universe)] <- 0
-  col_universe[is.na(col_universe)] <- 0
+  row_exposure[is.na(row_exposure)] <- 0
+  col_exposure[is.na(col_exposure)] <- 0
   
   # Return expanded layout
   list(
@@ -3510,8 +3503,8 @@ expand_grid_for_collisions <- function(grid, collision_tracker, row_defs, col_de
     col_labels = sapply(col_defs, `[[`, "label"),
     has_summary_row = any(sapply(row_defs, function(d) !is.null(d$is_summary_row_matcher))),
     has_summary_col = any(sapply(col_defs, function(d) !is.null(d$is_summary_col_matcher))),
-    row_universe = row_universe,
-    col_universe = col_universe
+    row_exposure = row_exposure,
+    col_exposure = col_exposure
   )
 }
 
@@ -3584,11 +3577,11 @@ remove_empty_rows_cols <- function(tab_result) {
     tab_result$layout$col_defs <- tab_result$layout$col_defs[non_empty_cols]
     tab_result$layout$row_labels <- sapply(tab_result$layout$row_defs, `[[`, "label")
     tab_result$layout$col_labels <- sapply(tab_result$layout$col_defs, `[[`, "label")
-    if (!is.null(tab_result$layout$row_universe)) {
-      tab_result$layout$row_universe <- tab_result$layout$row_universe[non_empty_rows]
+    if (!is.null(tab_result$layout$row_exposure)) {
+      tab_result$layout$row_exposure <- tab_result$layout$row_exposure[non_empty_rows]
     }
-    if (!is.null(tab_result$layout$col_universe)) {
-      tab_result$layout$col_universe <- tab_result$layout$col_universe[non_empty_cols]
+    if (!is.null(tab_result$layout$col_exposure)) {
+      tab_result$layout$col_exposure <- tab_result$layout$col_exposure[non_empty_cols]
     }
   }
   

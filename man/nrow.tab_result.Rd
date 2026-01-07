@@ -6,6 +6,9 @@
 \usage{
 nrow.tab_result(x)
 }
+\arguments{
+\item{x}{A tab_result object}
+}
 \description{
 Get number of rows in tab_result
 }

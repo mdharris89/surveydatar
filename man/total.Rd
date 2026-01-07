@@ -14,5 +14,5 @@ Returns an indicator that includes all respondents (equivalent to a constant of 
 Useful for creating base rows or total calculations.
 }
 \examples{
-tab(data, total(), gender)
+total()
 }

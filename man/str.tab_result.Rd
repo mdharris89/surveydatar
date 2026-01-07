@@ -6,6 +6,11 @@
 \usage{
 \method{str}{tab_result}(object, ...)
 }
+\arguments{
+\item{object}{A tab_result object}
+
+\item{...}{Passed to the underlying method}
+}
 \description{
 Display structure of tab_result
 }

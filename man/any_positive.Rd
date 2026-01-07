@@ -17,6 +17,6 @@ Creates a binary indicator showing which respondents have any positive value
 across the specified variables.
 }
 \examples{
-tab(data, any_positive(c("q1_1", "q1_2", "q1_3")), gender)
-tab(data, any_positive("q1"), gender)  # if q1 is a question group
+any_positive(c("q1_1", "q1_2", "q1_3"))
+any_positive("q1")  # if q1 is a question group
 }

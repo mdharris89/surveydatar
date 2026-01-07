@@ -1,11 +1,13 @@
 Package: surveydatar
-Title: Tools for data processing survey data in a market research setting
-Version: 0.0.0.9000
+Title: Tools for Processing and Analysing Market Research Survey Data
+Version: 0.1.0
 Authors@R: 
     person("Matt", "Harris", email = "mdharris89@gmail.com", role = c("aut", "cre"))
 Maintainer: Matt Harris <mdharris89@gmail.com>
-Description: Functions to support the full data processing workflow for a typical market research project using survey data, from ingestion to basic formatting to the efficient creation of new variables.
+Description: Tools for processing and analysing survey data for market research, including metadata management via the survey_data and dpdict framework and flexible cross-tabulation with tab().
 License: MIT + file LICENSE
+URL: https://github.com/mdharris89/surveydatar
+BugReports: https://github.com/mdharris89/surveydatar/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
@@ -15,17 +17,25 @@ Suggests:
     knitr,
     rmarkdown,
     reactable,
-    htmltools
+    htmltools,
+    clipr,
+    flourishcharts,
+    htmlwidgets,
+    tidyr,
+    withr,
+    DataEditR
 Config/testthat/edition: 3
 Imports: 
+    CVXR,
     dplyr,
     haven,
     magrittr,
+    Matrix,
     purrr,
     rlang,
     sjlabelled,
     stats,
     stringdist,
     stringr,
-    DataEditR,
-    tidyselect
+    tidyselect,
+    utils

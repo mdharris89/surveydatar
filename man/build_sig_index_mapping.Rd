@@ -12,7 +12,7 @@ build_sig_index_mapping(n_positions, meta_indices)
 \item{meta_indices}{Integer vector of positions to skip (meta rows/cols)}
 }
 \value{
-Integer vector where mapping\link{grid_pos} = sig_matrix_pos
+Integer vector where \code{mapping[grid_pos] = sig_matrix_pos}
 }
 \description{
 Creates an integer vector that maps grid position indices to the

@@ -1,3 +1,22 @@
+---
+title: "Significance Testing"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Significance Testing}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = TRUE
+)
+library(surveydatar)
+library(dplyr)
+```
+
 ## Overview
 
 The `surveydatar` package provides integrated significance testing within the `tab()` function, allowing you to perform statistical tests alongside your cross-tabulations. This design philosophy reflects real-world survey analysis workflows where significance testing is an integral part of understanding relationships between variables.
@@ -14,7 +33,7 @@ The significance testing system distinguishes between: - **Pairwise tests**: Com
 
 ## Basic Usage
 
-To enable significance testing, set `significance = TRUE` in your `tab()` call:
+To add significance testing to a table, compute the table with `tab()` and then apply `add_sig()`:
 
 ```{r basic-example}
 # Load example data
@@ -25,8 +44,21 @@ result <- tab(data, labelledordinal, labelledcategorical,
               statistic = "column_pct") %>% 
   add_sig()
 
-# Access significance results
-sig_results <- attr(result, "significance")
+# Access significance results (extracted during materialization)
+df <- as.data.frame(result)
+sig_results <- attr(df, "significance")
+```
+
+### Applying significance across a table
+
+For workflows that compute multiple statistics or more complex tables, `add_sig_all()` can be used to apply significance testing across relevant cells in one step.
+
+```{r add_sig_all_example}
+result_all <- tab(data, labelledordinal, labelledcategorical,
+                  statistic = "column_pct") %>%
+  add_sig_all(test = "auto", level = 0.05)
+
+attr(as.data.frame(result_all), "significance")
 ```
 
 ## Built-in Significance Tests
@@ -142,20 +174,20 @@ The `versus` parameter in `sig_config` determines what each column is compared a
 
 ```{r comparison-strategies}
 # Compare to first column (default)
-tab(data, gender, region) %>%
+tab(data, labelledordinal, labelledcategorical) %>%
   add_sig(versus = "first_col")
 
 # Compare to last column
-tab(data, gender, region) %>%
+tab(data, labelledordinal, labelledcategorical) %>%
   add_sig(versus = "last_col")
 
 # Compare to specific column by index
-tab(data, gender, region) %>%
+tab(data, labelledordinal, labelledcategorical) %>%
   add_sig(versus = 2)
 
-# Compare to total column (if present)
-tab(data, gender, region) %>%
-  add_sig(versus = "total")
+# Compare to a specific column by label
+tab(data, labelledordinal, labelledcategorical) %>%
+  add_sig(versus = "North")
 ```
 
 ## Understanding Significance Results
@@ -165,7 +197,7 @@ The significance results include:
 -   **levels**: Matrix showing significance status for each cell
 
     -   `"base"`: Reference column
-    -   `"same"`: No significant difference
+    -   `""` (empty string): No significant difference (p >= level)
     -   `"higher"`: Significantly higher than reference
     -   `"lower"`: Significantly lower than reference
     -   `"omnibus"`: For chi-square tests (overall association)
@@ -181,7 +213,7 @@ result <- tab(data, labelledordinal, labelledcategorical,
               statistic = "column_pct") %>%
   add_sig()
 
-sig <- attr(result, "significance")
+sig <- attr(as.data.frame(result), "significance")
 
 # Check which cells are significantly different
 sig$levels
@@ -197,6 +229,7 @@ cat("Compared against:", sig$versus, "\n")
 ## Weighted Data
 
 When working with weighted data, surveydatar provides specialized weighted significance tests that properly account for the survey design:
+If you call `add_sig(test = "auto")` on a weighted table, surveydatar will automatically select weighted tests where available (e.g., `z_test_weighted` for `column_pct`, `t_test_weighted` for `mean`).
 
 ```{r weighted-sig}
 # Create example weights

@@ -1,8 +1,11 @@
-# no tests created for:
-# - datamap()
-# - datamap_questions()
+## Survey metadata tests
+##
+## survey_data combines raw data (`dat`) with a metadata dictionary (`dpdict`), and many operations depend
+## on that pairing staying aligned. The tests in this file check dpdict/dat updates, validation error
+## messages, and metadata propagation behaviours.
 
-# Test dat updating functions
+##### Data/dpdict update functions #####
+# Checks functions that apply dpdict changes back onto data (names, labels, value labels) and preserve survey_data.
 test_that("update_dat_from_dpdict works", {
   temp_dat <- get_minimal_labelled_test_dat()
   temp_dpdict <- create_dict(temp_dat)
@@ -38,6 +41,8 @@ test_that("update_dat_from_dpdict works", {
   expect_error(update_dat_from_dpdict(temp_dat, mismatched_dpdict), "Some data columns don't match either variable_names or old_variable_names in dpdict")
 })
 
+##### Alias and question dictionary updates #####
+# Checks alias updates and how those changes propagate through dpdict (including survey_data wrappers).
 test_that("update_aliases works", {
   temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
   questions_dict <- get_questions_dict(temp_dpdict)
@@ -69,6 +74,8 @@ test_that("update_aliases works", {
 })
 
 
+##### Validation error-message contracts #####
+# Checks that dpdict/dat validation returns detailed, user-actionable errors for common mismatch scenarios.
 test_that("validate_dat_dpdict_alignment provides detailed error messages", {
 
   # Test 1: Dimension mismatch

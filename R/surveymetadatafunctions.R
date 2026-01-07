@@ -29,6 +29,98 @@ NULL
 # functions for checking metadata:
 # validate_dat_dpdict_alignment() - simple checks that dat and dpdict are in a suitable and aligned format
 # validate_no_dpdict_duplicates() - checks for unique values in variable names and labels, and, if the column exists, alias_with_suffix, in dpdict
+#
+# dpdict S3 class and methods:
+# as_dpdict() - internal helper to add dpdict class
+# as.data.frame.dpdict() - S3 method to coerce dpdict to viewer-friendly data.frame
+# View.dpdict() - internal convenience function for viewing dpdicts
+
+##### dpdict S3 class and methods #####
+
+as_dpdict <- function(x) {
+  if (!inherits(x, "dpdict")) {
+    class(x) <- c("dpdict", class(x))
+  }
+  x
+}
+
+format_value_labels_for_view <- function(labels) {
+  if (is.null(labels) || length(labels) == 0) {
+    return(NA_character_)
+  }
+  if (length(labels) == 1 && is.na(labels)) {
+    return(NA_character_)
+  }
+
+  # Try to preserve names (common for value labels)
+  nm <- names(labels)
+  if (!is.null(nm) && any(nzchar(nm))) {
+    vals <- as.character(labels)
+    nm <- ifelse(is.na(nm) | !nzchar(nm), "", nm)
+    out <- paste0(nm, "=", vals)
+    out <- out[nzchar(out)]
+    return(paste(out, collapse = "; "))
+  }
+
+  # Fallback: just stringify values
+  paste(as.character(labels), collapse = "; ")
+}
+
+format_dpdict_for_view <- function(x) {
+  out <- x
+  list_cols <- names(out)[vapply(out, is.list, logical(1))]
+  if (length(list_cols) == 0) {
+    return(out)
+  }
+
+  for (col in list_cols) {
+    out[[col]] <- vapply(out[[col]], format_value_labels_for_view, character(1))
+  }
+
+  out
+}
+
+#' Coerce a dpdict to a data.frame (viewer-friendly)
+#'
+#' Converts any list-columns to single character strings per row so that
+#' interactive viewers and `data.frame()`-based coercions do not error.
+#'
+#' @param x A `dpdict` object.
+#' @param ... Passed to the underlying `as.data.frame()` call.
+#' @return A base `data.frame`.
+#' @export
+as.data.frame.dpdict <- function(x, ...) {
+  x_view <- format_dpdict_for_view(x)
+  # Avoid infinite recursion: drop dpdict class before calling as.data.frame()
+  class(x_view) <- setdiff(class(x_view), "dpdict")
+  # ensure a plain data.frame for maximum compatibility with viewers
+  base::as.data.frame(x_view, ...)
+}
+
+#' View a dpdict in the data viewer (internal helper)
+#'
+#' Note: `View` is *not* an S3 generic in base R (and in typical CRAN checks),
+#' so `View(dpdict)` will not dispatch to `View.dpdict()`. The robust layer for
+#' compatibility is `as.data.frame.dpdict()`.
+#'
+#' We still keep this function as an internal convenience so package code can
+#' explicitly call it when desired.
+#'
+#' @noRd
+#'
+#' @param x A `dpdict` object.
+#' @param title Title for the viewer tab.
+#' @param ... Passed through to `utils::View()`.
+#' @return Invisibly returns `x`.
+#' @keywords internal
+View.dpdict <- function(x, title = deparse(substitute(x)), ...) {
+  if (!interactive()) {
+    print(x)
+    return(invisible(x))
+  }
+  utils::View(as.data.frame(x), title = title)
+  invisible(x)
+}
 
 ##### functions for viewing metadata #####
 
@@ -249,7 +341,7 @@ create_dict <- function(temp_dat, prefill = TRUE){
     temp_dpdict$variable_labels = temp_dpdict$old_variable_labels
     temp_dpdict$value_labels = temp_dpdict$old_value_labels
   }
-  return(temp_dpdict)
+  return(as_dpdict(temp_dpdict))
 }
 
 
@@ -681,7 +773,7 @@ create_dict_with_metadata <- function(temp_dat, noisy = 0){
 
   temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
   temp_dpdict <- update_dict_with_metadata(survey_obj = NULL, temp_dat, temp_dpdict, noisy = noisy)
-  return(temp_dpdict)
+  return(as_dpdict(temp_dpdict))
 }
 
 
@@ -691,7 +783,7 @@ create_dict_with_metadata <- function(temp_dat, noisy = 0){
 #'
 #' @param temp_dat A data frame containing the survey data
 #' @param temp_dpdict Optional. The associated dpdict.
-#' @param seps Optional. A list specifying the separators to use. If NULL, current patterns detected in the data will be used.
+#' @param seps_to_use Optional. A list specifying the separators to use. If NULL, current patterns detected in the data will be used.
 #'
 #' @return A list with dat and dpdict, both with standardised variable names
 #' @export
@@ -725,7 +817,7 @@ standardise_survey_separators <- function(temp_dat, temp_dpdict = NULL, seps_to_
   # Store sep patterns as an attribute
   attr(temp_dpdict, "sep_patterns") <- seps_to_use
 
-  return(list(dat = temp_dat, dpdict = temp_dpdict))
+  return(list(dat = temp_dat, dpdict = as_dpdict(temp_dpdict)))
 }
 
 #' update_dict_with_metadata
@@ -750,8 +842,8 @@ standardise_survey_separators <- function(temp_dat, temp_dpdict = NULL, seps_to_
 #' \itemize{
 #'  \item variable-level metadata: question_group, variable class, and then checks for single variable question, dichotomous variable, variable with value labels, and multiresponse variable, which are in turn used to define questiontype
 #'  \item question-level metadata: question_alias, question_description, question_suffix, alias_with_suffix, and question_folder
-#'  \item question_alias is intended as a user-defined identifier for the question but takes the values of question_group by default
-#'  \item question_description, question_suffix, and alias_with_suffix are useful when creating tables and visualisations
+#'  \item question_alias, question_description, question_folder, and alias_with_suffix are user-defined fields for custom labelling and organization (not currently integrated with tab() or export functions)
+#'  \item question_suffix is used by get_display_label() when label_mode = "suffix" or "smart" in tab() and export functions
 #' }
 #'
 #' The function performs several steps:
@@ -1022,7 +1114,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     survey_obj$dpdict <- temp_dpdict
     return(survey_obj)
   } else {
-    return(temp_dpdict)
+    return(as_dpdict(temp_dpdict))
   }
 }
 
@@ -1550,7 +1642,7 @@ split_into_question_groups <- function(temp_dpdict, temp_dat, variables_to_proce
 
   } # end of loop through question groups
 
-  return(temp_dpdict)
+  return(as_dpdict(temp_dpdict))
 }
 
 
@@ -1837,6 +1929,12 @@ get_longest_common_substring <- function(string1, string2, fromstart = FALSE) {
 #' @return a questions_dict with questions metadata corresponding to the given dpdict
 #' @export
 #'
+#' @details
+#' This function creates or extracts question-level metadata including question_alias, 
+#' question_description, and question_folder. These fields are maintained for user-defined 
+#' organization and custom labelling workflows but are not currently integrated with tab() 
+#' or export functions.
+#'
 #' @examples
 #' # Using a dpdict
 #' temp_dpdict <- create_dict_with_metadata(get_big_test_dat(n=10))
@@ -1879,6 +1977,11 @@ create_questions_dict <- function(survey_obj = NULL, temp_dpdict = NULL, editfir
   questions_dict$question_folder <- NA_character_
 
   if(editfirst == TRUE){
+    if (!requireNamespace("DataEditR", quietly = TRUE)) {
+      stop("Package 'DataEditR' is required for interactive editing (editfirst = TRUE).\n",
+           "Install it with: install.packages('DataEditR')\n",
+           "Or set editfirst = FALSE to skip interactive editing.")
+    }
     questions_dict <- DataEditR::data_edit(questions_dict, viewer_height = 900, viewer_width = 1800)
     questions_dict$question_description <- ifelse(questions_dict$question_alias == "",
                                                   questions_dict$question_lcs,
@@ -2085,7 +2188,9 @@ get_unique_suffixes <- function(temp_dpdict, var_with_unique_id = "variable_name
 
     question_group_list <- lapply(seq_along(question_group_data[[var_with_strings]]), function(i){
       label <- question_group_data[[var_with_strings]][i]
-      if(is.na(label)){
+      # Treat blank/whitespace-only labels as missing (same as NA) so we don't
+      # pass invalid strings into get_affix_df().
+      if (is.na(label) || !nzchar(trimws(label))) {
         return(NA)
       } else {
         return(get_affix_df(label, affix_type = "suffix", seps_priority = seps_priority, filter_results = FALSE))
@@ -2401,7 +2506,7 @@ get_questions_dict <- function(x){
 #'
 #' updates question_alias, question_description and alias_with_suffix in a dpdict, based on question_alias and question_suffix
 #'
-#' useful if e.g. manually editing alias in a questions_dict and want to apply that to a dpdict
+#' Useful for maintaining user-defined question identifiers and organization. Note: these fields are not currently integrated with tab() or export functions. For controlling tab output labels, use the label_mode parameter.
 #'
 #' @param x a survey data object or a dpdict
 #' @param questions_dict a questions_dict that must have columns for question_group and question_alias
@@ -2457,7 +2562,7 @@ update_aliases <- function(x, questions_dict){
   if (is.survey_data(x)) {
     return(structure(list(dat = x$dat, dpdict = temp_dpdict), class = "survey_data"))
   } else {
-    return(temp_dpdict)
+    return(as_dpdict(temp_dpdict))
   }
 }
 
@@ -2534,7 +2639,7 @@ split_grid_labels <- function(x, alias_to_split, example_stem_to_add, count_befo
   if (is.survey_data(x)) {
     return(structure(list(dat = x$dat, dpdict = temp_dpdict), class = "survey_data"))
   } else {
-    return(temp_dpdict)
+    return(as_dpdict(temp_dpdict))
   }
 }
 
@@ -3450,13 +3555,7 @@ mutate.survey_data <- function(.data, ...) {
     }
   }
 
-  #' Preserve value labels after mutation operations
-  #' @param new_dat The mutated data
-  #' @param original_dat The original data before mutation
-  #' @param original_value_labels List of original value labels
-  #' @param dots The mutation expressions
-  #' @param modified_vars Names of variables being modified
-  #' @keywords internal
+  # Preserve value labels after mutation operations
   preserve_value_labels_after_mutation <- function(new_dat, original_dat, original_value_labels, dots, modified_vars) {
 
     for (var_name in modified_vars) {
@@ -3498,8 +3597,7 @@ mutate.survey_data <- function(.data, ...) {
     return(new_dat)
   }
 
-  #' Determine if value labels should be preserved for a mutation
-  #' @keywords internal
+  # Determine if value labels should be preserved for a mutation
   should_preserve_value_labels <- function(expr, expr_text, var_name, original_dat) {
 
     # Simple variable assignment (e.g., new_var = old_var)
@@ -3537,8 +3635,7 @@ mutate.survey_data <- function(.data, ...) {
     return(FALSE)
   }
 
-  #' Extract source variable name from simple expressions
-  #' @keywords internal
+  # Extract source variable name from simple expressions
   extract_source_variable <- function(expr) {
     expr_obj <- rlang::quo_get_expr(expr)
 
@@ -3949,7 +4046,7 @@ update_dict <- function(temp_dat, temp_dpdict) {
     }
   }
 
-  return(temp_dpdict)
+  return(as_dpdict(temp_dpdict))
 }
 
 
@@ -3965,6 +4062,7 @@ update_dict <- function(temp_dat, temp_dpdict) {
 #' @param y A survey_data object or data frame (right side of join)
 #' @param by A character vector of variables to join by. If NULL, will use common variables.
 #' @param copy,suffix,keep,na_matches,multiple,unmatched,relationship Parameters passed to dplyr::left_join
+#' @param ... Additional arguments passed to dplyr::left_join
 #' @importFrom dplyr left_join
 #' @return A new survey_data object with joined data and updated metadata
 #' @exportS3Method dplyr::left_join survey_data

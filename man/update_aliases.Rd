@@ -19,7 +19,7 @@ survey data object or a temp_dpdict with question_aias and alias_with_suffix upd
 updates question_alias, question_description and alias_with_suffix in a dpdict, based on question_alias and question_suffix
 }
 \details{
-useful if e.g. manually editing alias in a questions_dict and want to apply that to a dpdict
+Useful for maintaining user-defined question identifiers and organization. Note: these fields are not currently integrated with tab() or export functions. For controlling tab output labels, use the label_mode parameter.
 }
 \examples{
 # Using a temp_dpdict

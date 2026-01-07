@@ -8,6 +8,8 @@ compute_cells_vectorized(
   base_array,
   row_arrays,
   col_arrays,
+  row_u_arrays = NULL,
+  col_u_arrays = NULL,
   statistic = "column_pct",
   values = NULL
 )

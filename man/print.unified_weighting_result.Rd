@@ -6,6 +6,11 @@
 \usage{
 \method{print}{unified_weighting_result}(x, ...)
 }
+\arguments{
+\item{x}{A unified_weighting_result object}
+
+\item{...}{Additional arguments (ignored)}
+}
 \description{
 Print method for unified weighting results
 }

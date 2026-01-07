@@ -25,12 +25,13 @@
 #' @param decimal_places Integer: number of decimal places to display (default 1)
 #' @param font_family Character: CSS font-family to use for the table (default "Consolas, Monaco, 'Courier New', Courier, monospace")
 #' @param font_size Character: CSS font-size for the table (e.g., "12px", "0.9em"). Default is "12px".
+#' @param label_mode Label display mode (default "full")
 #' @param ... Additional arguments (reserved for future use)
 #'
 #' @return An object of class "reactable_tab" containing:
-#'   * data      – a data.frame with numeric values
-#'   * metadata  – list with stat_info, base info, summary info, significance data
-#'   * settings  – list with all display and color settings
+#'   * data      - a data.frame with numeric values
+#'   * metadata  - list with stat_info, base info, summary info, significance data
+#'   * settings  - list with all display and color settings
 #'
 #' @details
 #' This function prepares a tab_result for display as an interactive HTML table using
@@ -51,10 +52,10 @@
 #' * `color_mode = "significance"`: Colors cells based on significance direction and level
 #'
 #' * `sig_symbol = TRUE`: Appends symbols to values
-#'   - "↑*" for significantly above at 90% (p < 0.10)
-#'   - "↑**" for significantly above at 95% (p < 0.05)
-#'   - "↓*" for significantly below at 90%
-#'   - "↓**" for significantly below at 95%
+#'   - "up*" for significantly above at 90% (p < 0.10)
+#'   - "up**" for significantly above at 95% (p < 0.05)
+#'   - "down*" for significantly below at 90%
+#'   - "down**" for significantly below at 95%
 #'
 #' These two options can be used independently or combined.
 #'
@@ -1364,7 +1365,7 @@ display_reactable <- function(x,
     return("")
   }
   
-  arrow <- if (sig_result$direction == "above") "\u2191" else "\u2193"  # ↑ or ↓
+  arrow <- if (sig_result$direction == "above") "\u2191" else "\u2193"  # up/down arrow
   stars <- if (sig_result$level <= 0.05) "**" else "*"
   
   paste0(arrow, stars)
@@ -1764,7 +1765,7 @@ print.reactable_tab <- function(x, n = 6, ...) {
   # Dimensions
   n_rows <- nrow(x$data)
   n_cols <- ncol(x$data) - 1  # Exclude row_label
-  cat(sprintf("  Dimensions: %d rows × %d columns\n", n_rows, n_cols))
+  cat(sprintf("  Dimensions: %d rows x %d columns\n", n_rows, n_cols))
   
   # Statistic type
   stat_id <- x$metadata$stat_info$id

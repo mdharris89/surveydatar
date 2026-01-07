@@ -22,8 +22,8 @@ A derive specification object
 Adds new columns showing index values (ratio × multiplier) relative to a base column.
 }
 \examples{
-\dontrun{
-result <- tab(data, satisfaction, gender) \%>\%
+# Basic usage with test data
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor, show_col_nets = TRUE) \%>\%
   derive(index_vs("Total"))
-}
 }

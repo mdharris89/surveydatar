@@ -1,4 +1,8 @@
-# Tests for weighting functionality
+## Weighting function tests
+##
+## The weighting pipeline turns selection probabilities and constraint targets into respondent-level weights.
+## The tests in this file check numeric invariants, error handling, and stage-to-stage behaviours across that flow.
+
 library(testthat)
 
 # Helper function to create a simple weighting_target_function

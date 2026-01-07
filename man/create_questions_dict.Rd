@@ -21,6 +21,11 @@ creates questions_dict from a dpdict. if dpdict doesn't already has a questions_
 }
 \details{
 optionally calls data_edit before returning, for any manual edits.
+
+This function creates or extracts question-level metadata including question_alias,
+question_description, and question_folder. These fields are maintained for user-defined
+organization and custom labelling workflows but are not currently integrated with tab()
+or export functions.
 }
 \examples{
 # Using a dpdict

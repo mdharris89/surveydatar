@@ -23,7 +23,7 @@ Creates multiple columns by crossing an outer variable with an inner
 specification (variable, helper, or expression).
 }
 \examples{
-tab(data, satisfaction, banner(region, gender))
-tab(data, q1, banner(region, top_box(satisfaction, 2)))
-tab(data, q1, banner(region, satisfaction, subtotals = TRUE))
+banner(region, gender)
+banner(region, top_box(satisfaction, 2))
+banner(region, satisfaction, subtotals = TRUE)
 }

@@ -26,6 +26,8 @@
 \item{by}{A character vector of variables to join by. If NULL, will use common variables.}
 
 \item{copy, suffix, keep, na_matches, multiple, unmatched, relationship}{Parameters passed to dplyr::left_join}
+
+\item{...}{Additional arguments passed to dplyr::left_join}
 }
 \value{
 A new survey_data object with joined data and updated metadata

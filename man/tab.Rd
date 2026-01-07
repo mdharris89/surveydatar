@@ -47,8 +47,12 @@ tab(
 
 \item{low_base_threshold}{Minimum base count threshold - cells/rows/cols with base below this are filtered out}
 
-\item{hide_empty}{Logical; if TRUE, remove rows and columns whose universe exposure
-(after filters/weights) drops to zero. Summary and base rows/columns are always preserved.}
+\item{hide_empty}{Logical; if TRUE, prune rows and columns with zero exposure after table-wide
+filters/weights. Exposure is a \emph{marginal} quantity (one-dimensional mass):
+\code{row_exposure = sum(base_array * row_m)} and \code{col_exposure = sum(base_array * col_m)}.
+This is sufficient for \code{hide_empty} because it makes a row/column-level decision
+(“does this entire row/column have any mass in the table base?”), not a per-cell decision.
+Summary and base rows/columns are always preserved.}
 
 \item{label_mode}{How to display labels: "smart" (default - suffix for multi-item, full for single-item),
 "full" (complete variable label), or "suffix" (extract suffix after separator). Can be overridden

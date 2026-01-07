@@ -73,14 +73,16 @@ tab_to_reactable(
 
 \item{font_size}{Character: CSS font-size for the table (e.g., "12px", "0.9em"). Default is "12px".}
 
+\item{label_mode}{Label display mode (default "full")}
+
 \item{...}{Additional arguments (reserved for future use)}
 }
 \value{
 An object of class "reactable_tab" containing:
 \itemize{
-\item data      – a data.frame with numeric values
-\item metadata  – list with stat_info, base info, summary info, significance data
-\item settings  – list with all display and color settings
+\item data      - a data.frame with numeric values
+\item metadata  - list with stat_info, base info, summary info, significance data
+\item settings  - list with all display and color settings
 }
 }
 \description{
@@ -106,10 +108,10 @@ When significance testing has been applied to the tab_result using \code{add_sig
 \item \code{color_mode = "significance"}: Colors cells based on significance direction and level
 \item \code{sig_symbol = TRUE}: Appends symbols to values
 \itemize{
-\item "↑*" for significantly above at 90\% (p < 0.10)
-\item "↑**" for significantly above at 95\% (p < 0.05)
-\item "↓*" for significantly below at 90\%
-\item "↓**" for significantly below at 95\%
+\item "up*" for significantly above at 90\% (p < 0.10)
+\item "up**" for significantly above at 95\% (p < 0.05)
+\item "down*" for significantly below at 90\%
+\item "down**" for significantly below at 95\%
 }
 }
 

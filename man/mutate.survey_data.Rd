@@ -14,16 +14,6 @@ Automatically preserves value labels for appropriate transformations.}
 
 \item{...}{Mutation expressions passed to dplyr::mutate. Variable labels can be specified
 using realiselabelled_vec(expr, variable_label="label").}
-
-\item{new_dat}{The mutated data}
-
-\item{original_dat}{The original data before mutation}
-
-\item{original_value_labels}{List of original value labels}
-
-\item{dots}{The mutation expressions}
-
-\item{modified_vars}{Names of variables being modified}
 }
 \value{
 A new survey_data object with mutated data and updated metadata.
@@ -47,23 +37,4 @@ survey_obj \%>\%
 # Mathematical operations don't preserve value labels (usually inappropriate)
 survey_obj \%>\%
   dplyr::mutate(uid_doubled = uid * 2)  # No value labels preserved
-Preserve value labels after mutation operations
 }
-\keyword{Determine}
-\keyword{Extract}
-\keyword{a}
-\keyword{be}
-\keyword{expressions}
-\keyword{for}
-\keyword{from}
-\keyword{if}
-\keyword{internal}
-\keyword{labels}
-\keyword{mutation}
-\keyword{name}
-\keyword{preserved}
-\keyword{should}
-\keyword{simple}
-\keyword{source}
-\keyword{value}
-\keyword{variable}

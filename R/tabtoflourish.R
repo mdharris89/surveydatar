@@ -3,7 +3,7 @@ utils::globalVariables(c("row_label", "value"))
 
 #' Convert a surveydatar tab_result into a Flourish-ready object
 #'
-#' @param tab           A tab_result produced by surveydatar::tab()
+#' @param tab_result    A tab_result produced by \code{\link{tab}}
 #' @param chart_type    Optional character; Flourish chart type. If not specified, automatically 
 #'   selected based on data structure and statistic. Supported types:
 #'   \itemize{
@@ -24,6 +24,7 @@ utils::globalVariables(c("row_label", "value"))
 #' @param strip_summary_cols Remove Total / NET columns? (default TRUE for non-table charts)
 #' @param table_settings Named list of table-specific settings. See details for options.
 #' @param settings Named list corresponding to flourish settings with dot notation e.g. "number_format.suffix" = "%"
+#' @param label_mode Label display mode for exported labels (default "full")
 #' @param ...           Future arguments
 #'
 #' @return An object of class "flourish_tab" containing:
@@ -72,8 +73,10 @@ utils::globalVariables(c("row_label", "value"))
 #' @export
 #'
 #' @examples
-#' f_tab <- data %>% tab(q1, gender) %>% tab_to_flourish()
-#' f_tab                      # shows bindings + head(data)
+#' survey_obj <- create_survey_data(get_basic_test_dat(n = 50))
+#' x <- tab(survey_obj, labelledcategorical, labelledordinal)
+#' f_tab <- tab_to_flourish(x)
+#' f_tab
 #' # flourishcharts::flourish(f_tab$data, f_tab$chart_type, bindings = f_tab$bindings)
 tab_to_flourish <- function(tab_result,
                             chart_type    = NULL,
@@ -107,7 +110,6 @@ tab_to_flourish <- function(tab_result,
     }
     
     # Strip summaries if requested
-    # (Default is TRUE to maintain backward compatibility)
     if (strip_summary_rows || strip_summary_cols) {
       tab_result <- hide_summary(tab_result, 
                                  rows = strip_summary_rows,
@@ -660,6 +662,7 @@ print.flourish_tab <- function(x, n = 10, ...) {
 #'
 #' @param x A flourish_tab object created by \code{\link{tab_to_flourish}}
 #' @param api_key Flourish API key. Defaults to FLOURISH_API_KEY environment variable
+#' @param display How to display the widget ("inline" or "viewer")
 #' @param viewer Function to use for displaying the chart. Defaults to getOption("viewer")
 #'   or utils::browseURL if not available
 #' @param ... Additional arguments passed to htmlwidgets::saveWidget()

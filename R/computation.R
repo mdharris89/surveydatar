@@ -24,6 +24,7 @@
 #' @return Matrix of base values with dimensions matching row/col arrays
 #' @keywords internal
 sync_base_matrix <- function(row_arrays, col_arrays, base_array,
+                             row_u_arrays = NULL, col_u_arrays = NULL,
                              values_array, statistic) {
 
   n_r <- length(row_arrays)
@@ -37,14 +38,18 @@ sync_base_matrix <- function(row_arrays, col_arrays, base_array,
 
   for (i in seq_len(n_r)) {
     r_arr <- row_arrays[[i]]
+    r_u <- if (!is.null(row_u_arrays) && length(row_u_arrays) >= i) row_u_arrays[[i]] else NULL
 
     for (j in seq_len(n_c)) {
       c_arr <- col_arrays[[j]]
+      c_u <- if (!is.null(col_u_arrays) && length(col_u_arrays) >= j) col_u_arrays[[j]] else NULL
 
       base_matrix[i, j] <- statistic$base_calculator(
         base_array = base_array,
-        row_array = r_arr,
-        col_array = c_arr,
+        row_m = r_arr,
+        row_u = r_u,
+        col_m = c_arr,
+        col_u = c_u,
         values_array = values_array
       )
     }
@@ -106,6 +111,7 @@ calculate_base_array <- function(data, filter_expr, weight_var, parent_env) {
 #' @return Matrix of computed cell values
 #' @keywords internal
 compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
+                                     row_u_arrays = NULL, col_u_arrays = NULL,
                                      statistic = "column_pct", values = NULL) {
 
   n_rows <- length(row_arrays)
@@ -116,14 +122,18 @@ compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
 
   for (i in seq_len(n_rows)) {
     r_arr   <- row_arrays[[i]]
+    r_u <- if (!is.null(row_u_arrays) && length(row_u_arrays) >= i) row_u_arrays[[i]] else NULL
 
     for (j in seq_len(n_cols)) {
       c_arr  <- col_arrays[[j]]
+      c_u <- if (!is.null(col_u_arrays) && length(col_u_arrays) >= j) col_u_arrays[[j]] else NULL
 
       res[i, j] <- stat_fun(
-        base_array   = base_array,
-        row_array    = r_arr,
-        col_array    = c_arr,
+        base_array = base_array,
+        row_m = r_arr,
+        row_u = r_u,
+        col_m = c_arr,
+        col_u = c_u,
         values = values
       )
     }
@@ -155,8 +165,12 @@ compute_cells_vectorized <- function(base_array, row_arrays, col_arrays,
 #' @return cell_store object with all computed cells
 #' @keywords internal
 compute_cells_as_bundle <- function(base_array,
+                                   data,
+                                   dpdict,
                                    row_arrays,
+                                   row_u_arrays,
                                    col_arrays,
+                                   col_u_arrays,
                                    rows_expanded,
                                    cols_expanded,
                                    base_filter_spec,
@@ -169,50 +183,52 @@ compute_cells_as_bundle <- function(base_array,
   
   store <- new_cell_store(size_hint = n_cells)
   
-  compute_universe <- function(arr) {
+  compute_exposure <- function(arr) {
     if (is.null(arr)) return(0)
     contrib <- base_array * arr
     contrib[is.na(contrib)] <- 0
     sum(contrib)
   }
   
-  row_universes <- if (length(row_arrays) > 0) {
-    vapply(row_arrays, compute_universe, numeric(1))
+  # Row/col exposure is used for layout pruning (hide_empty) and represents
+  # membership mass under the table base.
+  row_exposures <- if (length(row_arrays) > 0) {
+    vapply(row_arrays, compute_exposure, numeric(1))
   } else numeric(0)
   
-  col_universes <- if (length(col_arrays) > 0) {
-    vapply(col_arrays, compute_universe, numeric(1))
+  col_exposures <- if (length(col_arrays) > 0) {
+    vapply(col_arrays, compute_exposure, numeric(1))
   } else numeric(0)
   
   # Compute each cell directly from array intersections
   for (i in seq_along(row_arrays)) {
     row_array <- row_arrays[[i]]
+    row_u <- row_u_arrays[[i]]
     row_spec <- rows_expanded[[i]]
     
     for (j in seq_along(col_arrays)) {
       col_array <- col_arrays[[j]]
+      col_u <- col_u_arrays[[j]]
       col_spec <- cols_expanded[[j]]
       
       # Compute value directly (no matrix intermediary)
       value <- statistic_obj$processor(
         base_array = base_array,
-        row_array = row_array,
-        col_array = col_array,
+        row_m = row_array,
+        row_u = row_u,
+        col_m = col_array,
+        col_u = col_u,
         values = values_array
       )
       
       # Compute base directly (no matrix intermediary)
-      # Extract banner filters if present
-      col_filter <- attr(col_array, "banner_filter")
-      row_filter <- attr(row_array, "banner_filter")
-      
       base <- statistic_obj$base_calculator(
         base_array = base_array,
-        row_array = row_array,
-        col_array = col_array,
-        values_array = values_array,
-        col_filter = col_filter,
-        row_filter = row_filter
+        row_m = row_array,
+        row_u = row_u,
+        col_m = col_array,
+        col_u = col_u,
+        values_array = values_array
       )
       
       # Build specification using helper
@@ -225,8 +241,8 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
-      specification$row_universe <- row_universes[i]
-      specification$col_universe <- col_universes[j]
+      specification$row_exposure <- row_exposures[i]
+      specification$col_exposure <- col_exposures[j]
       
       # Store computation metadata
       computation <- list(
@@ -255,6 +271,8 @@ compute_cells_as_bundle <- function(base_array,
   summary_row_spec <- NULL
   summary_col_array <- NULL
   summary_col_spec <- NULL
+  summary_row_u_array <- NULL
+  summary_col_u_array <- NULL
   
   ## Compute summary column cells (always, if statistic supports it) -----------
   if (length(col_arrays) > 1 && !is.null(statistic_obj$summary_col)) {
@@ -264,13 +282,19 @@ compute_cells_as_bundle <- function(base_array,
            statistic_obj$summary_col, "' but no summary_col_calculator defined")
     }
     
-    # Create summary array using calculator
-    summary_col_array <- statistic_obj$summary_col_calculator(
-      arrays = col_arrays,
+    col_tab_arrays <- Map(function(m, u) {
+      structure(list(m = m, u = u), class = "tab_arrays")
+    }, col_arrays, col_u_arrays)
+    
+    summary_col_arrays <- statistic_obj$summary_col_calculator(
+      arrays = col_tab_arrays,
       base_array = base_array
     )
     
-    summary_col_universe <- compute_universe(summary_col_array)
+    summary_col_array <- summary_col_arrays$m
+    summary_col_u_array <- summary_col_arrays$u
+    
+    summary_col_exposure <- compute_exposure(summary_col_array)
     
     # Extract labels from arrays being summarized
     col_labels <- sapply(col_arrays, function(arr) {
@@ -299,22 +323,20 @@ compute_cells_as_bundle <- function(base_array,
     for (i in seq_along(row_arrays)) {
       value <- statistic_obj$processor(
         base_array = base_array,
-        row_array = row_arrays[[i]],
-        col_array = summary_col_array,
+        row_m = row_arrays[[i]],
+        row_u = row_u_arrays[[i]],
+        col_m = summary_col_array,
+        col_u = summary_col_u_array,
         values = values_array
       )
       
-      # Extract banner filters if present
-      col_filter <- attr(summary_col_array, "banner_filter")
-      row_filter <- attr(row_arrays[[i]], "banner_filter")
-      
       base <- statistic_obj$base_calculator(
         base_array = base_array,
-        row_array = row_arrays[[i]],
-        col_array = summary_col_array,
-        values_array = values_array,
-        col_filter = col_filter,
-        row_filter = row_filter
+        row_m = row_arrays[[i]],
+        row_u = row_u_arrays[[i]],
+        col_m = summary_col_array,
+        col_u = summary_col_u_array,
+        values_array = values_array
       )
       
       specification <- build_cell_specification(
@@ -328,8 +350,8 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
-      specification$row_universe <- row_universes[i]
-      specification$col_universe <- summary_col_universe
+      specification$row_exposure <- row_exposures[i]
+      specification$col_exposure <- summary_col_exposure
       
       computation <- list(
         statistic = statistic_obj$id,
@@ -348,13 +370,19 @@ compute_cells_as_bundle <- function(base_array,
            statistic_obj$summary_row, "' but no summary_row_calculator defined")
     }
     
-    # Create summary array using calculator
-    summary_row_array <- statistic_obj$summary_row_calculator(
-      arrays = row_arrays,
+    row_tab_arrays <- Map(function(m, u) {
+      structure(list(m = m, u = u), class = "tab_arrays")
+    }, row_arrays, row_u_arrays)
+    
+    summary_row_arrays <- statistic_obj$summary_row_calculator(
+      arrays = row_tab_arrays,
       base_array = base_array
     )
     
-    summary_row_universe <- compute_universe(summary_row_array)
+    summary_row_array <- summary_row_arrays$m
+    summary_row_u_array <- summary_row_arrays$u
+    
+    summary_row_exposure <- compute_exposure(summary_row_array)
     
     # Extract labels from arrays being summarized
     row_labels <- sapply(row_arrays, function(arr) {
@@ -383,22 +411,20 @@ compute_cells_as_bundle <- function(base_array,
     for (j in seq_along(col_arrays)) {
       value <- statistic_obj$processor(
         base_array = base_array,
-        row_array = summary_row_array,
-        col_array = col_arrays[[j]],
+        row_m = summary_row_array,
+        row_u = summary_row_u_array,
+        col_m = col_arrays[[j]],
+        col_u = col_u_arrays[[j]],
         values = values_array
       )
       
-      # Extract banner filters if present
-      col_filter <- attr(col_arrays[[j]], "banner_filter")
-      row_filter <- attr(summary_row_array, "banner_filter")
-      
       base <- statistic_obj$base_calculator(
         base_array = base_array,
-        row_array = summary_row_array,
-        col_array = col_arrays[[j]],
-        values_array = values_array,
-        col_filter = col_filter,
-        row_filter = row_filter
+        row_m = summary_row_array,
+        row_u = summary_row_u_array,
+        col_m = col_arrays[[j]],
+        col_u = col_u_arrays[[j]],
+        values_array = values_array
       )
       
       specification <- build_cell_specification(
@@ -412,8 +438,8 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
-      specification$row_universe <- summary_row_universe
-      specification$col_universe <- col_universes[j]
+      specification$row_exposure <- summary_row_exposure
+      specification$col_exposure <- col_exposures[j]
       
       computation <- list(
         statistic = statistic_obj$id,
@@ -427,22 +453,20 @@ compute_cells_as_bundle <- function(base_array,
     if (!is.null(summary_col_array)) {
       value <- statistic_obj$processor(
         base_array = base_array,
-        row_array = summary_row_array,
-        col_array = summary_col_array,
+        row_m = summary_row_array,
+        row_u = summary_row_u_array,
+        col_m = summary_col_array,
+        col_u = summary_col_u_array,
         values = values_array
       )
       
-      # Extract banner filters if present
-      col_filter <- attr(summary_col_array, "banner_filter")
-      row_filter <- attr(summary_row_array, "banner_filter")
-      
       base <- statistic_obj$base_calculator(
         base_array = base_array,
-        row_array = summary_row_array,
-        col_array = summary_col_array,
-        values_array = values_array,
-        col_filter = col_filter,
-        row_filter = row_filter
+        row_m = summary_row_array,
+        row_u = summary_row_u_array,
+        col_m = summary_col_array,
+        col_u = summary_col_u_array,
+        values_array = values_array
       )
       
       specification <- build_cell_specification(
@@ -456,8 +480,8 @@ compute_cells_as_bundle <- function(base_array,
         values_var = values_var
       )
       
-      specification$row_universe <- summary_row_universe
-      specification$col_universe <- summary_col_universe
+      specification$row_exposure <- summary_row_exposure
+      specification$col_exposure <- summary_col_exposure
       
       computation <- list(
         statistic = statistic_obj$id,
@@ -473,7 +497,9 @@ compute_cells_as_bundle <- function(base_array,
     summary_row_array = summary_row_array,
     summary_row_spec = summary_row_spec,
     summary_col_array = summary_col_array,
-    summary_col_spec = summary_col_spec
+    summary_col_spec = summary_col_spec,
+    summary_row_u_array = summary_row_u_array,
+    summary_col_u_array = summary_col_u_array
   ))
 }
 

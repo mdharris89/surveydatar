@@ -6,6 +6,11 @@
 \usage{
 \method{[[}{tab_result}(x, i)
 }
+\arguments{
+\item{x}{A tab_result object}
+
+\item{i}{Element name or index}
+}
 \description{
 Extract column or cell from tab_result
 }

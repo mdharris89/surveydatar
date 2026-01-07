@@ -7,12 +7,20 @@
 .prune_empty_dimensions(layout)
 }
 \arguments{
-\item{layout}{Layout list with grid, defs, and universe metadata}
+\item{layout}{Layout list with grid, defs, and exposure metadata}
 }
 \description{
-Removes rows and columns that are empty based on base semantics after
-allocation, while preserving summary rows and columns (e.g., NET/Total).
-A cell is considered empty if no cell is allocated OR its base is NA or 0.
-This operates at the layout level and uses the cell store for base checks.
+Removes rows and columns that are empty after allocation, while preserving summary rows and columns
+(e.g., NET/Total/Base).
+}
+\details{
+Emptiness is determined using \emph{marginal exposure} (row_exposure / col_exposure) plus a grid check:
+\itemize{
+\item Exposure is the marginal “membership mass under the table base” for a row/column spec.
+\item For \code{hide_empty} we only need a row/column-level decision (not a per-cell measure), so marginal
+exposure is sufficient: if row_exposure == 0 then every cell in that row must have zero mass.
+\item Rows/cols are also treated as empty if, after allocation, all their non-summary grid positions are NA
+(e.g., because layout defs or filters removed everything).
+}
 }
 \keyword{internal}

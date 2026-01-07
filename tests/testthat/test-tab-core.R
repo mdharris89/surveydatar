@@ -1,4 +1,11 @@
+## tab() core tests
+##
+## tab() parses and expands row/col specifications into base_array + row/col arrays, then computes and stores
+## cells before allocating them to the visible grid. The tests in this file cover those core behaviours across
+## parsing/expansion, labelling, filtering/weights, and tab_result structure.
+
 ##### Built in registrations #####
+# Checks the built-in registry state that tab() relies on for helpers, statistics, and macros.
 # Clear and register built-ins
 ensure_builtins_registered()
 
@@ -45,6 +52,7 @@ test_that("ensure_builtins_registered works correctly", {
 })
 
 ##### TEST DATA GENERATOR #####
+# Defines realistic survey-like fixtures used across the tab() pipeline tests in this file.
 # Use ONE main generator that covers all test scenarios:
 # - Basic demographics (gender, age, region)
 # - Satisfaction scale (for helpers + expansion + cross-tabs)
@@ -593,23 +601,29 @@ test_that("summary rows respect statistic metadata", {
 
 ##### Array & Cell Computation Tests #####
 
-test_that("formula_to_array correctly computes arrays", {
+test_that("formula_to_arrays correctly computes (m,u) arrays", {
 
   data <- test_survey_data$dat
 
   # Test simple binary variable
   spec_binary <- list(type = "simple", components = list(var = "q1_1"))
-  array_binary <- formula_to_array(spec_binary, data)
-  expect_equal(length(array_binary), nrow(data))
-  expect_true(all(array_binary %in% c(0, 1)))
+  arrays_binary <- formula_to_arrays(spec_binary, data)
+  expect_true(inherits(arrays_binary, "tab_arrays"))
+  expect_equal(length(arrays_binary$m), nrow(data))
+  expect_equal(length(arrays_binary$u), nrow(data))
+  expect_true(all(arrays_binary$m %in% c(0, 1)))
+  expect_true(all(arrays_binary$u %in% c(0, 1)))
 
   # Test expression
   spec_expr <- list(
     type = "expression",
     components = list(expr = quote(age > 30))
   )
-  array_expr <- formula_to_array(spec_expr, data)
-  expect_equal(as.numeric(array_expr), as.numeric(data$age > 30))
+  arrays_expr <- formula_to_arrays(spec_expr, data)
+  expected_m <- as.numeric(data$age > 30)
+  expected_m[is.na(expected_m)] <- 0
+  expect_equal(arrays_expr$m, expected_m, ignore_attr = TRUE)
+  expect_equal(arrays_expr$u, as.numeric(!is.na(data$age)))
 
   # Test multiplication (filter)
   spec_mult <- list(
@@ -619,11 +633,15 @@ test_that("formula_to_array correctly computes arrays", {
       list(type = "expression", components = list(expr = quote(age > 30)))
     )
   )
-  array_mult <- formula_to_array(spec_mult, data)
-  expect_equal(as.numeric(array_mult), data$q1_1 * as.numeric(data$age > 30))
+  arrays_mult <- formula_to_arrays(spec_mult, data)
+  expected_mult_m <- data$q1_1 * as.numeric(data$age > 30)
+  expected_mult_m[is.na(expected_mult_m)] <- 0
+  expect_equal(arrays_mult$m, expected_mult_m, ignore_attr = TRUE)
+  expect_equal(arrays_mult$u, as.numeric(!is.na(data$age)))
 })
 
 ##### Filter Parameter Tests #####
+# Checks the whole-table filter flow (filter -> filter array -> base_array masking) and its interaction with rows/cols.
 
 test_that("filter parameter works correctly", {
   result <- tab(test_survey_data, gender, region, filter = (age > 30))
@@ -668,6 +686,7 @@ test_that("filter parameter with complex expressions", {
 })
 
 ##### & Operator Tests #####
+# Checks logical composition behaviour for filters/rows, ensuring respondent-level masking composes as intended.
 
 test_that("& operator works in filter parameter", {
   # Test & in filter parameter - comparing apples to apples
@@ -701,6 +720,7 @@ test_that("& operator works in rows_list helper", {
 })
 
 ##### Low Base Threshold Tests #####
+# Checks the low-base filtering stage that removes cells/rows/cols based on computed bases.
 
 test_that("low_base_threshold removes low-base rows", {
   # Create a filter that will result in very few observations for one group
@@ -736,6 +756,7 @@ test_that("low_base_threshold works with columns", {
 })
 
 ##### NET Row/Column Logic Tests #####
+# Checks summary row/column behaviour driven by statistic metadata (NET/Total rules).
 
 test_that("NET row not added for single row", {
   # Filter to create single row
@@ -776,6 +797,7 @@ test_that("NET calculations with complex filtering", {
 })
 
 ##### Zeros and NAs in a Cell Edge Cases Tests #####
+# Checks missingness/zero handling in arrays and computation so statistics and bases behave predictably.
 
 test_that("tab handles all zeros in a cell gracefully", {
   # Create data where one combination never occurs
@@ -810,6 +832,7 @@ test_that("tab handles data with many NAs", {
 })
 
 ##### COMPLEX CALCULATION SCENARIOS #####
+# Checks higher-level scenarios combining expansion, filtering, and computation for realistic tab() usage.
 
 test_that("NET calculations are mathematically correct", {
 
@@ -867,7 +890,7 @@ test_that("summary row/column calculations match statistics", {
 
 ##### BASE CALCULATIONS #####
 
-test_that("base n calculations are accurate for all statistics", {
+test_that("base n calculations are accurate for different table shapes", {
 
   # Test column_pct base
   result_col <- tab(test_survey_data, gender, region, statistic = "column_pct")
@@ -944,6 +967,7 @@ test_that("statistical calculations remain stable with different data sizes", {
 })
 
 ##### Unit tests for modify_labels function #####
+# Checks label modification behaviour on tab results without changing underlying computed cells.
 
 test_that("modify_labels updates row labels in cell-based tab_result", {
   data <- test_survey_data
@@ -1170,6 +1194,7 @@ test_that("modify_labels can be chained multiple times", {
 })
 
 ##### Unit tests for glue #####
+# Checks tab composition behaviour when combining multiple tab results into a single output.
 
 test_that("multi_tab works with standard test data", {
   # Create standard test data
@@ -1238,6 +1263,7 @@ test_that("multi_tab handles custom groups and preserves labels", {
 })
 
 ##### Unit tests for mixed-statistic gluing #####
+# Checks glue behaviour when combining tabs that use different statistics/formatting.
 
 test_that("glue_tab with different statistics sets statistic to NULL", {
   test_survey_data <- create_survey_data(create_tab_test_data(200))
@@ -1406,6 +1432,7 @@ test_that("hide_summary works on mixed-statistic tabs", {
 })
 
 ##### Unit tests for more expressive filters #####
+# Checks richer filter expressions and their evaluation/normalization within tab().
 test_that("filters support helpers with same expressiveness as rows", {
   # Use the standard test data
   data <- test_survey_data
@@ -1457,6 +1484,7 @@ test_that("filters support helpers with same expressiveness as rows", {
   expect_true(total_base < nrow(data$dat))  # But not all
 })
 ##### Cell Store Tests #####
+# Checks the cell_store data structure used to store computed cells and support downstream operations.
 
 test_that("new_cell_store initializes correctly", {
   store <- new_cell_store()
@@ -1738,6 +1766,7 @@ test_that("cells store derivation metadata", {
 })
 
 ##### DSL Semantic Matching Tests #####
+# Checks DSL-based semantic identity/matching used for layout operations and derived calculations.
 
 test_that("DSL validation accepts allowed operations", {
   # Valid operations
@@ -2305,7 +2334,7 @@ test_that("tab() works with label comparisons in filter parameter", {
   set.seed(123)
   test_data <- data.frame(
     gender = factor(sample(c("Male", "Female", "Other"), 100, replace = TRUE)),
-    satisfaction = sample(1:5, 100, replace = TRUE),
+    satisfaction = factor(sample(1:5, 100, replace = TRUE)),
     region = factor(sample(c("North", "South"), 100, replace = TRUE))
   )
   
@@ -2326,6 +2355,7 @@ test_that("tab() handles complex expressions with label comparisons", {
     region = factor(sample(c("North", "South"), 100, replace = TRUE))
   )
   
+  attr(test_data$age, "label") <- "age"
   survey_data <- create_survey_data(test_data)
   
   # Complex expression: (gender == "Female") & (age > 30)
@@ -2642,6 +2672,7 @@ test_that("cell structure includes significance field", {
 })
 
 ##### EXTERNAL VARIABLE RESOLUTION TESTS #####
+# Checks how external variables are captured/inlined so tab results remain self-contained.
 
 test_that("External variables are inlined in expressions", {
   data <- create_tab_test_data(n = 100)
@@ -3020,7 +3051,7 @@ test_that("hide_empty = TRUE removes empty rows under filter", {
   expect_true("B" %in% df$row_label)
 })
 
-test_that("row universes reflect filtered exposure", {
+test_that("row exposure reflects filtered membership", {
   test_data <- create_hide_empty_test_data(n = 100)
   test_data$row_var <- factor(
     sample(c("R1", "R2", "R3"), nrow(test_data), replace = TRUE),
@@ -3038,11 +3069,11 @@ test_that("row universes reflect filtered exposure", {
                 hide_empty = FALSE)
   
   layout <- result$layout
-  row_uni <- layout$row_universe
+  row_exp <- layout$row_exposure
   
-  expect_equal(row_uni[layout$row_labels == "R2"], 0)
-  expect_gt(row_uni[layout$row_labels == "R1"], 0)
-  expect_gt(row_uni[layout$row_labels == "R3"], 0)
+  expect_equal(row_exp[layout$row_labels == "R2"], 0)
+  expect_gt(row_exp[layout$row_labels == "R1"], 0)
+  expect_gt(row_exp[layout$row_labels == "R3"], 0)
   
   result_hidden <- tab(test_data,
                        row_var,
@@ -3079,7 +3110,7 @@ test_that("hide_empty = TRUE removes empty columns under filter", {
   expect_true("Y" %in% names(df))
 })
 
-test_that("column universes reflect filtered exposure", {
+test_that("column exposure reflects filtered membership", {
   test_data <- create_hide_empty_test_data(n = 120)
   test_data$row_var <- factor(
     sample(c("R1", "R2"), nrow(test_data), replace = TRUE),
@@ -3096,11 +3127,11 @@ test_that("column universes reflect filtered exposure", {
                 filter = col_var != "C3",
                 hide_empty = FALSE)
   layout <- result$layout
-  col_uni <- layout$col_universe
+  col_exp <- layout$col_exposure
   
-  expect_equal(col_uni[layout$col_labels == "C3"], 0)
-  expect_gt(col_uni[layout$col_labels == "C1"], 0)
-  expect_gt(col_uni[layout$col_labels == "C2"], 0)
+  expect_equal(col_exp[layout$col_labels == "C3"], 0)
+  expect_gt(col_exp[layout$col_labels == "C1"], 0)
+  expect_gt(col_exp[layout$col_labels == "C2"], 0)
   
   result_hidden <- tab(test_data,
                        row_var,

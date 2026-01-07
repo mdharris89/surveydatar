@@ -29,7 +29,7 @@ is_debug <- function() {
 #' - Column names are configurable via config parameter (see create_weighting_config())
 #' - Default strata column: "Country" (can be changed to "market", "region", etc.)
 #' - Default ID column: "respondent_id"
-#' - Legacy mappings support backward compatibility (e.g., QCOUNTRY -> Country)
+#' - Optional legacy mappings can support older naming conventions (e.g., QCOUNTRY -> Country)
 #' - Constraint type patterns are configurable for custom naming conventions
 #' - Demographic variable mappings enable user-friendly constraint specification
 #'
@@ -258,6 +258,8 @@ make_constraint <- function(
 }
 
 #' Print method for constraints
+#' @param x A weighting_constraint object
+#' @param ... Additional arguments (ignored)
 #' @export
 print.weighting_constraint <- function(x, ...) {
   cat("Weighting Constraint:\n")
@@ -362,6 +364,8 @@ extract_constraint_info <- function(constraints) {
 }
 
 #' Print method for formula_with_tolerance
+#' @param x A formula_with_tolerance object
+#' @param ... Additional arguments (ignored)
 #' @export
 print.formula_with_tolerance <- function(x, ...) {
   tolerance <- attr(x, "tolerance")
@@ -378,6 +382,8 @@ print.formula_with_tolerance <- function(x, ...) {
 }
 
 #' Convert formula_with_tolerance to character
+#' @param x A formula_with_tolerance object
+#' @param ... Additional arguments (ignored)
 #' @export
 as.character.formula_with_tolerance <- function(x, ...) {
   tolerance <- attr(x, "tolerance")
@@ -587,7 +593,7 @@ parse_weighting_formula <- function(formula, data = NULL) {
 
   # Check for %+-% in string if we don't already have tolerance
   if (is.null(tolerance) && grepl("%\\+-%", formula_str)) {
-    # Parse from string (legacy support)
+    # Parse from string
     parts <- strsplit(formula_str, "%\\+-%")[[1]]
     if (length(parts) != 2) {
       stop("Invalid formula syntax with %+-% operator")
@@ -1432,6 +1438,7 @@ create_constraint_diagnostics <- function(constraint_list, cap, data_size, confi
 #' @param tol_config Tolerance configuration object
 #' @param solver CVXR solver ("OSQP", "SCS", "ECOS")
 #' @param verbose Print optimization progress
+#' @param config Optional weighting configuration (reserved for future use)
 #' @return Data frame with weights and diagnostics
 build_survey_weights <- function(dat_clean,
                                  constraint_list = NULL,
@@ -1475,7 +1482,7 @@ build_survey_weights <- function(dat_clean,
 
   # Constraint assessment -----------------------------------------------------
   if (verbose) {
-    message(sprintf("\nConstraint system: %d constraints × %d respondents",
+    message(sprintf("\nConstraint system: %d constraints x %d respondents",
                     nrow(constraint_list$X), ncol(constraint_list$X)))
 
     # Check for problems
@@ -1504,13 +1511,6 @@ build_survey_weights <- function(dat_clean,
     if (tight_constraints > 0) {
       message(sprintf("  WARNING: %d constraints require >95%% of max possible contribution",
                       tight_constraints))
-    }
-
-    # Debug mode only
-    if (is_debug()) {
-      assign("debug_constraint_list", constraint_list, envir = .GlobalEnv)
-      assign("debug_data", dat_clean, envir = .GlobalEnv)
-      message("  DEBUG: Saved to global env: debug_constraint_list, debug_data")
     }
   }
 
@@ -2038,7 +2038,7 @@ run_unified_weighting <- function(raw_data,
           }
         }
         
-        # Apply legacy mappings for backward compatibility
+        # Apply legacy mappings
         if (!is.null(config$legacy_mappings)) {
           for (old_name in names(config$legacy_mappings)) {
             new_name <- config$legacy_mappings[[old_name]]
@@ -2547,6 +2547,8 @@ run_unified_weighting <- function(raw_data,
 }
 
 #' Print method for unified weighting results
+#' @param x A unified_weighting_result object
+#' @param ... Additional arguments (ignored)
 #' @export
 print.unified_weighting_result <- function(x, ...) {
   cat("=== UNIFIED WEIGHTING RESULT ===\n\n")
@@ -2607,6 +2609,8 @@ print.unified_weighting_result <- function(x, ...) {
 }
 
 #' Summary method for unified weighting results
+#' @param object A unified_weighting_result object
+#' @param ... Additional arguments (ignored)
 #' @export
 summary.unified_weighting_result <- function(object, ...) {
   structure(
@@ -2628,6 +2632,8 @@ summary.unified_weighting_result <- function(object, ...) {
 }
 
 #' Print method for summary of unified weighting results
+#' @param x A summary.unified_weighting_result object
+#' @param ... Additional arguments (ignored)
 #' @export
 print.summary.unified_weighting_result <- function(x, ...) {
   cat("=== WEIGHTING SUMMARY ===\n\n")
@@ -2661,7 +2667,7 @@ print.weights_infeasible <- function(x, ...) {
 
   if (!is.null(x$top_problems) && nrow(x$top_problems) > 0) {
     cat("\nMost problematic constraints:\n")
-    cat("────────────────────────────\n")
+    cat("----------------------------\n")
 
     # Format the top problems nicely
     for (i in 1:min(5, nrow(x$top_problems))) {

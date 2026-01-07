@@ -4,7 +4,7 @@
 # 1. resolve_external_variables: Inline external variable values, preserve helpers
 # 2. parse_table_formula: Parse NSE expressions into structured specifications
 # 3. expand_variables: Expand categorical variables and question groups
-# 4. formula_to_array: Convert specifications to numeric arrays for computation
+# 4. formula_to_arrays: Convert specifications to (m,u) arrays for computation
 # 5. process_helper: Evaluate helper functions to get arrays (full processor)
 # 6. process_helper_for_specs: Extract components from spec generators (banner only)
 # 7. prepare_eval_data: Convert haven_labelled to numeric for expression evaluation
@@ -257,7 +257,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
     ))
   }
 
-  # Handle string literals (for backward compatibility)
+  # Handle string literals (variable names)
   if (rlang::is_string(actual_expr)) {
     return(list(
       type = "simple",
@@ -280,7 +280,7 @@ parse_table_formula <- function(expr, data, dpdict = NULL, helpers = NULL, all_h
 #' @param var_spec Variable specification (can be name, expression, or formula)
 #' @param data The data frame
 #' @param dpdict Optional data dictionary
-#' @param statistic$id The ID of the statistic being calculated
+#' @param statistic Statistic object (tab_stat) or NULL
 #' @return List of expanded variable specifications
 #' @keywords internal
 expand_variables <- function(var_spec, data, dpdict = NULL, statistic = NULL, values_var = NULL, label_mode = "smart", all_helpers = NULL) {
@@ -609,19 +609,80 @@ normalize_spec_expression <- function(spec) {
   return(spec)
 }
 
-#' Convert formula specification to numeric array
+# ---- Membership/universe arrays (m,u) -----------------------------------------
+#
+# tab_arrays is the internal representation for a specification:
+# - m: membership / contribution (typically 0/1 for categorical specs)
+# - u: universe / eligibility (0/1), defining who is in-base for denominators
+#
+# If u is not explicitly provided, infer u from missingness: u = !is.na(m_raw).
+#
+new_tab_arrays <- function(m_raw, u = NULL) {
+  if (is.logical(m_raw)) {
+    m_raw <- as.numeric(m_raw)
+  }
+  if (!is.numeric(m_raw)) {
+    stop("new_tab_arrays: m_raw must be numeric or logical")
+  }
+
+  if (is.null(u)) {
+    u <- !is.na(m_raw)
+  }
+  if (is.logical(u)) {
+    u <- as.numeric(u)
+  }
+  if (!is.numeric(u)) {
+    stop("new_tab_arrays: u must be numeric or logical")
+  }
+  if (length(u) != length(m_raw)) {
+    stop("new_tab_arrays: u must have the same length as m_raw")
+  }
+
+  # Universe is 0/1 with NA treated as 0
+  u[is.na(u)] <- 0
+  u <- as.numeric(u > 0)
+
+  # Membership has no NA and contributes 0 outside universe
+  m <- m_raw
+  m[is.na(m)] <- 0
+  m <- m * u
+
+  structure(list(m = m, u = u), class = "tab_arrays")
+}
+
+is_tab_arrays <- function(x) inherits(x, "tab_arrays")
+
+as_tab_arrays <- function(x, n_expected = NULL) {
+  if (is_tab_arrays(x)) {
+    if (!is.null(n_expected) && length(x$m) != n_expected) {
+      stop("tab_arrays length mismatch: expected ", n_expected, ", got ", length(x$m))
+    }
+    return(x)
+  }
+  if (!is.numeric(x)) {
+    stop("Expected numeric vector or tab_arrays")
+  }
+  if (!is.null(n_expected) && length(x) != n_expected) {
+    stop("Vector length mismatch: expected ", n_expected, ", got ", length(x))
+  }
+  new_tab_arrays(x)
+}
+
+#' Convert formula specification to (m,u) arrays
 #'
 #' @param formula_spec Parsed formula specification
 #' @param data Data frame
 #' @param dpdict Optional data dictionary for context
-#' @return Numeric vector of length nrow(data)
+#' @return A tab_arrays object (membership m and universe u), or a multi-column
+#'   list of tab_arrays when the spec expands into multiple arrays.
 #' @keywords internal
-formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL) {
+formula_to_arrays <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL) {
   
   n <- nrow(data)
 
-  # Start with identity array
-  result <- rep(1, n)
+  # Start with identity
+  result_m <- rep(1, n)
+  result_u <- rep(1, n)
 
   # Process based on type
   if (formula_spec$type == "simple") {
@@ -630,24 +691,25 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
     check_variables_exist(var_name, data,
                           paste0("expression '", formula_spec$label, "'"))
 
-    return(create_simple_array(data[[var_name]], var_name, formula_spec, dpdict))
+    m_raw <- create_simple_array(data[[var_name]], var_name, formula_spec, dpdict)
+    return(new_tab_arrays(m_raw))
 
   } else if (formula_spec$type == "multiplication") {
     # Apply each component multiplicatively
     for (comp in formula_spec$components) {
-      comp_array <- formula_to_array(comp, data, dpdict, all_helpers)
-      comp_array[is.na(comp_array)] <- 0
-      result <- result * comp_array
+      comp_arrays <- as_tab_arrays(formula_to_arrays(comp, data, dpdict, all_helpers), n_expected = n)
+      result_m <- result_m * comp_arrays$m
+      result_u <- result_u * comp_arrays$u
     }
-    result[is.na(result)] <- 0
+    arrays <- new_tab_arrays(result_m, result_u)
 
     # For multiplication, preserve meta from first component if available
     if (length(formula_spec$components) > 0) {
-      first_array <- formula_to_array(formula_spec$components[[1]], data, dpdict, all_helpers = all_helpers)
-      first_meta <- attr(first_array, "meta")
+      first_arrays <- as_tab_arrays(formula_to_arrays(formula_spec$components[[1]], data, dpdict, all_helpers = all_helpers), n_expected = n)
+      first_meta <- attr(first_arrays$m, "meta")
       if (!is.null(first_meta)) {
-        result <- set_array_meta(
-          result,
+        arrays$m <- set_array_meta(
+          arrays$m,
           dsl = first_meta$dsl,
           variables = first_meta$variables,
           tags = first_meta$tags,
@@ -655,7 +717,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
         )
       }
     }
-    return(result)
+    return(arrays)
 
   } else if (formula_spec$type == "expression") {
     # Extract variables referenced in the expression
@@ -677,7 +739,8 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
     if (!is.logical(expr_result) && !is.numeric(expr_result)) {
       stop("Expression must evaluate to logical or numeric")
     }
-    return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
+    m_raw <- create_expression_array(expr_result, formula_spec, expr_vars, dpdict)
+    return(new_tab_arrays(m_raw))
 
   } else if (formula_spec$type == "helper") {
       helper_result <- process_helper(formula_spec, data, dpdict, all_helpers)
@@ -685,9 +748,14 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
       # Check if it's a multi-column helper
       # Multi-column helpers should already have meta
       if (is.list(helper_result) && isTRUE(attr(helper_result, "is_multi_column"))) {
-        # For multi-column helpers, return the list directly
-        # The calling code will handle the expansion
-        return(helper_result)
+        # Wrap each returned array into tab_arrays
+        out <- helper_result
+        for (nm in names(out)) {
+          out[[nm]] <- as_tab_arrays(out[[nm]], n_expected = n)
+        }
+        attr(out, "is_multi_column") <- TRUE
+        attr(out, "helper_type") <- attr(helper_result, "helper_type") %||% formula_spec$helper_type
+        return(out)
       } else {
         # Single array helper - ensure it has meta
         if (is.null(attr(helper_result, "meta"))) {
@@ -699,7 +767,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
             label = formula_spec$label %||% formula_spec$helper_type
           )
         }
-        return(helper_result)
+        return(as_tab_arrays(helper_result, n_expected = n))
       }
   } else if (formula_spec$type == "numeric_expression") {
     # Evaluate numeric expressions in data context with numeric-only data
@@ -725,40 +793,44 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
       if (length(expr_result) != n) {
         stop("Expression must return vector of length ", n)
       }
-      return(create_expression_array(expr_result, formula_spec, expr_vars, dpdict))
+      m_raw <- create_expression_array(expr_result, formula_spec, expr_vars, dpdict)
+      return(new_tab_arrays(m_raw))
     }, error = function(e) {
       stop("Error evaluating expression '", formula_spec$label, "': ", e$message, call. = FALSE)
     })
 
   } else if (formula_spec$type == "subtraction") {
     # Handle subtraction
-    comp1_array <- formula_to_array(formula_spec$components[[1]], data, dpdict, all_helpers)
-    comp2_array <- formula_to_array(formula_spec$components[[2]], data, dpdict, all_helpers)
-    result <- result * (comp1_array - comp2_array)
+    comp1_arrays <- as_tab_arrays(formula_to_arrays(formula_spec$components[[1]], data, dpdict, all_helpers), n_expected = n)
+    comp2_arrays <- as_tab_arrays(formula_to_arrays(formula_spec$components[[2]], data, dpdict, all_helpers), n_expected = n)
+    result_m <- result_m * (comp1_arrays$m - comp2_arrays$m)
+    result_u <- result_u * comp1_arrays$u
+    arrays <- new_tab_arrays(result_m, result_u)
 
     # For subtraction, preserve meta from first component if available
-    first_meta <- attr(comp1_array, "meta")
+    first_meta <- attr(comp1_arrays$m, "meta")
     if (!is.null(first_meta)) {
-      result <- set_array_meta(
-        result,
+      arrays$m <- set_array_meta(
+        arrays$m,
         dsl = first_meta$dsl,
         variables = first_meta$variables,
         tags = first_meta$tags,
         label = formula_spec$label %||% first_meta$label
       )
     }
-    return(result)
+    return(arrays)
   } else if (formula_spec$type == "total") {
     # This represents "all data" - when no specific column is specified
     # Not a summary, just an array of 1s representing the full dataset
-    arr <- rep(1, n)
-    set_array_meta(
-      arr,
+    m_raw <- rep(1, n)
+    m_raw <- set_array_meta(
+      m_raw,
       dsl = quote(TRUE),
       variables = NULL,
       tags = list(type = "total"),
       label = formula_spec$label %||% "Total"
     )
+    return(new_tab_arrays(m_raw, rep(1, n)))
 
   } else if (formula_spec$type == "banner_intersection") {
     # Simple intersection: outer_var==outer_val AND inner_var==inner_val
@@ -780,11 +852,9 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
       label = formula_spec$label
     )
     
-    # KEY FOR BASE CALCULATION:
-    # Store the outer filter so base_calculator knows the true context
-    attr(result, "banner_filter") <- outer_match
-    
-    return(result)
+    # Banner columns are defined within an outer base context.
+    # Membership is the outer+inner intersection; universe is the outer context.
+    new_tab_arrays(result, as.numeric(outer_match))
 
   } else if (formula_spec$type == "banner_subtotal") {
     # Subtotal: all inner values for this outer value
@@ -801,11 +871,7 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
       label = formula_spec$label
     )
     
-    # KEY FOR BASE CALCULATION:
-    # Store the outer filter so base_calculator knows the true context
-    attr(result, "banner_filter") <- outer_match
-    
-    return(result)
+    new_tab_arrays(result, as.numeric(outer_match))
 
   } else if (formula_spec$type == "banner_filtered_helper") {
     # Nested helper: evaluate helper in context of outer filter
@@ -815,36 +881,30 @@ formula_to_array <- function(formula_spec, data, dpdict = NULL, all_helpers = NU
     # Parse and evaluate the inner helper
     # inner_spec is already an expression, don't enquo it
     inner_parsed <- parse_table_formula(formula_spec$inner_spec, data, dpdict, all_helpers)
-    inner_array <- formula_to_array(inner_parsed, data, dpdict, all_helpers)
+    inner_array <- formula_to_arrays(inner_parsed, data, dpdict, all_helpers)
     
     # Create intersection: both outer filter AND inner condition must be true
-    result <- inner_array * as.numeric(outer_match)
+    inner_arrays <- as_tab_arrays(inner_array, n_expected = n)
+    arrays <- new_tab_arrays(
+      inner_arrays$m * as.numeric(outer_match),
+      inner_arrays$u * as.numeric(outer_match)
+    )
     
     # Preserve metadata from inner array
-    inner_meta <- attr(inner_array, "meta")
-    result <- set_array_meta(
-      result,
+    inner_meta <- attr(inner_arrays$m, "meta")
+    arrays$m <- set_array_meta(
+      arrays$m,
       dsl = inner_meta$dsl,
       variables = inner_meta$variables %||% list(formula_spec$outer_var),
       tags = inner_meta$tags,
       label = formula_spec$label
     )
     
-    # NOTE: For nested helpers in banners, the base should be the intersection
-    # (outer filter AND inner condition), not just the outer filter.
-    # The intersection is already in 'result', so we DON'T set banner_filter.
-    # This allows the base calculator to use col_array (the intersection) directly.
-    
-    return(result)
+    return(arrays)
 
   } else {
     stop("Unknown formula type: ", formula_spec$type)
   }
-
-  # Handle NAs
-  result[is.na(result)] <- 0
-
-  return(result)
 }
 
 #' Process helper functions
@@ -971,13 +1031,34 @@ process_helper <- function(formula_spec, data, dpdict, all_helpers = NULL) {
   tryCatch({
     result <- helper_obj$processor(processed_spec, data, dpdict, all_helpers)
 
+    # Single-array helper can return tab_arrays directly (m,u).
+    if (inherits(result, "tab_arrays")) {
+      if (!is.numeric(result$m) || length(result$m) != nrow(data)) {
+        stop("Helper '", helper_type, "' returned invalid tab_arrays$m. Expected numeric vector of length ", nrow(data))
+      }
+      if (!is.numeric(result$u) || length(result$u) != nrow(data)) {
+        stop("Helper '", helper_type, "' returned invalid tab_arrays$u. Expected numeric vector of length ", nrow(data))
+      }
+      return(result)
+    }
+
     if (is.list(result) && !is.numeric(result)) {
       # Helper returned a list of arrays (multi-column helper)
-      # Validate each array in the list
+      # Validate each array (numeric vector or tab_arrays) in the list
       for (name in names(result)) {
-        if (!is.numeric(result[[name]]) || length(result[[name]]) != nrow(data)) {
+        item <- result[[name]]
+        if (inherits(item, "tab_arrays")) {
+          if (!is.numeric(item$m) || length(item$m) != nrow(data)) {
+            stop("Helper '", helper_type, "' returned invalid tab_arrays$m for '", name,
+                 "'. Expected numeric vector of length ", nrow(data))
+          }
+          if (!is.numeric(item$u) || length(item$u) != nrow(data)) {
+            stop("Helper '", helper_type, "' returned invalid tab_arrays$u for '", name,
+                 "'. Expected numeric vector of length ", nrow(data))
+          }
+        } else if (!is.numeric(item) || length(item) != nrow(data)) {
           stop("Helper '", helper_type, "' returned invalid result for '", name,
-               "'. Expected numeric vector of length ", nrow(data))
+               "'. Expected numeric vector of length ", nrow(data), " or tab_arrays.")
         }
       }
       # Return the list with helper metadata

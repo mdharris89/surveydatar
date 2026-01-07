@@ -6,6 +6,9 @@
 \usage{
 \method{names}{tab_result}(x)
 }
+\arguments{
+\item{x}{A tab_result object}
+}
 \description{
 Get column names from tab_result
 }

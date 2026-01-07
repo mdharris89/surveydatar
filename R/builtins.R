@@ -93,7 +93,7 @@ resolve_helper_target <- function(name_or_names, data, dpdict = NULL, error_cont
 #' @return Expression for use in tab()
 #' @export
 #' @examples
-#' tab(data, top_box(satisfaction, 2), gender)
+#' top_box(satisfaction, 2)
 top_box <- function(var, n = 1) {
   match.call()
 }
@@ -117,9 +117,26 @@ bottom_box <- function(var, n = 1) {
 #' @return Expression for use in tab() rows/cols/filter
 #' @export
 #' @examples
-#' tab(data, any_positive(c("q1_1", "q1_2", "q1_3")), gender)
-#' tab(data, any_positive("q1"), gender)  # if q1 is a question group
+#' any_positive(c("q1_1", "q1_2", "q1_3"))
+#' any_positive("q1")  # if q1 is a question group
 any_positive <- function(vars) {
+  match.call()
+}
+
+#' Apply an explicit universe (eligible base) to a row/column specification
+#'
+#' This helper lets you define statistics like “consideration among those aware”
+#' without encoding eligibility via NA patterns manually.
+#'
+#' @param x Row/column specification (variable, expression, or helper)
+#' @param universe Eligibility definition (logical/numeric expression)
+#' @return Expression for use in tab() rows/cols
+#' @export
+#' @examples
+#' \dontrun{
+#' tab(data, among(consider_a == 1, aware_a == 1), region)
+#' }
+among <- function(x, universe) {
   match.call()
 }
 
@@ -131,7 +148,7 @@ any_positive <- function(vars) {
 #' @return Expression for use in tab() rows/cols/filter
 #' @export
 #' @examples
-#' tab(data, total(), gender)
+#' total()
 total <- function() {
   match.call()
 }
@@ -155,13 +172,13 @@ total <- function() {
 #' @export
 #' @examples
 #' # Match by patterns
-#' tab(data, response_match(c("Daily", "Weekly"), "usage_group"), gender)
+#' response_match(c("Daily", "Weekly"), "usage_group")
 #'
 #' # Extract variable labels automatically
-#' tab(data, response_match(get_variable_labels = "q1"), gender)
+#' response_match(get_variable_labels = "q1")
 #'
 #' # Extract value labels automatically
-#' tab(data, response_match(get_value_labels = "q1"), gender)
+#' response_match(get_value_labels = "q1")
 response_match <- function(patterns = NULL, group_name = NULL, mode = "auto",
                            pattern_type = "regex", label_fn = NULL, values = NULL,
                            drop_empty = TRUE, get_variable_labels = NULL,
@@ -181,8 +198,8 @@ response_match <- function(patterns = NULL, group_name = NULL, mode = "auto",
 #' @return Expression for use in tab() rows/cols/filter
 #' @export
 #' @examples
-#' tab(data, value_range(age, 25, 45), gender)
-#' tab(data, value_range(income, 50000, 100000, inclusive = FALSE), region)
+#' value_range(age, 25, 45)
+#' value_range(income, 50000, 100000, inclusive = FALSE)
 value_range <- function(var, min_val, max_val, inclusive = TRUE) {
   match.call()
 }
@@ -198,8 +215,8 @@ value_range <- function(var, min_val, max_val, inclusive = TRUE) {
 #' @return Expression for use in tab() rows/cols/filter
 #' @export
 #' @examples
-#' tab(data, pattern(city, "New.*"), gender)
-#' tab(data, pattern(region, "North|South"), age_group)
+#' pattern(city, "New.*")
+#' pattern(region, "North|South")
 pattern <- function(var, pattern, ignore_case = FALSE) {
   match.call()
 }
@@ -215,8 +232,8 @@ pattern <- function(var, pattern, ignore_case = FALSE) {
 #' @return Expression for use in tab() rows/cols/filter
 #' @export
 #' @examples
-#' tab(data, percentile(income, "above", 75), gender)  # Top quartile
-#' tab(data, percentile(age, "below", 25), region)     # Bottom quartile
+#' percentile(income, "above", 75)  # Top quartile
+#' percentile(age, "below", 25)     # Bottom quartile
 percentile <- function(var, position, percentile) {
   match.call()
 }
@@ -235,14 +252,9 @@ percentile <- function(var, position, percentile) {
 #' @return Expression for use in tab() rows/cols (multi-column helper)
 #' @export
 #' @examples
-#' # Find all variables in group A1 with "Microsoft" in the label
-#' tab(data, all_matching("Microsoft", "A1"), gender)
-#'
-#' # Use regex pattern matching
-#' tab(data, all_matching("Google|Microsoft", "A1", pattern_type = "regex"), region)
-#'
-#' # Use glob pattern matching
-#' tab(data, all_matching("*Canva*", "A1", pattern_type = "glob"), age_group)
+#' all_matching("Microsoft", "A1")
+#' all_matching("Google|Microsoft", "A1", pattern_type = "regex")
+#' all_matching("*Canva*", "A1", pattern_type = "glob")
 all_matching <- function(pattern, group_name, pattern_type = "fixed",
                          label_mode = "full", drop_empty = TRUE) {
   match.call()
@@ -260,9 +272,9 @@ all_matching <- function(pattern, group_name, pattern_type = "fixed",
 #' @return Expression for use in tab() cols
 #' @export
 #' @examples
-#' tab(data, satisfaction, banner(region, gender))
-#' tab(data, q1, banner(region, top_box(satisfaction, 2)))
-#' tab(data, q1, banner(region, satisfaction, subtotals = TRUE))
+#' banner(region, gender)
+#' banner(region, top_box(satisfaction, 2))
+#' banner(region, satisfaction, subtotals = TRUE)
 banner <- function(outer_var, inner_spec, subtotals = FALSE, sep = ": ") {
   match.call()
 }
@@ -323,7 +335,7 @@ banner_spec_generator <- function(helper_spec, data, dpdict = NULL, all_helpers 
     inner_values <- sort(inner_values)
     inner_labels <- get_variable_labels(inner_var, inner_values, data, dpdict)
 
-    # Create spec for each outer × inner combination
+    # Create spec for each outer x inner combination
     for (i in seq_along(outer_values)) {
       outer_val <- outer_values[i]
       outer_label <- outer_labels[i]
@@ -514,45 +526,51 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     # SUMMARY CALCULATORS ------------------------------------------------
 
     calc_union <- function(arrays, base_array) {
-      combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) > 0, na.rm = TRUE)
+      m_mat <- do.call(cbind, lapply(arrays, `[[`, "m"))
+      u_mat <- do.call(cbind, lapply(arrays, `[[`, "u"))
+      m_out <- as.numeric(rowSums(m_mat) > 0)
+      u_out <- as.numeric(rowSums(u_mat) > 0)
+      new_tab_arrays(m_out, u_out)
     }
 
     calc_not_union <- function(arrays, base_array) {
-      combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) == 0, na.rm = TRUE)
+      m_mat <- do.call(cbind, lapply(arrays, `[[`, "m"))
+      u_mat <- do.call(cbind, lapply(arrays, `[[`, "u"))
+      u_out <- as.numeric(rowSums(u_mat) > 0)
+      m_out <- as.numeric(rowSums(m_mat) == 0) * u_out
+      new_tab_arrays(m_out, u_out)
     }
 
     calc_intersection <- function(arrays, base_array) {
-      combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) == ncol(combined_matrix), na.rm = TRUE)
+      m_mat <- do.call(cbind, lapply(arrays, `[[`, "m"))
+      u_mat <- do.call(cbind, lapply(arrays, `[[`, "u"))
+      u_out <- as.numeric(rowSums(u_mat) == ncol(u_mat))
+      m_out <- as.numeric(rowSums(m_mat) == ncol(m_mat)) * u_out
+      new_tab_arrays(m_out, u_out)
     }
 
     # STATISTICS --------------------------------------------------------
 
     # Column percentage
-    stat_column_pct <- function(base_array, row_array, col_array, ...) {
+    stat_column_pct <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      # Create mask to propagate NAs from row_array to denominator
-      # This ensures column total only counts respondents who answered this variable
-      row_mask <- ifelse(is.na(row_array), NA, 1)
-      column_snapshot <- base_array * col_array * row_mask
-      final_array <- column_snapshot * row_array
-
-      column_total <- sum(column_snapshot, na.rm = TRUE)
-      if (is.na(column_total) || column_total == 0) return(NA_real_)
-      sum(final_array, na.rm = TRUE) / column_total * 100
+      numerator <- sum(base_array * row_m * col_m, na.rm = TRUE)
+      denominator <- sum(base_array * col_m * row_u, na.rm = TRUE)
+      if (is.na(denominator) || denominator == 0) return(NA_real_)
+      numerator / denominator * 100
     }
 
-    stat_column_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
-      # For grid questions, each row needs its own column total based on its NA pattern
-      row_mask_matrix <- ifelse(is.na(row_matrix), NA, 1)
-      col_totals_per_row <- t(row_mask_matrix * base_array) %*% col_matrix
+    stat_column_pct_vectorized <- function(base_array, row_matrix, col_matrix, row_u_matrix = NULL, ...) {
+      # For grid questions, each row needs its own column total based on its universe mask
+      if (is.null(row_u_matrix)) {
+        row_u_matrix <- ifelse(is.na(row_matrix), NA, 1)
+      }
+      col_totals_per_row <- t(row_u_matrix * base_array) %*% col_matrix
       
       # Compute cell counts
       cell_counts <- t(row_matrix * base_array) %*% col_matrix
@@ -576,22 +594,17 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Row percentage
-    stat_row_pct <- function(base_array, row_array, col_array, ...) {
+    stat_row_pct <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      # Create mask to propagate NAs from col_array to denominator
-      # This ensures row total only counts columns where this variable was answered
-      col_mask <- ifelse(is.na(col_array), NA, 1)
-      row_snapshot <- base_array * row_array * col_mask
-      final_array <- row_snapshot * col_array
-
-      row_total <- sum(row_snapshot, na.rm = TRUE)
-      if (is.na(row_total) || row_total == 0) return(NA_real_)
-      sum(final_array, na.rm = TRUE) / row_total * 100
+      numerator <- sum(base_array * row_m * col_m, na.rm = TRUE)
+      denominator <- sum(base_array * row_m * col_u, na.rm = TRUE)
+      if (is.na(denominator) || denominator == 0) return(NA_real_)
+      numerator / denominator * 100
     }
     stat_row_pct_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
       # For grid questions, each column needs its own row total based on its NA pattern
@@ -619,14 +632,14 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Count
-    stat_count <- function(base_array, row_array, col_array, ...) {
+    stat_count <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      sum(base_array * row_array * col_array, na.rm = TRUE)
+      sum(base_array * row_m * col_m, na.rm = TRUE)
     }
     stat_count_vectorized <- function(base_array, row_matrix, col_matrix, ...) {
       t(row_matrix * base_array) %*% col_matrix
@@ -643,14 +656,14 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Mean (requires values parameter)
-    stat_mean <- function(base_array, row_array, col_array, values = NULL, ...) {
+    stat_mean <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      final_array <- base_array * row_array * col_array
+      final_array <- base_array * row_m * col_m
 
       if (is.null(values)) {
         stop("Mean statistic requires 'values' parameter")
@@ -677,10 +690,10 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Median
-    stat_median <- function(base_array, row_array, col_array, values = NULL, ...) {
+    stat_median <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
@@ -688,7 +701,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         stop("Median statistic requires 'values' parameter")
       }
 
-      final_array <- base_array * row_array * col_array
+      final_array <- base_array * row_m * col_m
       valid_mask <- !is.na(values)
       final_array_valid <- final_array * valid_mask
 
@@ -710,10 +723,10 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Standard Deviation
-    stat_sd <- function(base_array, row_array, col_array, values = NULL, ...) {
+    stat_sd <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
@@ -721,7 +734,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         stop("Standard deviation statistic requires 'values' parameter")
       }
 
-      final_array <- base_array * row_array * col_array
+      final_array <- base_array * row_m * col_m
       valid_mask <- !is.na(values)
       final_array_valid <- final_array * valid_mask
 
@@ -743,10 +756,10 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Coefficient of Variation (CV)
-    stat_cv <- function(base_array, row_array, col_array, values = NULL, ...) {
+    stat_cv <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
@@ -754,7 +767,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         stop("Coefficient of variation statistic requires 'values' parameter")
       }
 
-      final_array <- base_array * row_array * col_array
+      final_array <- base_array * row_m * col_m
       valid_mask <- !is.na(values)
       final_array_valid <- final_array * valid_mask
 
@@ -781,31 +794,22 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Index (relative to total column)
-    stat_index <- function(base_array, row_array, col_array, ...) {
+    stat_index <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
-      # Calculate cell percentage
-      # Apply row_mask to ensure column total only counts respondents who answered this variable
-      row_mask <- ifelse(is.na(row_array), NA, 1)
-      column_snapshot <- base_array * col_array * row_mask
-      final_array <- column_snapshot * row_array
-
-      column_total <- sum(column_snapshot, na.rm = TRUE)
-      if (is.na(column_total) || column_total == 0) return(NA_real_)
-      cell_pct <- sum(final_array, na.rm = TRUE) / column_total * 100
+      numerator <- sum(base_array * row_m * col_m, na.rm = TRUE)
+      denominator <- sum(base_array * col_m * row_u, na.rm = TRUE)
+      if (is.na(denominator) || denominator == 0) return(NA_real_)
+      cell_pct <- numerator / denominator * 100
 
       # Calculate total percentage (all columns)
-      # Apply row_mask to ensure total only counts respondents who answered this variable
-      total_snapshot <- base_array * row_mask
-      total_for_row <- total_snapshot * row_array
-
-      total_n <- sum(total_snapshot, na.rm = TRUE)
+      total_n <- sum(base_array * row_u, na.rm = TRUE)
       if (is.na(total_n) || total_n == 0) return(NA_real_)
-      total_pct <- sum(total_for_row, na.rm = TRUE) / total_n * 100
+      total_pct <- sum(base_array * row_m, na.rm = TRUE) / total_n * 100
 
       # Index = (cell % / total %) * 100
       if (is.na(total_pct) || total_pct == 0) return(NA_real_)
@@ -823,10 +827,10 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Percentile
-    stat_percentile <- function(base_array, row_array, col_array, values = NULL, percentile = 50, ...) {
+    stat_percentile <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, percentile = 50, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "categorical" || get_variable_array_type(col_array) != "categorical") {
+      if (get_variable_array_type(row_m) != "categorical" || get_variable_array_type(col_m) != "categorical") {
         warning("statistic did not receive expected categorical row and column arrays (0/1 values)")
       }
 
@@ -834,7 +838,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         stop("Percentile statistic requires 'values' parameter")
       }
 
-      final_array <- base_array * row_array * col_array
+      final_array <- base_array * row_m * col_m
       valid_mask <- !is.na(values)
       final_array_valid <- final_array * valid_mask
 
@@ -867,24 +871,24 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     )
 
     # Correlation
-    stat_correlation <- function(base_array, row_array, col_array, ...) {
+    stat_correlation <- function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
 
       # Validate array types
-      if (get_variable_array_type(row_array) != "numeric" || get_variable_array_type(col_array) != "numeric") {
+      if (get_variable_array_type(row_m) != "numeric" || get_variable_array_type(col_m) != "numeric") {
         warning("statistic did not receive expected numeric row and column arrays")
       }
 
-      # Filter both arrays by base_array
-      valid_mask <- !is.na(base_array) & base_array > 0
-      x <- row_array[valid_mask]
-      y <- col_array[valid_mask]
+      # Valid pairs: in table base and valid for both variables
+      valid_mask <- !is.na(base_array) & base_array > 0 & row_u > 0 & col_u > 0
+      x <- row_m[valid_mask]
+      y <- col_m[valid_mask]
 
       # Calculate Pearson correlation
       if (length(x) < 2) return(NA_real_)
       cor(x, y, use = "complete.obs")
     }
     create_statistic("correlation", stat_correlation,
-                     base_calculator = base_cell_count,
+                     base_calculator = base_pair_total,
                      summary_row = NULL,
                      summary_col = NULL,
                      format_fn = function(x) sprintf("%.3f", x),
@@ -1161,7 +1165,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
       stopifnot(!is.null(dpdict))
 
-      # ── 0. unpack helper arguments --------------------------------------------
+      # -- 0. unpack helper arguments --------------------------------------------
       patterns      <- formula_spec$components[[1]]
       group_name    <- formula_spec$components[[2]]
       if (is.symbol(group_name)) group_name <- as.character(group_name)
@@ -1190,7 +1194,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         stop("response_match: supply only one of `patterns`, `values`, `get_variable_labels`, or `get_value_labels`.")
       }
 
-      # ── 1. resolve group variables -------------------------------------------
+      # -- 1. resolve group variables -------------------------------------------
       group_vars <- resolve_to_variables(group_name, data, dpdict,
                                          allow_patterns = TRUE,
                                          error_context  = "question-group")
@@ -1210,7 +1214,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
       get_var_lab <- function(v) dpdict$variable_labels[dpdict$variable_names == v]
 
-      #  ── 1.5: Extract labels if requested ---------------------------------
+      # -- 1.5: Extract labels if requested ---------------------------------
       if (!is.null(get_variable_labels)) {
         # Extract variable labels
         if (is.character(get_variable_labels) && length(get_variable_labels) == 1) {
@@ -1306,7 +1310,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         mode <- "value"
       }
 
-      # ── 2. Build target list ---------------------------------------------------
+      # -- 2. Build target list ---------------------------------------------------
       if (!is.null(values_map)) {                # CODE-AGGREGATION MODE
         if (is.null(names(values_map)))
           names(values_map) <- as.character(seq_along(values_map))
@@ -1314,7 +1318,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         detected_mode <- "value"
 
       } else {                                   # PATTERN MODE
-        # normalise patterns → named list
+        # normalise patterns -> named list
         if (is.character(patterns))
           patterns <- as.list(patterns)
         if (is.null(names(patterns)))
@@ -1343,14 +1347,14 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         if (mode == "auto") {
           if (all(hits_var)  && !any(hits_val)) detected_mode <- "variable"
           else if (all(hits_val) && !any(hits_var)) detected_mode <- "value"
-          else stop("response_match: mixed variable/value patterns – ",
+          else stop("response_match: mixed variable/value patterns - ",
                     "specify `mode=\"variable\"` or `mode=\"value\"`.")
         } else detected_mode <- match.arg(mode, c("variable","value"))
 
         targets <- patterns
       }
 
-      # ── 3. Generate arrays -----------------------------------------------------
+      # -- 3. Generate arrays -----------------------------------------------------
       out <- list()
       n_generated <- 0
 
@@ -1491,7 +1495,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         }
       }
 
-      # ── 4. Empty-pattern handling --------------------------------------------
+      # -- 4. Empty-pattern handling --------------------------------------------
       if (n_generated == 0) {
         msg <- "response_match produced no matching arrays."
         if (drop_empty) {
@@ -1577,6 +1581,77 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
     }
     create_helper("any_positive", help_any_positive)
 
+    # among() helper - attach explicit universe to a spec (m,u)
+    help_among <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
+      m_input <- formula_spec$components[[1]]
+      u_input <- formula_spec$components[[2]]
+      
+      # Normalize universe to 0/1 numeric, NA -> 0
+      u_num <- u_input
+      if (is.logical(u_num)) u_num <- as.numeric(u_num)
+      if (!is.numeric(u_num)) {
+        stop("among(): universe must evaluate to logical or numeric vector")
+      }
+      if (length(u_num) != nrow(data)) {
+        stop("among(): universe must have length nrow(data)")
+      }
+      u_num[is.na(u_num)] <- 0
+      u_num <- as.numeric(u_num > 0)
+      
+      # Helper arg can be multi-column (list) or single vector/tab_arrays
+      if (is.list(m_input) && isTRUE(attr(m_input, "is_multi_column"))) {
+        out <- m_input
+        for (nm in names(out)) {
+          one <- out[[nm]]
+          # Convert numeric -> tab_arrays, preserve any meta already on numeric arrays
+          if (inherits(one, "tab_arrays")) {
+            m_raw <- one$m
+            u_raw <- one$u
+            u_final <- u_raw * u_num
+            out[[nm]] <- structure(list(m = m_raw * u_final, u = u_final), class = "tab_arrays")
+          } else {
+            m_raw <- one
+            if (is.logical(m_raw)) m_raw <- as.numeric(m_raw)
+            if (!is.numeric(m_raw) || length(m_raw) != nrow(data)) {
+              stop("among(): x must evaluate to numeric/logical vectors of length nrow(data)")
+            }
+            u_x <- as.numeric(!is.na(m_raw))
+            u_final <- u_x * u_num
+            m <- m_raw
+            m[is.na(m)] <- 0
+            m <- m * u_final
+            out[[nm]] <- structure(list(m = m, u = u_final), class = "tab_arrays")
+          }
+        }
+        attr(out, "is_multi_column") <- TRUE
+        return(out)
+      }
+      
+      # Single spec
+      if (inherits(m_input, "tab_arrays")) {
+        u_final <- m_input$u * u_num
+        return(structure(list(m = m_input$m * u_final, u = u_final), class = "tab_arrays"))
+      }
+      
+      m_raw <- m_input
+      if (is.logical(m_raw)) m_raw <- as.numeric(m_raw)
+      if (!is.numeric(m_raw)) {
+        stop("among(): x must evaluate to logical or numeric vector")
+      }
+      if (length(m_raw) != nrow(data)) {
+        stop("among(): x must have length nrow(data)")
+      }
+      
+      u_x <- as.numeric(!is.na(m_raw))
+      u_final <- u_x * u_num
+      m <- m_raw
+      m[is.na(m)] <- 0
+      m <- m * u_final
+      
+      structure(list(m = m, u = u_final), class = "tab_arrays")
+    }
+    create_helper("among", help_among)
+
     help_total <- function(formula_spec, data, dpdict = NULL, all_helpers = NULL, ...) {
       # Return an array of 1s for all respondents
       result <- rep(1, nrow(data))
@@ -1597,7 +1672,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
 
       stopifnot(!is.null(dpdict))
 
-      # ── 0. unpack helper arguments --------------------------------------------
+      # -- 0. unpack helper arguments --------------------------------------------
       patterns      <- formula_spec$components[[1]]
       group_name    <- formula_spec$components[[2]]
       if (is.symbol(group_name)) group_name <- as.character(group_name)
@@ -1612,7 +1687,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         stop("all_matching: pattern must be a single character string")
       }
 
-      # ── 1. resolve group variables -------------------------------------------
+      # -- 1. resolve group variables -------------------------------------------
       group_vars <- resolve_to_variables(group_name, data, dpdict,
                                          allow_patterns = TRUE,
                                          error_context  = "question-group")
@@ -1633,7 +1708,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         return(label)
       }
 
-      # ── 2. find matching variables -------------------------------------------
+      # -- 2. find matching variables -------------------------------------------
       matching_vars <- character(0)
 
       for (v in group_vars) {
@@ -1659,7 +1734,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         }
       }
 
-      # ── 3. create individual arrays for each matching variable ---------------
+      # -- 3. create individual arrays for each matching variable ---------------
       out <- list()
 
       for (v in matching_vars) {
@@ -1726,12 +1801,14 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       id = "z_test_proportions",
       name = "Z-test for proportions",
       description = "Two-sample z-test for comparing proportions",
-      processor = function(base_array, row_array, col_array_1, col_array_2, ...) {
+      processor = function(base_array, row_m, row_u, col_m_1, col_u_1, col_m_2, col_u_2,
+                           values = NULL, ...) {
+
         # Get counts and totals
-        n1 <- sum(base_array * row_array * col_array_1, na.rm = TRUE)
-        n2 <- sum(base_array * row_array * col_array_2, na.rm = TRUE)
-        N1 <- sum(base_array * col_array_1, na.rm = TRUE)
-        N2 <- sum(base_array * col_array_2, na.rm = TRUE)
+        n1 <- sum(base_array * row_m * col_m_1, na.rm = TRUE)
+        n2 <- sum(base_array * row_m * col_m_2, na.rm = TRUE)
+        N1 <- sum(base_array * col_m_1 * row_u, na.rm = TRUE)
+        N2 <- sum(base_array * col_m_2 * row_u, na.rm = TRUE)
 
         if (N1 == 0 || N2 == 0) {
           return(list(p_value = NA_real_, statistic = NA_real_))
@@ -1759,6 +1836,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         return(list(
           p_value = p_value,
           statistic = z,
+          effect = p2 - p1,
           method = "Two-sample z-test for proportions"
         ))
       }
@@ -1769,14 +1847,16 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       id = "z_test_weighted",
       name = "Weighted Z-test for proportions",
       description = "Two-sample z-test for weighted proportions using effective sample sizes",
-      processor = function(base_array, row_array, col_array_1, col_array_2, ...) {
+      processor = function(base_array, row_m, row_u, col_m_1, col_u_1, col_m_2, col_u_2,
+                           values = NULL, ...) {
+
         # Weighted counts (numerators)
-        n1 <- sum(base_array * row_array * col_array_1, na.rm = TRUE)
-        n2 <- sum(base_array * row_array * col_array_2, na.rm = TRUE)
+        n1 <- sum(base_array * row_m * col_m_1, na.rm = TRUE)
+        n2 <- sum(base_array * row_m * col_m_2, na.rm = TRUE)
 
         # Weighted totals (denominators)
-        N1 <- sum(base_array * col_array_1, na.rm = TRUE)
-        N2 <- sum(base_array * col_array_2, na.rm = TRUE)
+        N1 <- sum(base_array * col_m_1 * row_u, na.rm = TRUE)
+        N2 <- sum(base_array * col_m_2 * row_u, na.rm = TRUE)
 
         if (N1 == 0 || N2 == 0) {
           return(list(p_value = NA_real_, statistic = NA_real_))
@@ -1787,8 +1867,8 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         p2 <- n2 / N2
 
         # Get weights for each column (only for observations in that column)
-        idx_1 <- col_array_1 > 0
-        idx_2 <- col_array_2 > 0
+        idx_1 <- col_m_1 > 0 & row_u > 0
+        idx_2 <- col_m_2 > 0 & row_u > 0
 
         w1 <- base_array[idx_1]
         w2 <- base_array[idx_2]
@@ -1832,6 +1912,7 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
         return(list(
           p_value = p_value,
           statistic = z,
+          effect = p2 - p1,
           method = "Weighted two-sample z-test for proportions",
           effective_n1 = round(n1_eff, 1),
           effective_n2 = round(n2_eff, 1)
@@ -1844,10 +1925,11 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       id = "t_test",
       name = "T-test",
       description = "Two-sample t-test for comparing means",
-      processor = function(base_array, row_array, col_array_1, col_array_2, values, ...) {
+      processor = function(base_array, row_m, row_u, col_m_1, col_u_1, col_m_2, col_u_2,
+                           values, ...) {
         # Get values for both groups
-        group1_mask <- base_array * row_array * col_array_1 > 0
-        group2_mask <- base_array * row_array * col_array_2 > 0
+        group1_mask <- base_array * row_m * col_m_1 > 0
+        group2_mask <- base_array * row_m * col_m_2 > 0
 
         values1 <- values[group1_mask]
         values2 <- values[group2_mask]
@@ -1876,14 +1958,15 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       id = "t_test_weighted",
       name = "Weighted T-test",
       description = "Two-sample t-test for weighted means using effective sample sizes",
-      processor = function(base_array, row_array, col_array_1, col_array_2, values, ...) {
+      processor = function(base_array, row_m, row_u, col_m_1, col_u_1, col_m_2, col_u_2,
+                           values, ...) {
         if (is.null(values)) {
           stop("Weighted t-test requires 'values' parameter")
         }
 
         # Get weighted values for both groups
-        group1_mask <- base_array * row_array * col_array_1 > 0
-        group2_mask <- base_array * row_array * col_array_2 > 0
+        group1_mask <- base_array * row_m * col_m_1 > 0
+        group2_mask <- base_array * row_m * col_m_2 > 0
 
         values1 <- values[group1_mask]
         values2 <- values[group2_mask]
@@ -1969,7 +2052,8 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       name = "Chi-square test",
       description = "Chi-square test of independence",
       is_omnibus = TRUE,
-      processor = function(base_array, row_arrays, col_arrays, ...) {
+      processor = function(base_array, row_arrays, row_u_arrays, col_arrays, col_u_arrays,
+                           values = NULL, ...) {
         # Build contingency table
         n_rows <- length(row_arrays)
         n_cols <- length(col_arrays)
@@ -2001,10 +2085,11 @@ get_variable_labels <- function(var_name, values, data, dpdict) {
       id = "mann_whitney",
       name = "Mann-Whitney U test",
       description = "Non-parametric test for comparing distributions",
-      processor = function(base_array, row_array, col_array_1, col_array_2, values, ...) {
+      processor = function(base_array, row_m, row_u, col_m_1, col_u_1, col_m_2, col_u_2,
+                           values, ...) {
         # Get values for both groups
-        group1_mask <- base_array * row_array * col_array_1 > 0
-        group2_mask <- base_array * row_array * col_array_2 > 0
+        group1_mask <- base_array * row_m * col_m_1 > 0
+        group2_mask <- base_array * row_m * col_m_2 > 0
 
         values1 <- values[group1_mask]
         values2 <- values[group2_mask]

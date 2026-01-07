@@ -11,7 +11,7 @@ standardise_survey_separators(temp_dat, temp_dpdict = NULL, seps_to_use = NULL)
 
 \item{temp_dpdict}{Optional. The associated dpdict.}
 
-\item{seps}{Optional. A list specifying the separators to use. If NULL, current patterns detected in the data will be used.}
+\item{seps_to_use}{Optional. A list specifying the separators to use. If NULL, current patterns detected in the data will be used.}
 }
 \value{
 A list with dat and dpdict, both with standardised variable names

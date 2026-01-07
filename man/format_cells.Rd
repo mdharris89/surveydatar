@@ -24,8 +24,8 @@ Modified tab_result with updated formatting metadata
 Controls how all cells are formatted for display.
 }
 \examples{
-\dontrun{
-result <- tab(data, satisfaction, gender) \%>\%
+# Format cells in tab results
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor) \%>\%
   format_cells(digits = 1, empty_zeros = TRUE)
-}
 }

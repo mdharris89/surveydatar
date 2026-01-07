@@ -15,7 +15,8 @@ add_sig_all(
 \arguments{
 \item{tab_result}{A tab_result object from tab()}
 
-\item{test}{Test to use for all comparisons}
+\item{test}{Test to use for all comparisons (see \code{add_sig()} for \code{"auto"}
+behavior and limitations)}
 
 \item{level}{Significance level}
 

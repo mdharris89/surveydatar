@@ -32,12 +32,7 @@ and returns each as a separate row. Unlike response_match which aggregates
 matches, this returns individual variables that match the pattern.
 }
 \examples{
-# Find all variables in group A1 with "Microsoft" in the label
-tab(data, all_matching("Microsoft", "A1"), gender)
-
-# Use regex pattern matching
-tab(data, all_matching("Google|Microsoft", "A1", pattern_type = "regex"), region)
-
-# Use glob pattern matching
-tab(data, all_matching("*Canva*", "A1", pattern_type = "glob"), age_group)
+all_matching("Microsoft", "A1")
+all_matching("Google|Microsoft", "A1", pattern_type = "regex")
+all_matching("*Canva*", "A1", pattern_type = "glob")
 }

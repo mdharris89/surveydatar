@@ -6,6 +6,9 @@
 \usage{
 \method{dimnames}{tab_result}(x)
 }
+\arguments{
+\item{x}{A tab_result object}
+}
 \description{
 Get dimension names (row and column names) of tab_result
 }

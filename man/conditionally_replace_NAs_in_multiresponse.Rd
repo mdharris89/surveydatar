@@ -51,8 +51,8 @@ dat <- data.frame(
   Q1_1 = sjlabelled::set_labels(c(1, NA, NA, 1), labels = c("Yes" = 1)),
   Q1_2 = sjlabelled::set_labels(c(NA, 1, NA, NA), labels = c("Yes" = 1)),
   Q1_3 = sjlabelled::set_labels(c(NA, NA, 1, NA), labels = c("Yes" = 1)),
-  Q2_1 = sjlabelled::set_labels(c(NA, NA, NA, NA)),
-  Q2_2 = sjlabelled::set_labels(c(NA, NA, NA, NA))
+  Q2_1 = sjlabelled::set_labels(c(NA, NA, NA, NA), labels = c("Yes" = 1)),
+  Q2_2 = sjlabelled::set_labels(c(NA, NA, NA, NA), labels = c("Yes" = 1))
 )
 
 # Create dpdict

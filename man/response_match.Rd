@@ -45,11 +45,11 @@ one array for each pattern match.
 }
 \examples{
 # Match by patterns
-tab(data, response_match(c("Daily", "Weekly"), "usage_group"), gender)
+response_match(c("Daily", "Weekly"), "usage_group")
 
 # Extract variable labels automatically
-tab(data, response_match(get_variable_labels = "q1"), gender)
+response_match(get_variable_labels = "q1")
 
 # Extract value labels automatically
-tab(data, response_match(get_value_labels = "q1"), gender)
+response_match(get_value_labels = "q1")
 }

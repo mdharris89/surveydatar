@@ -20,8 +20,8 @@ A derive specification object
 Adds a new column showing the difference between two existing columns.
 }
 \examples{
-\dontrun{
-result <- tab(data, satisfaction, gender) \%>\%
-  derive(delta_vs("Male", "Female"))
-}
+# Basic usage with test data
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor) \%>\%
+  derive(delta_vs("Yes", "No"))
 }

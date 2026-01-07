@@ -2,7 +2,7 @@
 #'
 #' @description
 #' Creates a configuration object for the weighting system that defines
-#' column names, constraint type patterns, and backward compatibility mappings.
+#' column names, constraint type patterns, and optional legacy mappings.
 #' This allows the weighting functions to work with any dataset structure
 #' without hardcoding specific column names.
 #'
@@ -14,9 +14,8 @@
 #' @param demo_var_mapping Named list mapping friendly names to actual column names.
 #'   Example: list(Gender = "SC1", Age = "SC2merged").
 #'   Creates alias columns for easier constraint specification.
-#' @param legacy_mappings Named list of automatic column renamings for backward compatibility.
-#'   Default: list(QCOUNTRY = "Country") converts QCOUNTRY to Country automatically.
-#'   Set to NULL to disable legacy mappings.
+#' @param legacy_mappings Named list of automatic column renamings.
+#'   Default: list(QCOUNTRY = "Country").
 #' @param constraint_patterns Named list of regex patterns for identifying constraint types.
 #'   Used for diagnostic reporting and constraint categorization.
 #'   Default: list(sum = "^Sum:|^Total:", occasion = "^Occ:", demo = "^Demo:")
@@ -45,8 +44,8 @@
 #'   )
 #' )
 #'
-#' # Disable legacy mappings
-#' config <- create_weighting_config(legacy_mappings = NULL)
+#' # Apply custom legacy mappings
+#' config <- create_weighting_config(legacy_mappings = list(QMARKET = "market"))
 #'
 #' # Use in weighting
 #' result <- run_unified_weighting(
@@ -134,7 +133,7 @@ print.weighting_config <- function(x, ...) {
   }
   
   if (!is.null(x$legacy_mappings) && length(x$legacy_mappings) > 0) {
-    cat("\nLegacy Mappings (backward compatibility):\n")
+    cat("\nLegacy Mappings:\n")
     for (name in names(x$legacy_mappings)) {
       cat(sprintf("  %s -> %s\n", name, x$legacy_mappings[[name]]))
     }

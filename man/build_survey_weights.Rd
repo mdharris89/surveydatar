@@ -32,6 +32,8 @@ build_survey_weights(
 \item{solver}{CVXR solver ("OSQP", "SCS", "ECOS")}
 
 \item{verbose}{Print optimization progress}
+
+\item{config}{Optional weighting configuration (reserved for future use)}
 }
 \value{
 Data frame with weights and diagnostics

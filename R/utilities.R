@@ -287,7 +287,7 @@ extract_suffix_from_label <- function(label, dpdict = NULL, data = NULL) {
 #' @return List for use in tab()
 #' @export
 #' @examples
-#' tab(data, rows = rows_list("Total" = q1, "Young" = q1 * (age < 30)))
+#' rows_list("Total" = q1, "Young" = q1 * (age < 30))
 rows_list <- function(...) {
   dots <- rlang::enquos(...)
   if (length(dots) == 0) {
@@ -303,7 +303,7 @@ rows_list <- function(...) {
 #' @return List for use in tab()
 #' @export
 #' @examples
-#' tab(data, gender, cols = cols_list("Total" = q1, "Young" = q1 * (age < 30)))
+#' cols_list("Total" = q1, "Young" = q1 * (age < 30))
 cols_list <- function(...) {
   dots <- rlang::enquos(...)
   if (length(dots) == 0) {

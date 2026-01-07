@@ -21,6 +21,6 @@ Creates a binary indicator for respondents above or below a specified
 percentile threshold.
 }
 \examples{
-tab(data, percentile(income, "above", 75), gender)  # Top quartile
-tab(data, percentile(age, "below", 25), region)     # Bottom quartile
+percentile(income, "above", 75)  # Top quartile
+percentile(age, "below", 25)     # Bottom quartile
 }

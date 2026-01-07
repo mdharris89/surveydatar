@@ -1,3 +1,22 @@
+---
+title: "Creating Cross-Tabulations with surveydatar::tab()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Creating Cross-Tabulations with surveydatar::tab()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = TRUE
+)
+library(surveydatar)
+library(dplyr)
+```
+
 # Creating Cross-Tabulations with surveydatar::tab()
 
 ## Introduction
@@ -218,6 +237,67 @@ tab(survey_data, gender, region,
     statistic = "mean", values = "income")
 ```
 
+### Brand questions: skip-logic vs. awareness-based bases
+
+In market research, brand questions are often only asked to respondents who are aware of a brand. In SPSS exports this is commonly represented as:
+
+- **`NA`**: respondent was *not asked* about the brand
+- **`0`**: respondent was asked but did *not* select the brand
+- **`1`**: respondent was asked and *did* select the brand
+
+For `statistic = "column_pct"`, `tab()` treats **eligibility (base)** and **membership (numerator)** separately:
+
+- **Membership (m)**: who meets the row condition (e.g., “considered Brand A”)
+- **Universe (u)**: who is eligible to be counted in the denominator (e.g., “aware of Brand A”)
+
+By default, `tab()` infers eligibility from missingness: if a row expression yields `NA` for a respondent, they are treated as *not eligible* for that row’s base.
+
+Sometimes, though, respondents are asked about *all* brands, and you want to compute consideration/perception **among those aware** at analysis time. You can do this in a single `tab()` call using `among(x, universe)`, which attaches an explicit universe to the row definition.
+
+```{r brand_skip_logic_vs_awareness_base}
+set.seed(1)
+n <- 300
+
+brand_data <- data.frame(
+  region = factor(sample(c("North", "South", "East", "West"), n, replace = TRUE)),
+  aware_a = rbinom(n, 1, 0.70),
+  aware_b = rbinom(n, 1, 0.55),
+  aware_c = rbinom(n, 1, 0.35)
+)
+
+# Scenario 1: asked only if aware (NA = not asked)
+brand_data$consider_a_skip <- ifelse(brand_data$aware_a == 1, rbinom(n, 1, 0.40), NA_integer_)
+brand_data$consider_b_skip <- ifelse(brand_data$aware_b == 1, rbinom(n, 1, 0.30), NA_integer_)
+brand_data$consider_c_skip <- ifelse(brand_data$aware_c == 1, rbinom(n, 1, 0.25), NA_integer_)
+
+tab(
+  create_survey_data(brand_data),
+  rows = rows_list(
+    "Brand A (asked-if-aware)" = consider_a_skip == 1,
+    "Brand B (asked-if-aware)" = consider_b_skip == 1,
+    "Brand C (asked-if-aware)" = consider_c_skip == 1
+  ),
+  cols = region,
+  statistic = "column_pct"
+)
+
+# Scenario 2: asked everyone (0/1 for all), but base should be "aware of the brand"
+brand_data$consider_a_all <- rbinom(n, 1, 0.40)
+brand_data$consider_b_all <- rbinom(n, 1, 0.30)
+brand_data$consider_c_all <- rbinom(n, 1, 0.25)
+
+tab(
+  create_survey_data(brand_data),
+  rows = rows_list(
+    "Brand A (among aware)" = among(consider_a_all == 1, aware_a == 1),
+    "Brand B (among aware)" = among(consider_b_all == 1, aware_b == 1),
+    "Brand C (among aware)" = among(consider_c_all == 1, aware_c == 1)
+  ),
+  cols = region,
+  statistic = "column_pct"
+)
+```
+
 ## Question Groups and Expansion
 
 ### Automatic Variable Expansion
@@ -408,10 +488,21 @@ When tab() calculates a cell value, it:
 1.  Creates three parallel arrays, each with one element per respondent:
 
 -   base_array: Contains weights (or 1s) for respondents included after filters
--   row_array: Typically contains 1 if that respondent matches the row condition, 0 otherwise
--   col_array: Typically contains 1 if that respondent matches the column condition, 0 otherwise
+-   row_m: Membership (1 if that respondent matches the row condition, 0 otherwise)
+-   row_u: Row eligibility (1 if respondent is in-base for denominators for this row, 0 otherwise)
+-   col_m: Membership (1 if that respondent matches the column condition, 0 otherwise)
+-   col_u: Column eligibility/base context (1 if respondent is in-base for denominators for this column, 0 otherwise)
 
 Note: While row and column arrays usually contain 0s and 1s (binary membership), they can contain any numeric values. For example, a helper might return 0.5 for partial membership or 2 for double-counting certain respondents.
+
+`tab()` also computes **exposure** for each row and column, used only for `hide_empty`.
+
+- **Row exposure** is the marginal mass of the row membership under the table base:  
+  `row_exposure = sum(base_array * row_m)`
+- **Column exposure** is the marginal mass of the column membership under the table base:  
+  `col_exposure = sum(base_array * col_m)`
+
+“Marginal” here means one-dimensional: it ignores how mass is distributed across the other axis. That’s exactly what `hide_empty` needs, because it makes a row/column-level decision (“does this row/column have any mass at all?”), not a per-cell decision.
 
 2.  Passes these arrays to the statistic processor, which then:
 
@@ -423,7 +514,7 @@ Note: While row and column arrays usually contain 0s and 1s (binary membership),
 3.  The processor applies its specific calculation to the final array:
 
 -   For counts: sum the final array
--   For column %: sum(final) / sum(base \* col) × 100
+-   For column %: sum(final) / sum(base \* col_m \* row_u) × 100
 -   For mean: sum(final \* values) / sum(final)
 
 4.  Returns a single number to display in that cell
@@ -464,13 +555,13 @@ Let's create a statistic that calculates the median instead of mean:
 median_stat <- function() {
   create_statistic(
     id = "median",
-    processor = function(base_array, row_array, col_array, values = NULL, ...) {
+    processor = function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
       if (is.null(values)) {
         stop("Median statistic requires 'values' parameter")
       }
       
       # Find which rows belong to this cell
-      cell_membership <- base_array * row_array * col_array
+      cell_membership <- base_array * row_m * col_m
       
       # Get values for rows in this cell
       cell_values <- values[cell_membership > 0]
@@ -483,9 +574,16 @@ median_stat <- function() {
     base_calculator = base_cell_count_valid,  # Count respondents with valid values
     summary_row = "Avg",  # Use "Avg" label for summary
     summary_row_calculator = function(arrays, base_array) {
-      # Combine arrays into a union (respondents in ANY of the rows)
-      combined_matrix <- do.call(cbind, arrays)
-      as.numeric(rowSums(combined_matrix) > 0)
+      # Union summary: eligible if asked at least one; member if meets at least one
+      m_mat <- do.call(cbind, lapply(arrays, `[[`, "m"))
+      u_mat <- do.call(cbind, lapply(arrays, `[[`, "u"))
+      structure(
+        list(
+          m = as.numeric(rowSums(m_mat) > 0),
+          u = as.numeric(rowSums(u_mat) > 0)
+        ),
+        class = "tab_arrays"
+      )
     },
     format_fn = function(x) sprintf("%.1f", x),
     requires_values = TRUE,
@@ -510,15 +608,15 @@ A statistic that shows the width of the 95% confidence interval:
 ci_width_stat <- function() {
   create_statistic(
     id = "ci_width",  # Unique identifier
-    processor = function(base_array, row_array, col_array, ...) {
+    processor = function(base_array, row_m, row_u, col_m, col_u, values = NULL, ...) {
       # Step 1: Find which rows belong to this cell
       # This is the intersection of base, row condition, and column condition
-      cell_membership <- base_array * row_array * col_array
+      cell_membership <- base_array * row_m * col_m
       
       # Step 2: Calculate the statistic
       # For CI width, we need the proportion and sample size
       numerator <- sum(cell_membership)  # Count in this cell
-      denominator <- sum(base_array * col_array)  # Column total
+      denominator <- sum(base_array * col_m * row_u)  # Column total (among eligible)
       
       if (denominator == 0) return(NA_real_)
       
@@ -638,11 +736,11 @@ adjusted_result <- tab(survey_data, satisfaction, region) %>%
   add_sig(test = "z_test_proportions", adjust = "bonferroni")
 
 # View significance results
-sig_info <- attr(result_with_sig, "significance")
+sig_info <- attr(as.data.frame(result_with_sig), "significance")
 print(result_with_sig)  # Prints with significance indicators
 ```
 
-Available tests include `z_test_proportions`, `t_test`, `chi_square`, and `mann_whitney`. Use `"auto"` for automatic test selection based on your statistic.
+Available tests include `z_test_proportions`, `t_test`, `chi_square`, and `mann_whitney`. Use `"auto"` for automatic test selection when supported (otherwise it errors with guidance).
 
 ### Cell-Based Significance
 
@@ -758,7 +856,7 @@ result <- tab(survey_data, satisfaction, region) %>%
 
 # Same for columns
 result <- tab(survey_data, gender, region) %>%
-  move_col(.which = "Total", .to = "right")
+  move_col(.which = "South", .to = "right")
 ```
 
 ### Selecting Specific Rows and Columns
@@ -785,10 +883,9 @@ result <- tab(survey_data, satisfaction, age_group) %>%
   hide_rows(.match = "custom",
             base_matcher(30, ">="))
 
-# Match by label pattern
+# Match by labels (default)
 result <- tab(survey_data, satisfaction, region) %>%
-  hide_rows(.match = "custom",
-            label_matcher(c("Don't know", "Refused")))
+  hide_rows("Don't know", "Refused")
 
 # Combine matchers with logical operators
 result <- tab(survey_data, satisfaction, region) %>%
@@ -796,13 +893,12 @@ result <- tab(survey_data, satisfaction, region) %>%
     and_matcher(
       base_matcher(30, ">="),
       value_matcher(10, ">=")
-    )(cell$base)
+    )(cell$value)
   })
 
-# Negate a matcher
+# Keep only specific labels (equivalent to negating a label-set matcher)
 result <- tab(survey_data, satisfaction, region) %>%
-  hide_rows(.match = "custom",
-            not_matcher(label_matcher(c("Very satisfied", "Satisfied"))))
+  hide_rows_except("Very satisfied|Satisfied")
 ```
 
 ### Low Base Thresholds
@@ -857,7 +953,7 @@ result <- tab(survey_data, satisfaction, region) %>%
 
 # Sort columns by a specific row
 result <- tab(survey_data, satisfaction, region) %>%
-  arrange_cols(.by = "Very satisfied", .sort = "desc")
+  arrange_cols(.by = "Very Satisfied", .sort = "desc")
 ```
 
 #### Explicit Label Ordering
@@ -867,12 +963,12 @@ Specify the exact order you want:
 ```{r sorting_explicit}
 # Explicit row order
 result <- tab(survey_data, satisfaction, region) %>%
-  arrange_rows(.by = c("Very satisfied", "Satisfied", 
-                       "Neutral", "Dissatisfied", "Very dissatisfied"))
+  arrange_rows(.by = c("Very Satisfied", "Satisfied", 
+                       "Neutral", "Dissatisfied", "Very Dissatisfied"))
 
 # Partial ordering (specified rows first, others follow in original order)
 result <- tab(survey_data, satisfaction, region) %>%
-  arrange_rows(.by = c("Very satisfied", "Satisfied"), .partial = TRUE)
+  arrange_rows(.by = c("Very Satisfied", "Satisfied"), .partial = TRUE)
 
 # Column ordering
 result <- tab(survey_data, gender, region) %>%
@@ -892,7 +988,7 @@ result <- tab(survey_data, satisfaction, age_group) %>%
 result <- tab(survey_data, satisfaction, region) %>%
   arrange_rows(.order_fn = function(cell) {
     # Access cell metadata for custom ordering
-    cell$specification$meta$display_order
+    cell$specification$meta$display_order %||% 0
   })
 
 # Sort rows by standard deviation (requires custom calculation)
@@ -912,9 +1008,13 @@ result <- tab(survey_data, satisfaction, region,
   # Add derived columns
   derive(delta_vs("North", "South")) %>%
   # Sort by the difference
-  arrange_rows(.by = "South - North", .sort = "desc") %>%
-  # Keep only top differences
-  select_rows(head(row_labels, 5))
+  arrange_rows(.by = "South - North", .sort = "desc")
+
+# Keep only top differences
+top_rows <- head(result$layout$row_labels, 5)
+result <- select_rows(result, top_rows)
+
+result
 ```
 
 ### Copying to Clipboard
@@ -970,7 +1070,7 @@ result <- tab(survey_data, satisfaction, region) %>%
 # Custom multiplier
 result <- tab(survey_data, gender, region, 
               statistic = "mean", values = "income") %>%
-  derive(index_vs(base_col = "Total", multiplier = 1))
+  derive(index_vs(base_col = "Avg", multiplier = 1))
 # Now index of 1.0 = average
 ```
 
@@ -1041,9 +1141,9 @@ result <- tab(survey_data, satisfaction, region,
   # Filter to only show interesting rows
   hide_rows("Don't know|Refused") %>%
   # Keep only specific columns
-  hide_cols_except("North|South|.*difference|.*index") %>%
+  hide_cols_except("North|South|.* - .*|Index") %>%
   # Sort by one of the difference columns
-  arrange_rows(.by = "South vs North difference", .sort = "desc")
+  arrange_rows(.by = "South - North", .sort = "desc")
 
 # View the result
 as.data.frame(result)
@@ -1126,7 +1226,55 @@ satisfaction_deep_dive <- tab(survey_data,
 print(satisfaction_deep_dive)
 
 # Copy results to clipboard for further analysis
-copy_tab(comprehensive_result)
+# copy_tab(comprehensive_result)
+```
+
+## Running many tables with multi_tab()
+
+In reporting workflows, it is common to repeat the same table across multiple segments (for example, one table per region or country). `multi_tab()` helps generate these in one call and combine them into a single result.
+
+### Split into column blocks
+
+```{r multi_tab_cols}
+# Create one table per region, combined as additional column blocks
+multi_tab(
+  survey_data,
+  rows = satisfaction,
+  cols = gender,
+  by = region,
+  direction = "cols",
+  statistic = "column_pct"
+)
+```
+
+The convenience wrapper `multi_tab_cols()` is equivalent:
+
+```{r multi_tab_cols_wrapper}
+multi_tab_cols(
+  survey_data,
+  rows = satisfaction,
+  cols = gender,
+  by = region,
+  statistic = "column_pct"
+)
+```
+
+### Custom segment definitions
+
+You can also define groups explicitly using a named list of filters:
+
+```{r multi_tab_custom_groups}
+multi_tab(
+  survey_data,
+  rows = satisfaction,
+  cols = gender,
+  by = list(
+    "Age < 35" = age < 35,
+    "Age 35-54" = age >= 35 & age < 55,
+    "Age 55+" = age >= 55
+  ),
+  direction = "cols"
+)
 ```
 
 ## Conclusion

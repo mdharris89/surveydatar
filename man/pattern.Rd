@@ -21,6 +21,6 @@ Creates a binary indicator for respondents whose text/character values
 match the specified pattern.
 }
 \examples{
-tab(data, pattern(city, "New.*"), gender)
-tab(data, pattern(region, "North|South"), age_group)
+pattern(city, "New.*")
+pattern(region, "North|South")
 }

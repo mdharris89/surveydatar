@@ -21,7 +21,7 @@ expand_variables(
 
 \item{dpdict}{Optional data dictionary}
 
-\item{statistic$id}{The ID of the statistic being calculated}
+\item{statistic}{Statistic object (tab_stat) or NULL}
 }
 \value{
 List of expanded variable specifications

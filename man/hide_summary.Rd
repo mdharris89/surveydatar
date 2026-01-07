@@ -22,11 +22,11 @@ visible grid. Summary cells remain in cell_store and can be restored
 with show_summary().
 }
 \examples{
-\dontrun{
-tab(data, satisfaction, region, show_col_nets = TRUE) \%>\%
+# Hide summary rows/columns
+dat <- get_basic_test_dat()
+tab(dat, labelledordinal, binarycategoricalasfactor, show_col_nets = TRUE) \%>\%
   hide_summary(cols = TRUE)  # Hide "Total" column
   
-tab(data, satisfaction, region) \%>\%
+tab(dat, labelledordinal, binarycategoricalasfactor) \%>\%
   hide_summary()  # Hide both summary row and column if present
-}
 }

@@ -30,6 +30,10 @@ create_statistic(
 
 \item{summary_col}{Type of summary column ("NET", "Avg", "Total", or NULL)}
 
+\item{summary_row_calculator}{Optional base calculator used for the summary row.}
+
+\item{summary_col_calculator}{Optional base calculator used for the summary column.}
+
 \item{format_fn}{Function to format values for display}
 
 \item{requires_values}{Whether this statistic requires a 'values' parameter}

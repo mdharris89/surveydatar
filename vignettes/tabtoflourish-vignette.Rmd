@@ -1,3 +1,22 @@
+---
+title: "Exporting to Flourish"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Exporting to Flourish}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+library(surveydatar)
+library(dplyr)
+```
+
 ## Introduction
 
 The surveydatar package provides an integration with Flourish via flourishcharts, allowing you to convert cross-tabulation results into a selection of beautiful interactive charts. This vignette demonstrates how to create flourish visualizations from survey-style analysis using the familiar mtcars dataset.

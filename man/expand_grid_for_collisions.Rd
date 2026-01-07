@@ -30,10 +30,10 @@ all qualifying cells without data loss.
 \itemize{
 \item \strong{Row-only collisions}: When multiple cells match a single row position
 (but each has a unique column), the row is expanded into sub-rows labeled
-"RowName \link{1}", "RowName \link{2}", etc. Each sub-row gets one of the colliding cells.
+\code{"RowName [1]"}, \code{"RowName [2]"}, etc. Each sub-row gets one of the colliding cells.
 \item \strong{Column-only collisions}: When multiple cells match a single column position
 (but each has a unique row), the column is expanded into sub-columns labeled
-"ColName \link{1}", "ColName \link{2}", etc.
+\code{"ColName [1]"}, \code{"ColName [2]"}, etc.
 \item \strong{Simultaneous row and column collisions}: When both dimensions have collisions
 at the same position, both are expanded. The cell assignment uses the row
 sub-index as the primary selector. This case is rare and typically indicates
@@ -44,7 +44,7 @@ ambiguous layout specifications.
 \itemize{
 \item Each expanded position gets a deep copy of the original layout_def
 \item A \code{sub_index} field is added to track which sub-position each def represents
-\item The original label is appended with " \link{N}" where N is the sub-index
+\item The original label is appended with \code{" [N]"} where \code{N} is the sub-index
 \item Empty sub-positions (NA) may occur if collision counts vary across dimensions
 }
 }

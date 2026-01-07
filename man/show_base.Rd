@@ -20,11 +20,11 @@ values from existing cells. Orientation is automatically determined
 from the base variation pattern, or can be specified explicitly.
 }
 \examples{
-\dontrun{
-tab(data, satisfaction, region, show_base = FALSE) \%>\%
+# Show base in tab results
+dat <- get_basic_test_dat()
+tab(dat, labelledordinal, binarycategoricalasfactor, show_base = FALSE) \%>\%
   show_base()  # Add base back with automatic orientation
   
-tab(data, satisfaction, region, show_base = FALSE) \%>\%
+tab(dat, labelledordinal, binarycategoricalasfactor, show_base = FALSE) \%>\%
   show_base(orientation = "row")  # Force base as row
-}
 }

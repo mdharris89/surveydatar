@@ -20,8 +20,8 @@ Modified tab_result with updated formatting metadata
 Set custom format function for a specific column
 }
 \examples{
-\dontrun{
-result <- tab(data, satisfaction, gender) \%>\%
-  format_col("Male", function(x) sprintf("\%.0f\%\%", x))
-}
+# Format specific column
+dat <- get_basic_test_dat()
+result <- tab(dat, labelledordinal, binarycategoricalasfactor) \%>\%
+  format_col("Yes", function(x) sprintf("\%.0f\%\%", x))
 }

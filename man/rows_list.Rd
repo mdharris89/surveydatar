@@ -16,5 +16,5 @@ List for use in tab()
 Create named list of row specifications
 }
 \examples{
-tab(data, rows = rows_list("Total" = q1, "Young" = q1 * (age < 30)))
+rows_list("Total" = q1, "Young" = q1 * (age < 30))
 }

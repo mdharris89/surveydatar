@@ -1,18 +1,35 @@
-# Getting Started with surveydatar
+---
+title: "Getting Started with surveydatar"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with surveydatar}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = TRUE
+)
+library(surveydatar)
+library(dplyr)
+```
 
 ## Introduction
 
-The surveydatar package provides a comprehensive toolkit for processing and analyzing survey data in R. Survey data presents unique challenges: complex metadata, inconsistent naming conventions, question batteries, multiresponse questions, and the need to maintain the relationship between data and its documentation throughout the analysis pipeline.
+The surveydatar package provides a comprehensive toolkit for processing and analyzing survey data for market research in R. Survey data presents unique challenges: complex metadata, multiple question types, bases that vary by question, weighting, and the need to maintain the relationship between data and its documentation throughout the analysis pipeline.
 
 This package addresses these challenges through:
 
 -   **Integrated metadata management** via the `dpdict` (data processing dictionary)
 -   **Automatic question grouping** and type detection
--   **Standardization tools** for variable names and labels
+-   **Standardisation tools** for variable names and labels
 -   **The `survey_data` object** that keeps data and metadata synchronized
--   **Flexible analysis** with the `tab()` function for cross-tabulations
--   **Cell-based architecture** for position-independent table manipulation
 -   **Validation functions** to ensure data integrity
+-   **Weighting** functions for weighting survey data
+-   **Flexible analysis** with the `tab()` function as supporting functions for flexible and fast cross-tabulations and significance testing
 
 ## Core Concepts
 
@@ -44,17 +61,17 @@ validate_survey_data(survey_obj)
 The `survey_data` object supports standard data manipulation while maintaining metadata integrity:
 
 ```{r preserving_structure}
-# These operations preserve the survey_data structure
-filtered <- dplyr::filter(survey_obj, uid > 50)
-selected <- dplyr::select(survey_obj, uid, csat, nps_response)
-with_new_var <- dplyr::mutate(survey_obj, 
-                               high_satisfaction = realiselabelled_vec(csat >= 4, 
-                                                                      variable_label = "High Satisfaction Flag"))
+# These operations preserve the survey_data structure through surveydatar's S3 methods
+filtered <- filter(survey_obj, uid > 50)
+selected <- select(survey_obj, uid, csat, nps_response)
+with_new_var <- mutate(survey_obj, 
+                       high_satisfaction = realiselabelled_vec(csat >= 4, 
+                       variable_label = "High Satisfaction Flag"))
 ```
 
 ### The Metadata Dictionary (dpdict)
 
-The `dpdict` is a data frame where each row describes a variable in your survey. It captures both current and original metadata, enabling full traceability of changes:
+The `dpdict` is a data frame where each row describes a variable in your survey.
 
 ```{r basic_dpdict}
 # Create a basic dpdict
@@ -66,8 +83,9 @@ Key columns in the dpdict include:
 
 -   **Tracking columns**: `old_variable_names`, `old_variable_labels`, `old_value_labels`
 -   **Current metadata**: `variable_names`, `variable_labels`, `value_labels`
--   **Question structure**: `question_group`, `questiontype`, `question_alias`
--   **Display helpers**: `question_suffix`, `alias_with_suffix`
+-   **Question structure**: `question_group`, `questiontype`
+-   **Display helper**: `question_suffix` (used by label_mode in tab/export)
+-   **User-defined organization**: `question_alias`, `question_description`, `question_folder`, `alias_with_suffix` (for custom labelling/organization, not currently integrated with tab/export functions)
 -   **Type indicators**: `variable_class`, `singlevariablequestion`, `multiresponse`
 
 ## Getting Started: Viewing Your Data
@@ -81,11 +99,7 @@ Before processing, understand your data structure using `datamap()`:
 survey_data <- get_big_test_dat(100)
 
 # View an SPSS-style variable listing
-datamap(survey_data)  # Opens in viewer if in RStudio
-
-# Or get as a data frame
 dm <- datamap(survey_data, view_or_return = "return")
-head(dm[, c("variable", "variable label", "class", "n unique")])
 ```
 
 For `survey_data` objects, `datamap()` includes additional metadata:
@@ -102,8 +116,7 @@ See your data organized by question groups rather than individual variables:
 
 ```{r question_view}
 # Get question-level summary
-q_summary <- datamap_questions(survey_obj)
-head(q_summary[, c("question_group", "var_count", "question_types")])
+q_summary <- datamap_questions(survey_obj, view_or_return = "return")
 ```
 
 ## Creating and Enriching Metadata
@@ -135,40 +148,51 @@ survey_obj <- create_survey_data(get_big_test_dat(50))
 
 # Or create dpdict with full metadata separately
 full_dpdict <- create_dict_with_metadata(get_big_test_dat(50))
-head(full_dpdict[, c("variable_names", "question_group", "questiontype")])
 ```
 
 ## Handling Separators
 
-Survey software often produces inconsistent separator patterns. The package can detect and standardize these:
+Survey software often produces inconsistent separator patterns across *variable names* and *variable labels*. In `surveydatar`, separators matter because several metadata operations assume that your data follows a consistent structure:
+
+- Variable names for repeated items typically follow a `stem{var_name_sep}suffix` pattern (e.g. `Q1_1`, `Q1_2`).
+- Variable labels are typically hierarchical and use separators to distinguish the question “stem” from the unique “suffix” within a question group (e.g. `Q1: Question text - Statement 1`).
+
+These assumptions feed directly into `dpdict`-based workflows (especially `update_dict_with_metadata()`), including question grouping and suffix extraction. In practice: **standardise separators early (right after import), and keep them stable once you start editing a `dpdict`.**
 
 ```{r separators}
-# Load data with messy separators
+# Start with a dataset that has a consistent label prefix convention
 messy_data <- get_big_test_dat_with_prefixes()
 
-# Analyze current separator patterns
-sep_analysis <- check_seps(messy_data)
-print(sep_analysis$separators)
-#> var_name_sep    prefix_sep statement_sep 
-#>         "_"          ": "         " - " 
+# Simulate a realistic issue:
+# after import / merges / manual edits, a subset of variables use a different separator
+# in their variable names and/or their label structure.
+idx <- grep("_[0-9]+$", names(messy_data))
+names(messy_data)[idx[1:2]] <- sub("_(\\d+)$", ".\\1", names(messy_data)[idx[1:2]])
 
-print(sep_analysis$consistency)
-#> var_name_sep    prefix_sep statement_sep 
-#>         TRUE         TRUE         TRUE
+# Prefix separator inconsistency (e.g. "Q1: ..." vs "Q1. ...")
+attr(messy_data[[idx[1]]], "label") <- sub(": ", ". ", attr(messy_data[[idx[1]]], "label", exact = TRUE), fixed = TRUE)
 
-# Generate standardized names and labels
-if (!all(sep_analysis$consistency)) {
-  standardized <- get_updated_seps(messy_data, sep_analysis)
-  # Shows old vs new names and labels
-  head(standardized[, c("old_variable_names", "new_variable_names")])
-}
+# Statement separator inconsistency (e.g. "... - statement" vs "... | statement")
+attr(messy_data[[idx[2]]], "label") <- sub(" - ", " | ", attr(messy_data[[idx[2]]], "label", exact = TRUE), fixed = TRUE)
 
-# Or specify your preferred separators
-custom_seps <- list(var_name_sep = "_", 
-                   prefix_sep = ": ", 
-                   statement_sep = " - ")
-standardized <- get_updated_seps(messy_data, sep_analysis, 
-                                seps_to_use = custom_seps)
+# Analyze current separator patterns (and optionally print issues)
+sep_analysis <- check_seps(messy_data, verbose = TRUE)
+sep_analysis$separators
+sep_analysis$consistency
+
+# Recommended workflow: choose a separator scheme once, standardise, and carry it into dpdict work
+seps_to_use <- list(var_name_sep = "_", prefix_sep = ": ", statement_sep = " - ")
+standardised <- standardise_survey_separators(messy_data, seps_to_use = seps_to_use)
+dat_std <- standardised$dat
+dpdict_std <- standardised$dpdict
+
+# `dpdict` keeps a record of the separator scheme used (useful for reproducibility)
+attr(dpdict_std, "sep_patterns")
+
+# If you want a simple audit of what would change, `get_updated_seps()` returns a mapping:
+standardization_map <- get_updated_seps(messy_data, sep_analysis, seps_to_use = seps_to_use)
+head(standardization_map[, c("old_variable_names", "new_variable_names",
+                             "old_variable_labels", "new_variable_labels")], 3)
 ```
 
 ## Automatic Question Grouping
@@ -212,7 +236,7 @@ survey_obj_custom <- update_dict_with_metadata(
 
 ### Understanding Question Types
 
-The function automatically determines question types based on variable characteristics:
+Question types stored in the dpdict are automatically determined based on variable characteristics:
 
 ```{r question_types}
 # View the inferred question types
@@ -221,7 +245,12 @@ table(survey_obj$dpdict$questiontype)
 #>         15            12        8     3
 ```
 
-Question types include: - **numeric**: Single numeric variables - **categorical**: Factor or labelled variables - **multiresponse**: Binary variables in the same group - **text**: Character variables - **date**: Date/time variables
+Question types include: 
+- **numeric**: Single numeric variables 
+- **categorical**: Categorical variables of any number of categories 
+- **multiresponse**: Binary variables in the same group 
+- **text**: Character variables 
+- **date**: Date/time variables
 
 ## Working with Question Metadata
 
@@ -242,24 +271,7 @@ questions_dict$question_folder[1] <- "Marketing"
 survey_obj <- update_aliases(survey_obj, questions_dict)
 ```
 
-### Handling Grid Questions
-
-For matrix/grid questions where the same items are asked about multiple subjects:
-
-```{r grid_questions}
-# Example: Split grid labels for the multiresponse grid question
-# Current structure: "statement 1 - attribute 1", "statement 1 - attribute 2", etc.
-# Goal: Move "statement 1" to the question alias, leaving just "attribute 1", "attribute 2"
-survey_obj <- split_grid_labels(
-  survey_obj,
-  alias_to_split = "labelledmultiresponsegrid_a",
-  example_stem_to_add = "statement 1", 
-  count_before_repeat = 2,  # 2 attributes per statement
-  sep = " - "
-)
-
-# This reorganizes the metadata so you can analyze by brand
-```
+**Note:** These metadata fields (`question_alias`, `question_description`, `question_folder`, `alias_with_suffix`) are maintained for user-defined organization and custom labelling workflows. They are not currently integrated with `tab()`, `tab_to_reactable()`, or `tab_to_flourish()`. For controlling labels in tab output, use the `label_mode` parameter which leverages `question_suffix` and variable labels.
 
 ### Unique Suffixes
 
@@ -291,6 +303,48 @@ survey_obj$dat <- realiselabelled(
   MRpositivelabel = "Selected",
   MRnegativelabel = "Not selected"
 )
+```
+
+### Collapsing Wide Routed Questions
+
+Some survey exports store routed versions of the same question in multiple columns (wide format). For example, a satisfaction question asked about a respondent's allocated concept might appear as `satisfaction_A`, `satisfaction_B`, `satisfaction_C`, with only one populated per respondent.
+
+`collapse_wide_question()` collapses these into a single variable based on a reference variable (e.g. the concept allocation).
+
+```{r collapse_wide_question_example}
+wide_dat <- data.frame(
+  id = 1:6,
+  concept = c("A", "B", "A", "C", "B", "C"),
+  satisfaction_A = c(5, NA, 4, NA, NA, NA),
+  satisfaction_B = c(NA, 3, NA, NA, 2, NA),
+  satisfaction_C = c(NA, NA, NA, 4, NA, 5)
+)
+
+wide_survey <- create_survey_data(wide_dat)
+
+collapsed <- collapse_wide_question(
+  wide_survey,
+  vars_to_collapse = c("satisfaction_A", "satisfaction_B", "satisfaction_C"),
+  collapse_on = "concept"
+)
+
+# The result contains a single satisfaction variable (and removes the wide inputs)
+names(collapsed$dat)
+```
+
+### Preparing Data for SPSS Export
+
+When exporting to SPSS via `haven::write_sav()`, it is often helpful to ensure labelled integer variables are stored as doubles. This can avoid type inconsistencies introduced during processing (for example, creating new labelled variables).
+
+```{r spss_export_prep}
+# Convert labelled integer columns to double (preserving labels/attributes)
+survey_obj <- convert_integers_to_double(survey_obj)
+
+# Additional export cleanup (names, labels, attributes)
+export_data <- fix_for_spss_export(survey_obj$dat)
+
+# Write a .sav file (example path)
+# haven::write_sav(export_data, path = tempfile(fileext = ".sav"))
 ```
 
 ### Handling Multiresponse Questions
@@ -380,7 +434,7 @@ tab(survey_obj, categoricalasfactor, labelledcategorical,
 
 # Chain operations on cell collections
 tab(survey_obj, labelledordinal, categoricalasfactor) %>%
-  derive(delta_vs("1", "2")) %>%
+  derive(delta_vs("DE", "FR")) %>%
   hide_rows("Don't know") %>%
   as.data.frame()
 ```
@@ -393,7 +447,9 @@ Let's walk through processing a customer satisfaction survey:
 
 ```{r complete}
 # 1. Import raw data
-raw_data <- haven::read_sav("customer_survey.sav")
+raw_data <- get_big_test_dat(200)
+raw_data$nps <- sjlabelled::set_label(sample(0:10, nrow(raw_data), replace = TRUE),
+                                      label = "Example NPS score (0-10)")
 
 # 2. Create survey_data object with automatic metadata
 survey <- create_survey_data(raw_data)
@@ -418,22 +474,48 @@ survey <- conditionally_replace_NAs_in_multiresponse(survey)
 # 6. Add derived variables
 survey <- survey %>%
   dplyr::mutate(
-    nps_category = with_label(
+    nps_category = realiselabelled_vec(
       dplyr::case_when(
         nps <= 6 ~ "Detractor",
         nps <= 8 ~ "Passive",
         nps >= 9 ~ "Promoter"
       ),
-      "NPS Category"
+      variable_label = "NPS Category"
     )
   )
 
 # 7. Quick analysis
-tab(survey, nps_category, region)
+tab(survey, nps_category, labelledcategorical)
 
 # 8. Export if needed
-export_data <- fix_for_spss_export(survey$dat)
-haven::write_sav(export_data, "processed_survey.sav")
+export_data <- fix_for_spss_export(convert_integers_to_double(survey$dat))
+# haven::write_sav(export_data, path = tempfile(fileext = ".sav"))
+```
+
+## Weighting (brief)
+
+For workflows that require weighting beyond simple calibration factors, `surveydatar` includes a unified weighting engine. The main entry point is `run_unified_weighting()`, which accepts one or more stages with constraint specifications (including optional tolerances via `%+-%`).
+
+```{r weighting_brief, eval = FALSE}
+# Minimal sketch of the API (example only)
+result <- run_unified_weighting(
+  raw_data = survey,
+  stages = list(
+    list(
+      constraints = list(
+        (gender == "Female") ~ 0.5 %+-% 0.02,
+        (gender == "Male") ~ 0.5 %+-% 0.02
+      ),
+      tolerance = 0.02,
+      alpha = 0
+    )
+  ),
+  cap = 3,
+  verbose = TRUE
+)
+
+# Weighted data and diagnostics are returned in a structured result
+str(result)
 ```
 
 ## Conclusion

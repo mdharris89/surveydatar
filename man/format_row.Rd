@@ -22,6 +22,6 @@ Set custom format function for a specific row
 \examples{
 \dontrun{
 result <- tab(data, satisfaction, gender) \%>\%
-  format_row("Mean", function(x) sprintf("\%.3f", x))
+  format_row("Satisfied", function(x) sprintf("\%.1f", x))
 }
 }
