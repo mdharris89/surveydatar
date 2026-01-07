@@ -677,9 +677,11 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
         found_sep <- substr(sep_portion,
                             matched_sep,
                             matched_sep + attr(matched_sep, "match.length") - 1)
+        # Convert matched_sep position (relative to sep_portion) to position in new_string
+        sep_pos_in_string <- match_starts + matched_sep - 1
         substr(new_string,
-               matched_sep,
-               matched_sep + attr(matched_sep, "match.length") - 1) <- new_sep
+               sep_pos_in_string,
+               sep_pos_in_string + attr(matched_sep, "match.length") - 1) <- new_sep
       }
     } else {
       found_sep <- NA_character_
