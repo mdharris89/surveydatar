@@ -2,26 +2,48 @@
 
 Tools for processing and analysing market research survey data in R.
 
+## Who this is for
+
+This package is designed for **market research analysts** working with:
+- Brand tracking and ad-hoc consumer studies
+- SPSS/Qualtrics data with variable and value labels
+- Quota samples and non-probability sampling
+- Iterative analysis producing client deliverables (dashboards, reports, presentations)
+
+**Not designed for:** Academic survey research with complex probability samples. For design-based inference with stratification and clustering, use the [survey](https://cran.r-project.org/package=survey) package instead.
+
+## Why use surveydatar
+
+The core problem: when you import SPSS/Stata data into R, variable labels and value labels are attached but **easily lost during analysis**. After filtering, recoding, or creating derived variables, you're left with unlabeled output and have to manually reconstruct what each column means.
+
+surveydatar solves this by keeping data and metadata together through your entire analytical pipeline, from import to client-ready output.
+
 ## Quick start
 
 ```r
 library(surveydatar)
 
-# Load data (e.g. from SPSS)
-raw_data <- haven::read_sav("survey.sav")
+# Import SPSS data with labels
+survey <- haven::read_sav("survey.sav") %>% create_survey_data()
 
-# Create a metadata dictionary and make edits
-dpdict <- create_dict(raw_data)
-dpdict$variable_labels[1] <- "Respondent ID"
-dpdict$variable_names[2] <- "satisfaction"
+# Crosstab with top-2-box and significance testing
+# Labels preserved automatically: "Overall Satisfaction - Satisfied/Very Satisfied"
+tab(survey, top_box(satisfaction, 2), region, weight = "wgt") %>%
+  derive(delta_vs("North")) %>%        # Add difference from North region
+  add_sig() %>%                         # Add statistical significance markers
+  tab_to_reactable()                    # Interactive HTML table
 
-# Apply edits and wrap as survey_data
-dat <- update_dat_from_dpdict(raw_data, dpdict)
-survey <- create_survey_data(dat, dpdict)
-
-# Run a crosstab
-tab(survey, satisfaction, weight = "wgt")
+# Multiple related tables at once
+multi_tab(survey, satisfaction, by = gender, direction = "cols") %>%
+  add_sig() %>%
+  copy_tab()  # Formatted paste to Excel/PowerPoint
 ```
+
+**Key workflow advantages:**
+- Variable and value labels flow through the entire pipeline
+- Domain-specific helpers (`top_box`, `among`, `response_match`) encode common market research patterns
+- Composable operations (`derive`, `add_sig`, `arrange_rows`) avoid manual calculations
+- Outputs integrate with business tools (Flourish, PowerPoint, interactive dashboards)
 
 ## What's in the package
 
@@ -63,6 +85,8 @@ Use `derive()` to add calculated rows/columns to a `tab_result`:
 - `add_sig_all()` — apply significance testing across all relevant statistics
 - Multiple comparison adjustments (Bonferroni, Benjamini-Hochberg, etc.)
 
+**Note:** Tests assume simple random sampling within each cell. For complex survey designs with stratification/clustering, use the [survey](https://cran.r-project.org/package=survey) package for design-based variance estimation.
+
 ### Exports and outputs
 
 - `pivot_to_grid()` — reshape tab results for charting tools
@@ -72,6 +96,22 @@ Use `derive()` to add calculated rows/columns to a `tab_result`:
 ### Weighting
 
 `run_unified_weighting()` provides quadratic calibration with constraint helpers for demographic and occasion-based weighting. See `?run_unified_weighting` for details.
+
+## Comparison with other packages
+
+**When to use surveydatar:**
+- You work with SPSS/Stata/Qualtrics data and need labels preserved through analysis
+- You produce multiple similar tables (brand tracking, wave-over-wave) and want reproducible workflows
+- Your outputs go to PowerPoint decks, Flourish dashboards, or interactive HTML reports
+- You use quota sampling or non-probability samples
+
+**When to use alternatives:**
+- **Simple one-off crosstabs:** `questionr::ltabs()` is simpler
+- **Academic publications:** `gtsummary::tbl_cross()` offers better formatting for Word/LaTeX
+- **Complex probability samples:** `survey` + `srvyr` packages provide design-based inference
+- **Quick exploration:** Base R `table()` + `prop.table()` is more transparent
+
+surveydatar prioritizes **workflow efficiency** and **metadata preservation** for market research practitioners over statistical rigor for complex sample designs.
 
 ## Read next
 
