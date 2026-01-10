@@ -7,10 +7,8 @@ Tools for processing and analysing market research survey data in R.
 This package is designed for **market research analysts** working with:
 - Brand tracking and ad-hoc consumer studies
 - SPSS/Qualtrics data with variable and value labels
-- Quota samples and non-probability sampling
 - Iterative analysis producing client deliverables (dashboards, reports, presentations)
-
-**Not designed for:** Academic survey research with complex probability samples. For design-based inference with stratification and clustering, use the [survey](https://cran.r-project.org/package=survey) package instead.
+- Quota-based sampling and weighted survey data
 
 ## Why use surveydatar
 
@@ -85,8 +83,6 @@ Use `derive()` to add calculated rows/columns to a `tab_result`:
 - `add_sig_all()` — apply significance testing across all relevant statistics
 - Multiple comparison adjustments (Bonferroni, Benjamini-Hochberg, etc.)
 
-**Note:** Tests assume simple random sampling within each cell. For complex survey designs with stratification/clustering, use the [survey](https://cran.r-project.org/package=survey) package for design-based variance estimation.
-
 ### Exports and outputs
 
 - `pivot_to_grid()` — reshape tab results for charting tools
@@ -96,22 +92,6 @@ Use `derive()` to add calculated rows/columns to a `tab_result`:
 ### Weighting
 
 `run_unified_weighting()` provides quadratic calibration with constraint helpers for demographic and occasion-based weighting. See `?run_unified_weighting` for details.
-
-## Comparison with other packages
-
-**When to use surveydatar:**
-- You work with SPSS/Stata/Qualtrics data and need labels preserved through analysis
-- You produce multiple similar tables (brand tracking, wave-over-wave) and want reproducible workflows
-- Your outputs go to PowerPoint decks, Flourish dashboards, or interactive HTML reports
-- You use quota sampling or non-probability samples
-
-**When to use alternatives:**
-- **Simple one-off crosstabs:** `questionr::ltabs()` is simpler
-- **Academic publications:** `gtsummary::tbl_cross()` offers better formatting for Word/LaTeX
-- **Complex probability samples:** `survey` + `srvyr` packages provide design-based inference
-- **Quick exploration:** Base R `table()` + `prop.table()` is more transparent
-
-surveydatar prioritizes **workflow efficiency** and **metadata preservation** for market research practitioners over statistical rigor for complex sample designs.
 
 ## Read next
 
