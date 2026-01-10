@@ -2,26 +2,46 @@
 
 Tools for processing and analysing market research survey data in R.
 
+## Who this is for
+
+This package is designed for **market research analysts** working with:
+- Brand tracking and ad-hoc consumer studies
+- SPSS/Qualtrics data with variable and value labels
+- Iterative analysis producing client deliverables (dashboards, reports, presentations)
+- Quota-based sampling and weighted survey data
+
+## Why use surveydatar
+
+The core problem: when you import SPSS/Stata data into R, variable labels and value labels are attached but **easily lost during analysis**. After filtering, recoding, or creating derived variables, you're left with unlabeled output and have to manually reconstruct what each column means.
+
+surveydatar solves this by keeping data and metadata together through your entire analytical pipeline, from import to client-ready output.
+
 ## Quick start
 
 ```r
 library(surveydatar)
 
-# Load data (e.g. from SPSS)
-raw_data <- haven::read_sav("survey.sav")
+# Import SPSS data with labels
+survey <- haven::read_sav("survey.sav") %>% create_survey_data()
 
-# Create a metadata dictionary and make edits
-dpdict <- create_dict(raw_data)
-dpdict$variable_labels[1] <- "Respondent ID"
-dpdict$variable_names[2] <- "satisfaction"
+# Crosstab with top-2-box and significance testing
+# Labels preserved automatically: "Overall Satisfaction - Satisfied/Very Satisfied"
+tab(survey, top_box(satisfaction, 2), region, weight = "wgt") %>%
+  derive(delta_vs("North")) %>%        # Add difference from North region
+  add_sig() %>%                         # Add statistical significance markers
+  tab_to_reactable()                    # Interactive HTML table
 
-# Apply edits and wrap as survey_data
-dat <- update_dat_from_dpdict(raw_data, dpdict)
-survey <- create_survey_data(dat, dpdict)
-
-# Run a crosstab
-tab(survey, satisfaction, weight = "wgt")
+# Multiple related tables at once
+multi_tab(survey, satisfaction, by = gender, direction = "cols") %>%
+  add_sig() %>%
+  copy_tab()  # Formatted paste to Excel/PowerPoint
 ```
+
+**Key workflow advantages:**
+- Variable and value labels flow through the entire pipeline
+- Domain-specific helpers (`top_box`, `among`, `response_match`) encode common market research patterns
+- Composable operations (`derive`, `add_sig`, `arrange_rows`) avoid manual calculations
+- Outputs integrate with business tools (Flourish, PowerPoint, interactive dashboards)
 
 ## What's in the package
 
