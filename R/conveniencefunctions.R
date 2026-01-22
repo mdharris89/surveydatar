@@ -428,7 +428,9 @@ word_rank_to_number <- function(word_string){
 #' @export
 #'
 #' @examples
+#' \donttest{
 #' check_for_common_alphabets("Latin, Русский, عربي, 漢語, বাংলা, देवनागरी")
+#' }
 check_for_common_alphabets <- function(input_string){
   alphabets <- c()
   for (char in utf8ToInt(input_string)) {
@@ -733,6 +735,10 @@ puncts_to_pattern <- function(puncts) {
   single_chars <- puncts[nchar(puncts) == 1]
   multi_chars <- puncts[nchar(puncts) > 1]
 
+  # Initialize patterns
+  singles_pattern <- NULL
+  multis_pattern <- NULL
+
   # Process single characters
   if (length(single_chars) > 0) {
     escaped_singles <- sapply(single_chars, function(p) {
@@ -761,8 +767,8 @@ puncts_to_pattern <- function(puncts) {
   }
 
   # Combine patterns
-  if (length(single_chars) == 0) return(multis_pattern)
-  if (length(multi_chars) == 0) return(singles_pattern)
+  if (is.null(singles_pattern)) return(multis_pattern)
+  if (is.null(multis_pattern)) return(singles_pattern)
   paste0("(", singles_pattern, "|", multis_pattern, ")")
 
 }
