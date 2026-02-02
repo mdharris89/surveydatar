@@ -403,13 +403,19 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   }
 
   # Create column headers row
-  headers_row <- data.frame(
-    row_label = "Row Label",
-    stringsAsFactors = FALSE
-  )
-  for (col_name in names(output_data)[-1]) {
-    headers_row[[col_name]] <- col_name
+  col_names <- names(output_data)[-1]
+  if (anyDuplicated(col_names) > 0L) {
+    warning("Duplicate column names detected. Header row will be built positionally; ",
+            "consider using glue_tab(..., prefix = c('tab1', 'tab2')) to disambiguate.")
   }
+  
+  headers_values <- c("Row Label", col_names)
+  headers_row <- as.data.frame(
+    as.list(headers_values),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+  names(headers_row) <- names(output_data)
 
   # Combine headers with data (base row is already included in tab_result)
   output_data <- rbind(headers_row, output_data)

@@ -1147,21 +1147,39 @@ constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data =
     targets[k] <- constr$target
     valid_constraints[k] <- TRUE
 
-    if (is.list(constr$tolerance) && !is.null(constr$tolerance$lower)) {
-      # Asymmetric tolerance specified as list with lower/upper
-      tol_lower <- constr$tolerance$lower
-      tol_upper <- constr$tolerance$upper
-    } else if (is.numeric(constr$tolerance)) {
-      # Symmetric tolerance specified as single number
-      tol_lower <- constr$tolerance
-      tol_upper <- constr$tolerance
-    } else {
-      # No tolerance specified, use default
-      tol_lower <- get_default_tol(tol_config)
-      tol_upper <- get_default_tol(tol_config)
+    # Resolve tolerance precedence:
+    # (1) constraint-specific tolerance (e.g., %+-% or make_constraint(tolerance=...))
+    # (2) tol_config defaults (type-aware where available)
+    # (3) hard fallback
+    constraint_tol <- NULL
+    if (is.list(constr$tolerance) &&
+        !is.null(constr$tolerance$lower) &&
+        !is.null(constr$tolerance$upper)) {
+      constraint_tol <- list(lower = constr$tolerance$lower, upper = constr$tolerance$upper)
+    } else if (is.numeric(constr$tolerance) && length(constr$tolerance) == 2) {
+      constraint_tol <- list(lower = constr$tolerance[1], upper = constr$tolerance[2])
+    } else if (is.numeric(constr$tolerance) && length(constr$tolerance) == 1) {
+      constraint_tol <- list(lower = constr$tolerance, upper = constr$tolerance)
     }
 
-    if (identical(tol_config$mode, "percentage_point")) {
+    if (!is.null(constraint_tol)) {
+      tol_lower <- constraint_tol$lower
+      tol_upper <- constraint_tol$upper
+    } else if (!is.null(tol_config) && !is.null(constr$type) && constr$type == "sum") {
+      # Sum constraint tolerances can be distinct from default tolerances
+      tol_lower <- tol_config$sum_lower %||% tol_config$sum %||%
+        tol_config$default_lower %||% tol_config$default %||% 0.01
+      tol_upper <- tol_config$sum_upper %||% tol_config$sum %||%
+        tol_config$default_upper %||% tol_config$default %||% 0.01
+    } else if (!is.null(tol_config)) {
+      tol_lower <- tol_config$default_lower %||% tol_config$default %||% 0.01
+      tol_upper <- tol_config$default_upper %||% tol_config$default %||% 0.01
+    } else {
+      tol_lower <- 0.01
+      tol_upper <- 0.01
+    }
+
+    if (!is.null(tol_config) && identical(tol_config$mode, "percentage_point")) {
       # Get country from constraint metadata
       country_k <- constr$country
 
@@ -1172,29 +1190,13 @@ constraints_to_matrix <- function(constraints, n_resp, tol_config = NULL, data =
         stop("Can't find country denominator for percentage_point tolerances")
       }
 
-      # Use constraint-specific tolerance if available
       lower_slack[k] <- tol_lower * denom
       upper_slack[k] <- tol_upper * denom
 
     } else {
       # Relative mode - standard percentage of target
-
-      # Handle asymmetric tolerances if specified
-      if (!is.null(tol_config)) {
-        if (!is.null(constr$type) && constr$type == "sum") {
-          # For sum constraints, check if tol_config has specific sum tolerances
-          lower_slack[k] <- (tol_config$sum_lower %||% tol_lower) * abs(targets[k])
-          upper_slack[k] <- (tol_config$sum_upper %||% tol_upper) * abs(targets[k])
-        } else {
-          # For other constraints, use default tolerances from config
-          lower_slack[k] <- (tol_config$default_lower %||% tol_lower) * abs(targets[k])
-          upper_slack[k] <- (tol_config$default_upper %||% tol_upper) * abs(targets[k])
-        }
-      } else {
-        # No tol_config provided, use extracted tolerance values directly
-        lower_slack[k] <- tol_lower * abs(targets[k])
-        upper_slack[k] <- tol_upper * abs(targets[k])
-      }
+      lower_slack[k] <- tol_lower * abs(targets[k])
+      upper_slack[k] <- tol_upper * abs(targets[k])
     }
   }
 
@@ -1689,11 +1691,15 @@ build_survey_weights <- function(dat_clean,
   )
 
   # Additional reporting to return with the weights ---------------------------
-  # Extract slack values for reporting
-  slack_lower_vals <- as.numeric(result$getValue(s_lower))
-  slack_upper_vals <- as.numeric(result$getValue(s_upper))
-
+  # Note: slack variables are not part of the objective, so they are not unique.
+  # For reporting (tolerance usage and binding), derive from achieved-vs-target
+  # deviation rather than relying on solver slack values.
   achieved <- as.numeric(X %*% weights_raw)
+  deviation <- achieved - targets
+  lower_slack_used <- pmax(0, -deviation)
+  upper_slack_used <- pmax(0, deviation)
+  binding_lower <- deviation < 0 & lower_slack > 0 & (lower_slack_used >= (lower_slack * 0.99))
+  binding_upper <- deviation > 0 & upper_slack > 0 & (upper_slack_used >= (upper_slack * 0.99))
 
   # Create detailed constraint report -----------------------------------------
 
@@ -1705,16 +1711,16 @@ build_survey_weights <- function(dat_clean,
     constraint = constraint_labels,
     target = targets,
     achieved = achieved,
-    deviation = achieved - targets,
+    deviation = deviation,
     deviation_pct = ifelse(targets != 0,
-                           (achieved - targets) / targets * 100,
+                           deviation / targets * 100,
                            0),
-    lower_slack_used = slack_lower_vals,
-    upper_slack_used = slack_upper_vals,
+    lower_slack_used = lower_slack_used,
+    upper_slack_used = upper_slack_used,
     lower_slack_limit = lower_slack,
     upper_slack_limit = upper_slack,
-    binding_lower = slack_lower_vals > (lower_slack * 0.99),
-    binding_upper = slack_upper_vals > (upper_slack * 0.99),
+    binding_lower = binding_lower,
+    binding_upper = binding_upper,
     stringsAsFactors = FALSE
   )
 
@@ -1766,11 +1772,12 @@ build_survey_weights <- function(dat_clean,
 
   # Calculate percentage of tolerance used
   constraint_report$tolerance_used_pct <- with(constraint_report, {
-    case_when(
-      deviation > 0 ~ pmax(0, pmin(100, upper_slack_used / upper_slack_limit * 100)),
-      deviation < 0 ~ pmax(0, pmin(100, lower_slack_used / lower_slack_limit * 100)),
-      TRUE ~ 0
-    )
+    used <- rep(0, length(deviation))
+    pos <- deviation > 0 & upper_slack_limit > 0
+    neg <- deviation < 0 & lower_slack_limit > 0
+    used[pos] <- pmin(100, pmax(0, deviation[pos] / upper_slack_limit[pos] * 100))
+    used[neg] <- pmin(100, pmax(0, abs(deviation[neg]) / lower_slack_limit[neg] * 100))
+    used
   })
 
   # Reorder columns for clarity
@@ -1990,14 +1997,11 @@ run_unified_weighting <- function(raw_data,
 
       ## Setup tolerances
       # Start from the pipeline-wide defaults (may be NULL)
-      stage_tol_config <- tol_config %||% create_tol_config()
+      stage_tol_config <- tol_config %||% create_tol_config(default = tolerance)
 
       # (1) If this stage brings its own tol_config, merge it in
       if (!is.null(stage$tol_config)) {
-        # Ensure the stage config has all required fields
-        stage_config_complete <- create_tol_config()
-        stage_config_complete <- modifyList(stage_config_complete, stage$tol_config)
-        stage_tol_config <- modifyList(stage_tol_config, stage_config_complete)
+        stage_tol_config <- modifyList(stage_tol_config, stage$tol_config)
       }
 
       # (2) If the stage supplies a scalar tolerance it should overwrite defaults

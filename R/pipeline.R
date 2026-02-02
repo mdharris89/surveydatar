@@ -12,7 +12,12 @@
 #' key matching. The new column is positioned directly after the key column.
 #' Supports optional transformations of keys and fuzzy partial matching.
 #'
-#' @param tab_result A tab_result object from the tab() function
+#' This function operates on **materialized** tab_result objects only. Cell-based
+#' results from `tab()` must first be converted using `as.data.frame()`. The added
+#' column is for display/export purposes (e.g., `copy_tab()`, `print()`) and does
+#' not participate in layout operations like `arrange_rows()` or `hide_cols()`.
+#'
+#' @param tab_result A **materialized** tab_result object (use `as.data.frame(tab(...))`)
 #' @param lookup_df A data frame containing the lookup table
 #' @param tab_key Character string naming the column in tab_result to use as key
 #' @param lookup_key Character string naming the column in lookup_df to match against
@@ -28,6 +33,7 @@
 #' @examples
 #' \dontrun{
 #' # Example: Adding theme descriptions to a tab of theme tags
+#' # Note: must materialize with as.data.frame() before add_col_from_lookup()
 #' themes_lookup <- data.frame(
 #'   theme_id = c("satisfaction", "wait_time", "staff_helpful"),
 #'   theme_description = c(
@@ -39,6 +45,7 @@
 #'
 #' result <- data %>%
 #'   tab(theme_satisfaction, region) %>%
+#'   as.data.frame() %>%
 #'   add_col_from_lookup(
 #'     themes_lookup,
 #'     "row_label",
@@ -51,6 +58,7 @@
 #' # With transformations to clean up keys
 #' result <- data %>%
 #'   tab(q1, q2) %>%
+#'   as.data.frame() %>%
 #'   add_col_from_lookup(
 #'     labels_df,
 #'     "row_label",
@@ -64,6 +72,7 @@
 #' # With fuzzy matching for partial matches
 #' result <- data %>%
 #'   tab(categories, dept) %>%
+#'   as.data.frame() %>%
 #'   add_col_from_lookup(
 #'     category_descriptions,
 #'     "row_label",
@@ -86,6 +95,13 @@ add_col_from_lookup <- function(tab_result,
   # Input validation
   if (!inherits(tab_result, "tab_result")) {
     stop("First argument must be a tab_result object from the tab() function")
+  }
+  
+  # Cell-based tab_results must be materialized first
+
+  if (inherits(tab_result, "tab_cell_collection")) {
+    stop("add_col_from_lookup() requires a materialized tab_result. ",
+         "Use as.data.frame(tab(...)) first, then pipe into add_col_from_lookup().")
   }
 
   if (!is.data.frame(lookup_df)) {

@@ -1187,7 +1187,10 @@ filter_low_base_cells <- function(layout, store, threshold) {
 #' @param tab2 Second tab_cell_collection object
 #' @param direction Direction to glue: "cols" (side-by-side) or "rows" (stacked)
 #' @param sep Separator for combining labels
-#' @param prefix Optional prefix for tab2 labels
+#' @param prefix Optional prefix for glued labels. Use length-1 to prefix tab2
+#'   labels (current behavior) or length-2 to prefix tab1/tab2 labels. Prefixes
+#'   apply to the glued dimension (columns for direction = "cols", rows for
+#'   direction = "rows").
 #' @return A tab_cell_collection object with merged cells
 #' @export
 #' @examples
@@ -1196,6 +1199,8 @@ filter_low_base_cells <- function(layout, store, threshold) {
 #' tab1 <- tab(data, gender, region)
 #' tab2_obj <- tab(data, gender, brand)
 #' result <- glue_tab(tab1, tab2_obj, direction = "cols")
+#' result_prefixed <- glue_tab(tab1, tab2_obj, direction = "cols",
+#'   prefix = c("Group A", "Group B"))
 #' }
 glue_tab <- function(tab1, tab2,
                      direction = c("cols", "rows"),
@@ -1212,10 +1217,26 @@ glue_tab <- function(tab1, tab2,
   # Check compatibility and detect if statistics differ
   stats_differ <- check_glue_compatibility(tab1, tab2, direction)
   
+  prefix1 <- NULL
+  prefix2 <- NULL
+  if (!is.null(prefix)) {
+    if (!is.character(prefix)) {
+      stop("glue_tab() prefix must be a character vector of length 1 or 2")
+    }
+    if (length(prefix) == 1L) {
+      prefix2 <- prefix
+    } else if (length(prefix) == 2L) {
+      prefix1 <- prefix[1]
+      prefix2 <- prefix[2]
+    } else {
+      stop("glue_tab() prefix must be length 1 (tab2) or 2 (tab1, tab2)")
+    }
+  }
+  
   if (direction == "cols") {
-    result <- glue_tabs_cols_cellbased(tab1, tab2, sep, prefix, stats_differ)
+    result <- glue_tabs_cols_cellbased(tab1, tab2, sep, prefix1, prefix2, stats_differ)
   } else {
-    result <- glue_tabs_rows_cellbased(tab1, tab2, sep, prefix, stats_differ)
+    result <- glue_tabs_rows_cellbased(tab1, tab2, sep, prefix1, prefix2, stats_differ)
   }
   
   return(result)
@@ -1286,7 +1307,7 @@ merge_cell_stores <- function(store1, store2) {
 
 #' Glue tabs side-by-side (columns)
 #' @keywords internal
-glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FALSE) {
+glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix1 = NULL, prefix2 = NULL, stats_differ = FALSE) {
   # Merge cell stores
   merged_result <- merge_cell_stores(tab1$cell_store, tab2$cell_store)
   merged_store <- merged_result$store
@@ -1321,12 +1342,17 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FAL
   }
   
   # Combine labels
-  new_col_labels <- c(tab1$layout$col_labels, 
-                     if (!is.null(prefix)) {
-                       paste0(prefix, sep, tab2$layout$col_labels)
-                     } else {
-                       tab2$layout$col_labels
-                     })
+  col_labels1 <- tab1$layout$col_labels
+  if (!is.null(prefix1)) {
+    col_labels1 <- paste0(prefix1, sep, col_labels1)
+  }
+  
+  col_labels2 <- tab2$layout$col_labels
+  if (!is.null(prefix2)) {
+    col_labels2 <- paste0(prefix2, sep, col_labels2)
+  }
+  
+  new_col_labels <- c(col_labels1, col_labels2)
   
   # Combine layout defs if available
   new_row_defs <- if (!is.null(tab1$layout$row_defs)) {
@@ -1336,14 +1362,22 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FAL
   }
   
   new_col_defs <- if (!is.null(tab1$layout$col_defs) && !is.null(tab2$layout$col_defs)) {
-    col_defs2 <- tab2$layout$col_defs
-    if (!is.null(prefix)) {
-      col_defs2 <- lapply(col_defs2, function(def) {
-        def$label <- paste0(prefix, sep, def$label)
+    col_defs1 <- tab1$layout$col_defs
+    if (!is.null(prefix1)) {
+      col_defs1 <- lapply(col_defs1, function(def) {
+        def$label <- paste0(prefix1, sep, def$label)
         def
       })
     }
-    c(tab1$layout$col_defs, col_defs2)
+    
+    col_defs2 <- tab2$layout$col_defs
+    if (!is.null(prefix2)) {
+      col_defs2 <- lapply(col_defs2, function(def) {
+        def$label <- paste0(prefix2, sep, def$label)
+        def
+      })
+    }
+    c(col_defs1, col_defs2)
   } else {
     NULL
   }
@@ -1388,7 +1422,7 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FAL
 
 #' Glue tabs vertically (rows)
 #' @keywords internal
-glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FALSE) {
+glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix1 = NULL, prefix2 = NULL, stats_differ = FALSE) {
   # Merge cell stores
   merged_result <- merge_cell_stores(tab1$cell_store, tab2$cell_store)
   merged_store <- merged_result$store
@@ -1423,23 +1457,36 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix, stats_differ = FAL
   }
   
   # Combine labels
-  new_row_labels <- c(tab1$layout$row_labels, 
-                     if (!is.null(prefix)) {
-                       paste0(prefix, sep, tab2$layout$row_labels)
-                     } else {
-                       tab2$layout$row_labels
-                     })
+  row_labels1 <- tab1$layout$row_labels
+  if (!is.null(prefix1)) {
+    row_labels1 <- paste0(prefix1, sep, row_labels1)
+  }
+  
+  row_labels2 <- tab2$layout$row_labels
+  if (!is.null(prefix2)) {
+    row_labels2 <- paste0(prefix2, sep, row_labels2)
+  }
+  
+  new_row_labels <- c(row_labels1, row_labels2)
   
   # Combine layout defs if available
   new_row_defs <- if (!is.null(tab1$layout$row_defs) && !is.null(tab2$layout$row_defs)) {
-    row_defs2 <- tab2$layout$row_defs
-    if (!is.null(prefix)) {
-      row_defs2 <- lapply(row_defs2, function(def) {
-        def$label <- paste0(prefix, sep, def$label)
+    row_defs1 <- tab1$layout$row_defs
+    if (!is.null(prefix1)) {
+      row_defs1 <- lapply(row_defs1, function(def) {
+        def$label <- paste0(prefix1, sep, def$label)
         def
       })
     }
-    c(tab1$layout$row_defs, row_defs2)
+    
+    row_defs2 <- tab2$layout$row_defs
+    if (!is.null(prefix2)) {
+      row_defs2 <- lapply(row_defs2, function(def) {
+        def$label <- paste0(prefix2, sep, def$label)
+        def
+      })
+    }
+    c(row_defs1, row_defs2)
   } else {
     NULL
   }
