@@ -24,5 +24,7 @@ to the clipboard for pasting into spreadsheet tools.
 On macOS this uses \code{pbcopy}. On Windows it uses the \code{"clipboard"} connection.
 }
 \examples{
+\dontrun{
 copy_df(head(mtcars))
+}
 }

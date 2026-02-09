@@ -15,7 +15,10 @@ glue_tab(tab1, tab2, direction = c("cols", "rows"), sep = ": ", prefix = NULL)
 
 \item{sep}{Separator for combining labels}
 
-\item{prefix}{Optional prefix for tab2 labels}
+\item{prefix}{Optional prefix for glued labels. Use length-1 to prefix tab2
+labels (current behavior) or length-2 to prefix tab1/tab2 labels. Prefixes
+apply to the glued dimension (columns for direction = "cols", rows for
+direction = "rows").}
 }
 \value{
 A tab_cell_collection object with merged cells
@@ -30,5 +33,7 @@ Preserves the cell-based architecture throughout.
 tab1 <- tab(data, gender, region)
 tab2_obj <- tab(data, gender, brand)
 result <- glue_tab(tab1, tab2_obj, direction = "cols")
+result_prefixed <- glue_tab(tab1, tab2_obj, direction = "cols",
+  prefix = c("Group A", "Group B"))
 }
 }

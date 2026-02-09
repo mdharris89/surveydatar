@@ -7,7 +7,8 @@
 #' @param tab_result A tab_result produced by surveydatar::tab()
 #' @param strip_summary_rows Remove NET / Avg rows? (default FALSE)
 #' @param strip_summary_cols Remove Total / NET columns? (default FALSE)
-#' @param show_base Include base (n) row or column? (default TRUE)
+#' @param show_base Include base (n) row or column? Default NULL preserves the
+#'   value from the original tab() call. Set TRUE/FALSE to explicitly override.
 #' @param color_mode Character: "none" (default), "heatmap", "top_n", or "significance"
 #' @param color_scope Character: "column" (default), "row", or "table" (for heatmap and top_n modes)
 #' @param color_palette Character vector of colors for gradients (NULL uses defaults)
@@ -92,7 +93,7 @@
 tab_to_reactable <- function(tab_result,
                              strip_summary_rows = FALSE,
                              strip_summary_cols = FALSE,
-                             show_base = TRUE,
+                             show_base = NULL,
                              color_mode = c("none", "heatmap", "top_n", "significance"),
                              color_scope = c("column", "row", "table"),
                              color_palette = NULL,
@@ -136,8 +137,8 @@ tab_to_reactable <- function(tab_result,
   
   # Apply native operations if cell-based
   if (inherits(tab_result, "tab_cell_collection")) {
-    # Unlike Flourish, reactable CAN show base - respect show_base parameter
-    if (!show_base) {
+    # If show_base is explicitly FALSE, hide base from the grid
+    if (isFALSE(show_base)) {
       tab_result <- hide_base(tab_result)
     }
     
@@ -149,7 +150,7 @@ tab_to_reactable <- function(tab_result,
     }
     
     # Materialize with class preservation
-    # Pass show_base to control whether base row is added during materialization
+    # Pass show_base through (NULL defers to tab_result$show_base)
     tab_result <- .materialize_for_export(tab_result, 
                                          show_base = show_base, 
                                          label_mode = label_mode)
@@ -179,17 +180,28 @@ tab_to_reactable <- function(tab_result,
     }
   }
   
+  # Resolve effective_show_base for downstream helpers (always TRUE/FALSE).
+  # If the caller specified show_base explicitly, use that. Otherwise detect
+  # whether base is actually present in the materialized data.
+  if (!is.null(show_base)) {
+    effective_show_base <- show_base
+  } else {
+    base_label <- metadata$base_label
+    effective_show_base <- (length(base_label) > 0) &&
+      (base_label %in% tab_result$row_label || base_label %in% names(tab_result))
+  }
+  
   # Validate sig_comparison
   if (color_mode == "significance" || sig_symbol) {
     metadata$sig_comparison <- .validate_sig_comparison(metadata$significance, sig_comparison)
   }
   
   # Clean data
-  df <- .clean_reactable_data(tab_result, metadata, show_base, 
+  df <- .clean_reactable_data(tab_result, metadata, effective_show_base, 
                                strip_summary_rows, strip_summary_cols)
   
   # Identify special rows/columns
-  special_elements <- .identify_special_elements(df, metadata, show_base)
+  special_elements <- .identify_special_elements(df, metadata, effective_show_base)
   
   # Store settings
   settings <- list(

@@ -4,7 +4,14 @@
 \alias{glue_tabs_rows_cellbased}
 \title{Glue tabs vertically (rows)}
 \usage{
-glue_tabs_rows_cellbased(tab1, tab2, sep, prefix, stats_differ = FALSE)
+glue_tabs_rows_cellbased(
+  tab1,
+  tab2,
+  sep,
+  prefix1 = NULL,
+  prefix2 = NULL,
+  stats_differ = FALSE
+)
 }
 \description{
 Glue tabs vertically (rows)

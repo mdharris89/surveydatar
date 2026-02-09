@@ -20,6 +20,18 @@ a wrapper around update_dict_with_metadata to create a dpdict from dat with meta
 \details{
 calls create_dict() first then adds metadata, so you can create a dpdict with metadata from a dat with a single function
 }
+\section{Viewing in Cursor / VS Code}{
+
+The returned dpdict contains list-columns which some IDE viewers cannot
+display directly. To view safely, use \code{\link{make_safe_for_view}}
+before \code{View()}:
+
+\preformatted{dpdict |> make_safe_for_view() |> View()}
+
+The output of \code{make_safe_for_view()} is for \strong{display only} and should not
+be used as input to \code{\link{update_dat_from_dpdict}}.
+}
+
 \examples{
 create_dict_with_metadata(get_big_test_dat(n=10))
 }

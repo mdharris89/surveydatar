@@ -17,5 +17,7 @@ returns a comma delineated string of common alphabet names recognised in the inp
 looks for Latin, Cyrillic, Arabic, CJK, Devanagari and Bengali
 }
 \examples{
+\donttest{
 check_for_common_alphabets("Latin, Русский, عربي, 漢語, বাংলা, देवनागरी")
+}
 }

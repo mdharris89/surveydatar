@@ -44,40 +44,102 @@ as_dpdict <- function(x) {
   x
 }
 
-format_value_labels_for_view <- function(labels) {
-  if (is.null(labels) || length(labels) == 0) {
+#' Stringify a single list-column cell for viewer display
+#'
+#' Converts a single element of a list-column (typically a named or unnamed
+#' atomic vector, NULL, or NA) into a single character string suitable for
+#' display in a data viewer.
+#'
+#' @param cell A single element from a list-column.
+#' @return A single character string.
+#' @keywords internal
+stringify_list_cell <- function(cell) {
+  if (is.null(cell) || length(cell) == 0) {
     return(NA_character_)
   }
-  if (length(labels) == 1 && is.na(labels)) {
+  if (length(cell) == 1 && is.na(cell)) {
     return(NA_character_)
   }
 
-  # Try to preserve names (common for value labels)
-  nm <- names(labels)
+  # data.frame elements: summarise dimensions
+
+  if (is.data.frame(cell)) {
+    return(paste0("<data.frame ", nrow(cell), "x", ncol(cell), ">"))
+  }
+
+  # Non-atomic list elements: summarise length
+  if (is.list(cell)) {
+    return(paste0("<list len=", length(cell), ">"))
+  }
+
+  # Atomic vectors (the common dpdict case: named character/numeric vectors)
+  nm <- names(cell)
   if (!is.null(nm) && any(nzchar(nm))) {
-    vals <- as.character(labels)
+    vals <- as.character(cell)
     nm <- ifelse(is.na(nm) | !nzchar(nm), "", nm)
     out <- paste0(nm, "=", vals)
     out <- out[nzchar(out)]
     return(paste(out, collapse = "; "))
   }
 
-  # Fallback: just stringify values
-  paste(as.character(labels), collapse = "; ")
+  # Unnamed atomic: collapse values
+  paste(as.character(cell), collapse = "; ")
 }
 
-format_dpdict_for_view <- function(x) {
-  out <- x
-  list_cols <- names(out)[vapply(out, is.list, logical(1))]
-  if (length(list_cols) == 0) {
-    return(out)
+#' Make a data frame safe for viewing in any IDE
+#'
+#' Converts list-columns to character strings so that interactive viewers
+#' (Cursor, VS Code, RStudio) display a stable rectangular table without
+#' column explosion or errors.
+#'
+#' This is a **display helper only**. Do not use the output for analysis or
+#' as input to \code{\link{update_dat_from_dpdict}}.
+#'
+#' @param x A data frame, tibble, or dpdict.
+#' @param cols Character vector of column names to sanitize.
+#'   If \code{NULL} (the default), all list-columns are targeted.
+#'
+#' @return A plain base \code{data.frame} with no list-columns in the
+#'   targeted set.
+#' @export
+#'
+#' @examples
+#' dpdict <- create_dict(get_minimal_labelled_test_dat())
+#' dpdict |> make_safe_for_view() |> View()
+#'
+#' # Equivalent workarounds for Cursor users:
+#' # View(as.data.frame(dpdict))
+#' # utils::View(dpdict)
+make_safe_for_view <- function(x, cols = NULL) {
+  if (!is.data.frame(x)) {
+    x <- tryCatch(
+      base::as.data.frame(x),
+      error = function(e) {
+        stop("Cannot coerce input to a data.frame: ", e$message, call. = FALSE)
+      }
+    )
   }
 
-  for (col in list_cols) {
-    out[[col]] <- vapply(out[[col]], format_value_labels_for_view, character(1))
+  # Determine which columns to sanitize
+  if (is.null(cols)) {
+    cols <- names(x)[vapply(x, is.list, logical(1))]
+  } else {
+    missing_cols <- setdiff(cols, names(x))
+    if (length(missing_cols) > 0) {
+      warning("Columns not found (ignored): ", paste(missing_cols, collapse = ", "),
+              call. = FALSE)
+    }
+    cols <- intersect(cols, names(x))
   }
 
-  out
+  if (length(cols) > 0) {
+    for (col in cols) {
+      x[[col]] <- vapply(x[[col]], stringify_list_cell, character(1))
+    }
+  }
+
+  # Drop any special classes and return a plain base data.frame
+  base::as.data.frame(x)
 }
 
 #' Coerce a dpdict to a data.frame (viewer-friendly)
@@ -90,11 +152,10 @@ format_dpdict_for_view <- function(x) {
 #' @return A base `data.frame`.
 #' @export
 as.data.frame.dpdict <- function(x, ...) {
-  x_view <- format_dpdict_for_view(x)
-  # Avoid infinite recursion: drop dpdict class before calling as.data.frame()
-  class(x_view) <- setdiff(class(x_view), "dpdict")
-  # ensure a plain data.frame for maximum compatibility with viewers
-  base::as.data.frame(x_view, ...)
+  # Drop dpdict class before calling make_safe_for_view to avoid recursion
+  # (make_safe_for_view calls base::as.data.frame internally)
+  class(x) <- setdiff(class(x), "dpdict")
+  make_safe_for_view(x, ...)
 }
 
 #' View a dpdict in the data viewer (internal helper)
@@ -184,8 +245,17 @@ datamap.survey_data <- function(x, view_or_return = "view") {
   result$`question type` <- x$dpdict$questiontype[match(result$variable, x$dpdict$variable_names)]
   result$`alias with suffix` <- x$dpdict$alias_with_suffix[match(result$variable, x$dpdict$variable_names)]
 
-  result <- result[, c("variable", "variable label", "class", "question type", "alias with suffix", "n missing", "n unique",
-                       "value labels", "first values", "first unique values")]
+  # Add question group when available
+  has_question_group <- "question_group" %in% names(x$dpdict)
+  if (has_question_group) {
+    result$`question group` <- x$dpdict$question_group[match(result$variable, x$dpdict$variable_names)]
+  }
+
+  col_order <- c("variable", "variable label", "class", "question type",
+                 if (has_question_group) "question group",
+                 "alias with suffix", "n missing", "n unique",
+                 "value labels", "first values", "first unique values")
+  result <- result[, col_order]
 
   if (view_or_return == "view") {
     my_view(result, paste0("datamap ", deparse(substitute(x))))
@@ -285,14 +355,21 @@ datamap_questions <- function(survey_obj, view_or_return = "view"){
   out$first_var_name <- first_var_names
   out$first_var_class <- sapply(temp_dat[first_var_names], function(x) paste(class(x), collapse = ", "))
 
-  out$first_var_values <- lapply(temp_dat[first_var_names], function(v) {
+  first_var_values_list <- lapply(temp_dat[first_var_names], function(v) {
     if (inherits(v, "haven_labelled")) {
       v <- haven::zap_labels(v)
     }
     unique(v)
   })
-  out$first_var_unique_count <- sapply(out$first_var_values, length)
-  out$first_var_labels <- lapply(temp_dat[first_var_names], sjlabelled::get_labels)
+  out$first_var_unique_count <- vapply(first_var_values_list, length, integer(1))
+  out$first_var_values <- vapply(first_var_values_list, function(v) {
+    paste(utils::head(v, 10), collapse = ", ")
+  }, character(1))
+  out$first_var_labels <- vapply(temp_dat[first_var_names], function(v) {
+    labs <- sjlabelled::get_labels(v)
+    if (is.null(labs) || length(labs) == 0) return(NA_character_)
+    paste(labs, collapse = "; ")
+  }, character(1))
 
   if (view_or_return == "view") {
     my_view(out, paste0("datamap_questions ", deparse(substitute(survey_obj))))
@@ -308,6 +385,16 @@ datamap_questions <- function(survey_obj, view_or_return = "view"){
 #' creates a tibble to use as a dictionary to easily update variable names and labels
 #'
 #' note: uses sjlabelled to get value
+#'
+#' @section Viewing your IDE:
+#' The returned dpdict contains list-columns (`old_value_labels`, `value_labels`)
+#' which some IDE viewers cannot display directly. To view safely, use
+#' \code{\link{make_safe_for_view}} before \code{View()}:
+#'
+#' \preformatted{dpdict |> make_safe_for_view() |> View()}
+#'
+#' The output of `make_safe_for_view()` is for **display only** and should not
+#' be used as input to \code{\link{update_dat_from_dpdict}}.
 #'
 #' @param temp_dat a dataframe, assumed to be survey data
 #' @param prefill if TRUE (the default), columns variable_names/variable_labels/value_labels will be populated with values from 'old' versions. if FALSE, will leave as NA.
@@ -741,6 +828,16 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
 #' a wrapper around update_dict_with_metadata to create a dpdict from dat with metadata.
 #'
 #' calls create_dict() first then adds metadata, so you can create a dpdict with metadata from a dat with a single function
+#'
+#' @section Viewing in your IDE:
+#' The returned dpdict contains list-columns which some IDE viewers cannot
+#' display directly. To view safely, use \code{\link{make_safe_for_view}}
+#' before \code{View()}:
+#'
+#' \preformatted{dpdict |> make_safe_for_view() |> View()}
+#'
+#' The output of `make_safe_for_view()` is for **display only** and should not
+#' be used as input to \code{\link{update_dat_from_dpdict}}.
 #'
 #' @param temp_dat a survey data frame ('dat')
 #' @param noisy integer between 1 and 4, relating to how verbose to print.

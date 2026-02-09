@@ -267,8 +267,8 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
   
   # Apply native operations if cell-based, then materialize
   if (inherits(tab_result, "tab_cell_collection")) {
-    # Materialize with class preservation (show_base = TRUE to include base)
-    tab_result <- .materialize_for_export(tab_result, show_base = TRUE, label_mode = label_mode)
+    # Materialize with class preservation (show_base = NULL defers to tab_result$show_base)
+    tab_result <- .materialize_for_export(tab_result, show_base = NULL, label_mode = label_mode)
   } else {
     # Data.frame-based path - apply layout and visibility
     # Apply layout ordering before export

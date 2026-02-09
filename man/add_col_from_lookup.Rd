@@ -17,7 +17,7 @@ add_col_from_lookup(
 )
 }
 \arguments{
-\item{tab_result}{A tab_result object from the tab() function}
+\item{tab_result}{A \strong{materialized} tab_result object (use \code{as.data.frame(tab(...))})}
 
 \item{lookup_df}{A data frame containing the lookup table}
 
@@ -43,9 +43,16 @@ Enriches a tab_result object by adding values from a lookup table based on
 key matching. The new column is positioned directly after the key column.
 Supports optional transformations of keys and fuzzy partial matching.
 }
+\details{
+This function operates on \strong{materialized} tab_result objects only. Cell-based
+results from \code{tab()} must first be converted using \code{as.data.frame()}. The added
+column is for display/export purposes (e.g., \code{copy_tab()}, \code{print()}) and does
+not participate in layout operations like \code{arrange_rows()} or \code{hide_cols()}.
+}
 \examples{
 \dontrun{
 # Example: Adding theme descriptions to a tab of theme tags
+# Note: must materialize with as.data.frame() before add_col_from_lookup()
 themes_lookup <- data.frame(
   theme_id = c("satisfaction", "wait_time", "staff_helpful"),
   theme_description = c(
@@ -57,6 +64,7 @@ themes_lookup <- data.frame(
 
 result <- data \%>\%
   tab(theme_satisfaction, region) \%>\%
+  as.data.frame() \%>\%
   add_col_from_lookup(
     themes_lookup,
     "row_label",
@@ -69,6 +77,7 @@ result <- data \%>\%
 # With transformations to clean up keys
 result <- data \%>\%
   tab(q1, q2) \%>\%
+  as.data.frame() \%>\%
   add_col_from_lookup(
     labels_df,
     "row_label",
@@ -82,6 +91,7 @@ result <- data \%>\%
 # With fuzzy matching for partial matches
 result <- data \%>\%
   tab(categories, dept) \%>\%
+  as.data.frame() \%>\%
   add_col_from_lookup(
     category_descriptions,
     "row_label",

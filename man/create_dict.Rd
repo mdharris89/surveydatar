@@ -20,6 +20,18 @@ creates a tibble to use as a dictionary to easily update variable names and labe
 \details{
 note: uses sjlabelled to get value
 }
+\section{Viewing in Cursor / VS Code}{
+
+The returned dpdict contains list-columns (\code{old_value_labels}, \code{value_labels})
+which some IDE viewers cannot display directly. To view safely, use
+\code{\link{make_safe_for_view}} before \code{View()}:
+
+\preformatted{dpdict |> make_safe_for_view() |> View()}
+
+The output of \code{make_safe_for_view()} is for \strong{display only} and should not
+be used as input to \code{\link{update_dat_from_dpdict}}.
+}
+
 \examples{
 create_dict(get_minimal_labelled_test_dat())
 
