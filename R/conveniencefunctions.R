@@ -726,6 +726,14 @@ concatenate_by_group <- function(temp_dat, group_var){
 #' @param puncts Character vector of punctuation marks
 #' @return A string suitable for use in regex pattern matching
 puncts_to_pattern <- function(puncts) {
+  if (is.null(puncts) || length(puncts) == 0 || !is.character(puncts)) {
+    stop("`puncts` must be a non-empty character vector.")
+  }
+  puncts <- puncts[!is.na(puncts)]
+  if (length(puncts) == 0) {
+    stop("`puncts` must be a non-empty character vector.")
+  }
+
   # Characters that need escaping in regex
   special_chars <- c(".", "|", "(", ")", "[", "]", "{", "}", "^", "$", "*", "+", "?", "\\", " ")
 

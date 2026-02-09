@@ -1294,7 +1294,8 @@ prepare_eval_data <- function(data) {
   # Convert haven_labelled to numeric, preserve everything else
   data[] <- lapply(data, function(x) {
     if (inherits(x, "haven_labelled")) {
-      as.numeric(x)
+      # Strip vctrs classes first: avoids cross-session cast failures after RDS reload
+      as.numeric(unclass(x))
     } else {
       x
     }

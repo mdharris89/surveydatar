@@ -707,25 +707,27 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
     SIMPLIFY = FALSE
   )
 
-  result$prefix_seps_found <- sapply(prefix_seps_result, `[[`, "found_sep")
+  result$prefix_seps_found <- trimws(sapply(prefix_seps_result, `[[`, "found_sep"))
   result$new_variable_labels <- sapply(prefix_seps_result, `[[`, "new_string")
 
   # statement seps
-  if (!is.na(seps_to_use[["statement_sep"]])) {
-    pattern <- paste0(puncts_to_pattern(names(sep_analysis$counts$statement_sep)), collapse = "|")
+  statement_sep_candidates <- names(sep_analysis$counts$statement_sep)
+  if (!is.na(seps_to_use[["statement_sep"]]) && length(statement_sep_candidates) > 0) {
+    pattern <- puncts_to_pattern(statement_sep_candidates)
 
-    result$statement_seps_found <- sapply(result$new_variable_labels, function(label) {
+    result$statement_seps_found <- vapply(result$new_variable_labels, function(label) {
       matched_sep <- regexpr(pattern, label)
-      substr(label, matched_sep, matched_sep + attr(matched_sep, "match.length")-1)
-    })
+      if (matched_sep < 1) return(NA_character_)
+      substr(label, matched_sep, matched_sep + attr(matched_sep, "match.length") - 1)
+    }, character(1))
 
     if (!is.na(seps_to_use[["prefix_sep"]]) && any(grepl(seps_to_use[["prefix_sep"]], result$new_variable_labels, fixed = TRUE))) {
-      result$new_variable_labels <- sapply(result$new_variable_labels, function(label) {
+      result$new_variable_labels <- vapply(result$new_variable_labels, function(label) {
         parts <- strsplit(label, seps_to_use[["prefix_sep"]], fixed = TRUE)[[1]]
         remainder <- paste(parts[-1], collapse = seps_to_use[["prefix_sep"]])
         remainder <- gsub(pattern, seps_to_use[["statement_sep"]], remainder)
         paste0(parts[1], seps_to_use[["prefix_sep"]], remainder)
-      })
+      }, character(1))
     } else {
       result$new_variable_labels <- gsub(pattern, seps_to_use[["statement_sep"]], result$new_variable_labels)
     }
