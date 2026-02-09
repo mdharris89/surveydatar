@@ -825,9 +825,17 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
 
 #' create_dict_with_metadata
 #'
-#' a wrapper around update_dict_with_metadata to create a dpdict from dat with metadata.
+#' Creates a dpdict with full metadata from a survey data frame in a single call.
 #'
-#' calls create_dict() first then adds metadata, so you can create a dpdict with metadata from a dat with a single function
+#' A convenience wrapper that calls \code{\link{create_dict}} then
+#' \code{\link{update_dict_with_metadata}}, so you can go straight from a dat
+#' to a fully annotated dpdict. All configuration parameters accepted by
+#' \code{update_dict_with_metadata} (except \code{variables_to_update}, which
+#' is not applicable when creating from scratch) are available here and passed
+#' through.
+#'
+#' If variable labels are missing or NA in \code{temp_dat}, variable names are
+#' substituted and a warning is issued.
 #'
 #' @section Viewing in your IDE:
 #' The returned dpdict contains list-columns which some IDE viewers cannot
@@ -840,14 +848,54 @@ get_updated_seps <- function(temp_dat, sep_analysis, seps_to_use = NULL) {
 #' be used as input to \code{\link{update_dat_from_dpdict}}.
 #'
 #' @param temp_dat a survey data frame ('dat')
-#' @param noisy integer between 1 and 4, relating to how verbose to print.
+#' @param seps_to_use optional list specifying separators to use for processing:
+#'        - var_name_sep: String that separates each variable within a common question, e.g. "_" for Q1_1, Q1_2.
+#'        - prefix_sep: String. If ignorelabelbeforeprefix == TRUE, substring before prefix_sep will be removed before working with variable labels.
+#'        - statement_sep: String. For findlongest == FALSE, uses substring prior to statement_sep as commonlabel.
+#' @param ignorelabelbeforeprefix Logical. If TRUE (default), removes substring before prefix_sep before working with variable labels.
+#' @param split_into_groups_config optional list of options for \code{\link{split_into_question_groups}}
+#' @param edit_aliases logical. If TRUE, allows user to manually edit question_aliases using data_edit before creating alias_with_suffix. (question_folder can be defined at the same time)
+#' @param noisy integer between 0 and 4. 0 by default (silent). if 1, signals start of attempts to find question groups, and multiresponse. if noisy == 2 provides timing and updates within question groups and multiresponse hunts. noisy > 2 has settings within function for finding question groups.
 #'
-#' @return a dpdict with metadata
+#' @details
+#' metadata included:
+#' \itemize{
+#'  \item variable-level metadata: question_group, variable class, and then checks for single variable question, dichotomous variable, variable with value labels, and multiresponse variable, which are in turn used to define questiontype
+#'  \item question-level metadata: question_alias, question_description, question_suffix, alias_with_suffix, and question_folder
+#'  \item question_alias, question_description, question_folder, and alias_with_suffix are user-defined fields for custom labelling and organization (not currently integrated with tab() or export functions)
+#'  \item question_suffix is used by get_display_label() when label_mode = "suffix" or "smart" in tab() and export functions
+#' }
+#'
+#' The function performs several steps:
+#' \itemize{
+#'   \item Patches missing/NA variable labels (substitutes variable names).
+#'   \item Creates a base dpdict via \code{\link{create_dict}}.
+#'   \item Standardizes separators in variable names and labels using \code{\link{get_updated_seps}}.
+#'   \item Determines question groups using \code{\link{split_into_question_groups}}.
+#'   \item Infers variable metadata (class, single/dichotomous, value labels).
+#'   \item Attempts to identify multiresponse variable sets (may take time on large datasets).
+#'   \item Assigns a `questiontype` based on the inferred metadata (e.g., 'numeric', 'categorical', 'multiresponse', 'text').
+#'   \item Creates question-level metadata (alias, description, folder) using \code{\link{create_questions_dict}}.
+#'   \item Generates unique suffixes for variables within question groups using \code{\link{get_unique_suffixes}} and creates an `alias_with_suffix`.
+#' }
+#'
+#' @return a dpdict data frame with metadata
 #' @export
 #'
-#' @examples create_dict_with_metadata(get_big_test_dat(n=10))
-create_dict_with_metadata <- function(temp_dat, noisy = 0){
-  # if no temp_dpdict provided, create one and initialize metadata columns
+#' @examples
+#' create_dict_with_metadata(get_big_test_dat(n=10))
+#'
+#' # With custom separator configuration
+#' create_dict_with_metadata(
+#'   get_big_test_dat(n=10),
+#'   seps_to_use = list(var_name_sep = "_", prefix_sep = ": ", statement_sep = " - ")
+#' )
+create_dict_with_metadata <- function(temp_dat,
+                                      seps_to_use = NULL,
+                                      ignorelabelbeforeprefix = TRUE,
+                                      split_into_groups_config = NULL,
+                                      edit_aliases = FALSE,
+                                      noisy = 0){
 
   # if no label and labels attributes (e.g. from csv imports) add them, and if variable labels NA, use variable names
   missing_var_labels <- FALSE
@@ -873,7 +921,12 @@ create_dict_with_metadata <- function(temp_dat, noisy = 0){
   }
 
   temp_dpdict <- create_dict(temp_dat, prefill = TRUE)
-  temp_dpdict <- update_dict_with_metadata(survey_obj = NULL, temp_dat, temp_dpdict, noisy = noisy)
+  temp_dpdict <- update_dict_with_metadata(survey_obj = NULL, temp_dat, temp_dpdict,
+                                           seps_to_use = seps_to_use,
+                                           ignorelabelbeforeprefix = ignorelabelbeforeprefix,
+                                           split_into_groups_config = split_into_groups_config,
+                                           edit_aliases = edit_aliases,
+                                           noisy = noisy)
   return(as_dpdict(temp_dpdict))
 }
 
@@ -936,7 +989,7 @@ standardise_survey_separators <- function(temp_dat, temp_dpdict = NULL, seps_to_
 #' @param ignorelabelbeforeprefix Logical. If TRUE, removes substring before prefix_sep before working with variable labels.
 #' @param split_into_groups_config options for split_into_question_groups
 #' @param edit_aliases logical. whether to allow user to manually edit question_aliases using data_edit before creating alias_with_suffix. (question_folder can be defined at the same time)
-#' @param noisy integer between 1 and 4. 1 by default. if 1, signals start of attempts to find question groups, and multiresponse. if noisy == 2 provides timing and updates within question groups and multiresponse hunts. noisy > 2 has settings within function for finding question groups.
+#' @param noisy integer between 0 and 4. 0 by default (silent). if 1, signals start of attempts to find question groups, and multiresponse. if noisy == 2 provides timing and updates within question groups and multiresponse hunts. noisy > 2 has settings within function for finding question groups.
 #'
 #' @details
 #' metadata included:
@@ -1053,13 +1106,15 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
     variables_to_update <- rep(TRUE, ncol(temp_dat))
   }
 
-  # Get seps from dpdict attributes or from dat
-  seps_to_use <- attr(temp_dpdict, "sep_patterns")
+  # Get seps: prefer caller-supplied, then dpdict attribute, then detect from dat
+  if (is.null(seps_to_use)) {
+    seps_to_use <- attr(temp_dpdict, "sep_patterns")
+  }
   if (is.null(seps_to_use)) {
     check_seps_result <- check_seps(temp_dat)
     seps_to_use <- as.list(check_seps_result$separators)
-    attr(temp_dpdict, "sep_patterns") <- seps_to_use
   }
+  attr(temp_dpdict, "sep_patterns") <- seps_to_use
 
   # initialize any missing columns
   character_cols_to_initialize <- c("question_group", "question_lcs", "variable_class", "questiontype", "question_suffix", "question_alias", "question_description", "alias_with_suffix", "question_folder")
@@ -1078,7 +1133,7 @@ update_dict_with_metadata <- function(survey_obj = NULL, temp_dat = NULL, temp_d
   }
 
   temp_dpdict <- split_into_question_groups(temp_dpdict, temp_dat, variables_to_process = variables_to_update,
-                                            seps_to_use, ignorelabelbeforeprefix = TRUE,
+                                            seps_to_use, ignorelabelbeforeprefix = ignorelabelbeforeprefix,
                                             config = split_into_groups_config,
                                             noisy = noisy)
   if(noisy >= 2){print(proc.time() - start_time)}

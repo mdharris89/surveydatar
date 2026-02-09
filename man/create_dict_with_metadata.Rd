@@ -20,7 +20,7 @@ a wrapper around update_dict_with_metadata to create a dpdict from dat with meta
 \details{
 calls create_dict() first then adds metadata, so you can create a dpdict with metadata from a dat with a single function
 }
-\section{Viewing in Cursor / VS Code}{
+\section{Viewing in your IDE}{
 
 The returned dpdict contains list-columns which some IDE viewers cannot
 display directly. To view safely, use \code{\link{make_safe_for_view}}

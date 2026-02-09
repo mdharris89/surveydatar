@@ -20,7 +20,7 @@ creates a tibble to use as a dictionary to easily update variable names and labe
 \details{
 note: uses sjlabelled to get value
 }
-\section{Viewing in Cursor / VS Code}{
+\section{Viewing in your IDE}{
 
 The returned dpdict contains list-columns (\code{old_value_labels}, \code{value_labels})
 which some IDE viewers cannot display directly. To view safely, use
