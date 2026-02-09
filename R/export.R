@@ -477,7 +477,9 @@ copy_tab <- function(tab_result, digits = NULL, empty_zeros = FALSE, na_display 
 #' @return Invisibly returns `df`.
 #' @export
 #' @examples
+#' \dontrun{
 #' copy_df(head(mtcars))
+#' }
 copy_df <- function(df, row.names = FALSE, sep = "\t") {
   # Ensure input is a data frame
   if (!is.data.frame(df)) {

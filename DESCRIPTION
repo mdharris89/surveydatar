@@ -1,11 +1,12 @@
 Package: surveydatar
 Title: Tools for Processing and Analysing Market Research Survey Data
 Version: 0.1.0
-Authors@R: 
+Authors@R:
     person("Matt", "Harris", email = "mdharris89@gmail.com", role = c("aut", "cre"))
 Maintainer: Matt Harris <mdharris89@gmail.com>
 Description: Tools for processing and analysing survey data for market research, including metadata management via the survey_data and dpdict framework and flexible cross-tabulation with tab().
 License: MIT + file LICENSE
+Depends: R (>= 4.1.0)
 URL: https://github.com/mdharris89/surveydatar
 BugReports: https://github.com/mdharris89/surveydatar/issues
 Encoding: UTF-8
