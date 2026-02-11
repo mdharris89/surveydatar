@@ -12,6 +12,8 @@ tab(
   weight = NULL,
   statistic = c("column_pct", "count", "row_pct", "mean"),
   values = NULL,
+  measures = NULL,
+  measure_axis = c("auto", "cols", "rows"),
   show_row_nets = TRUE,
   show_col_nets = TRUE,
   show_base = TRUE,
@@ -38,6 +40,12 @@ tab(
 \item{statistic}{Type of statistic: "column_pct", "count", "row_pct", "mean"}
 
 \item{values}{Variable name to aggregate for value-based statistics}
+
+\item{measures}{Optional explicit list of \code{measure()} specifications. When set,
+legacy \code{statistic}/\code{values} inputs are not allowed.}
+
+\item{measure_axis}{Where to place measure blocks for multi-measure tabs:
+\code{"cols"}, \code{"rows"}, or \code{"auto"} (\code{"auto"} defaults to \code{"cols"}).}
 
 \item{show_row_nets}{Whether to display NET/summary rows (NET row for column_pct, Avg for mean, etc.). Summary rows are always computed, this controls visibility.}
 

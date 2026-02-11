@@ -195,7 +195,9 @@ tab_to_flourish <- function(tab_result,
     data     = transform_result$data,
     bindings = transform_result$bindings,
     chart_type = chart_type,
-    settings = final_settings
+    settings = final_settings,
+    measures = attr(tab_result, "measures"),
+    measure_matrix = attr(tab_result, "measure_matrix")
   )
   class(res) <- "flourish_tab"
   res

@@ -89,29 +89,27 @@ add_sig_all <- function(tab_result,
 
   # Get statistic info to identify summary columns
   statistic <- tab_result$statistic
-  
-  # Check for mixed-statistic tabs (cannot perform significance testing)
-  if (is.null(statistic)) {
-    stop("Cannot perform significance testing on mixed-statistic tabs. ",
-         "This tab was created by gluing tabs with different statistics. ",
-         "Apply add_sig() before gluing, or glue tabs with the same statistic.")
-  }
+  is_multi_measure <- !is.null(tab_result$measures) && length(tab_result$measures) > 1L
 
   # Build list of columns to exclude
   columns_to_exclude <- character()
 
-  # Always exclude base column
-  if (!is.null(statistic$base_label)) {
-    columns_to_exclude <- c(columns_to_exclude, statistic$base_label)
-  }
-
-  # Always exclude summary columns
-  if (!is.null(statistic$summary_col)) {
-    columns_to_exclude <- c(columns_to_exclude, statistic$summary_col)
-  }
-  if (!is.null(statistic$summary_row)) {
-    # In case summary_row appears as a column somehow
-    columns_to_exclude <- c(columns_to_exclude, statistic$summary_row)
+  if (!is.null(statistic)) {
+    # Always exclude base column
+    if (!is.null(statistic$base_label)) {
+      columns_to_exclude <- c(columns_to_exclude, statistic$base_label)
+    }
+    # Always exclude summary columns
+    if (!is.null(statistic$summary_col)) {
+      columns_to_exclude <- c(columns_to_exclude, statistic$summary_col)
+    }
+    if (!is.null(statistic$summary_row)) {
+      columns_to_exclude <- c(columns_to_exclude, statistic$summary_row)
+    }
+  } else if (!is_multi_measure) {
+    stop("Cannot perform significance testing on mixed-statistic tabs. ",
+         "This tab was created by gluing tabs with different statistics. ",
+         "Apply add_sig() before gluing, or glue tabs with the same statistic.")
   }
 
   # Add any user-specified exclusions
@@ -119,11 +117,33 @@ add_sig_all <- function(tab_result,
     columns_to_exclude <- c(columns_to_exclude, exclude)
   }
 
-  # Get all column names from layout
-  col_names <- tab_result$layout$col_labels
-
-  # Remove excluded columns
-  col_names <- setdiff(col_names, columns_to_exclude)
+  if (is_multi_measure && !is.null(tab_result$layout$measure_col_map)) {
+    measure_lookup <- setNames(tab_result$measures, vapply(tab_result$measures, `[[`, character(1), "id"))
+    col_names <- character(0)
+    for (mid in unique(tab_result$layout$measure_col_map)) {
+      if (is.na(mid) || identical(mid, "summary_placeholder")) next
+      block_idx <- which(tab_result$layout$measure_col_map == mid)
+      block_names <- tab_result$layout$col_labels[block_idx]
+      ms <- measure_lookup[[mid]]
+      block_exclude <- columns_to_exclude
+      if (!is.null(ms)) {
+        ms_stat <- get_statistic(ms$statistic_id)
+        block_exclude <- unique(c(
+          block_exclude,
+          ms_stat$base_label,
+          ms_stat$summary_col,
+          ms_stat$summary_row
+        ))
+      }
+      col_names <- c(col_names, setdiff(block_names, block_exclude))
+    }
+    col_names <- unique(col_names)
+  } else {
+    # Get all column names from layout
+    col_names <- tab_result$layout$col_labels
+    # Remove excluded columns
+    col_names <- setdiff(col_names, columns_to_exclude)
+  }
 
   # Only proceed if there are columns left to test
   if (length(col_names) == 0) {
@@ -131,8 +151,8 @@ add_sig_all <- function(tab_result,
     return(tab_result)
   }
   
-  # Resolve 'auto' once up-front (fail early with a single clear error)
-  if (identical(test, "auto")) {
+  # Resolve 'auto' once up-front for single-stat tabs.
+  if (!is_multi_measure && identical(test, "auto")) {
     has_weights <- .sig_has_weights(tab_result$arrays$base_array)
     test <- .resolve_auto_sig_test(statistic$id, has_weights)
   }
@@ -707,58 +727,179 @@ add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
   grid <- tab_result$layout$grid
   arrays <- tab_result$arrays
   statistic <- tab_result$statistic
-  
-  # Check for mixed-statistic tabs (cannot perform significance testing)
+
+  measure_lookup <- NULL
+  if (!is.null(tab_result$measures) && length(tab_result$measures) > 0) {
+    measure_lookup <- setNames(tab_result$measures, vapply(tab_result$measures, `[[`, character(1), "id"))
+  }
+
+  # Multi-measure path: partition into compatible blocks and test each block independently.
+  if (!is.null(measure_lookup) &&
+      (!is.null(tab_result$layout$measure_col_map) || !is.null(tab_result$layout$measure_row_map))) {
+
+    test_name <- name
+    if (is.null(test_name)) {
+      if (is.character(versus)) {
+        test_name <- versus
+      } else if (is.numeric(versus)) {
+        test_name <- paste0("col_", versus)
+      } else {
+        test_name <- "sig"
+      }
+    }
+
+    base_row_index_map <- tab_result$layout$base_row_index_map
+    base_col_index_map <- tab_result$layout$base_col_index_map
+    if (is.null(base_row_index_map)) {
+      base_row_index_map <- seq_len(nrow(grid))
+    }
+    if (is.null(base_col_index_map)) {
+      base_col_index_map <- seq_len(ncol(grid))
+    }
+
+    process_block <- function(block_grid, block_row_idx, block_col_idx, measure_id, versus_local = versus) {
+      if (nrow(block_grid) == 0 || ncol(block_grid) < 2) {
+        return(invisible(NULL))
+      }
+
+      active_rows <- which(apply(!is.na(block_grid), 1, any))
+      active_cols <- which(apply(!is.na(block_grid), 2, any))
+      if (length(active_rows) == 0 || length(active_cols) < 2) {
+        return(invisible(NULL))
+      }
+
+      block_grid <- block_grid[active_rows, active_cols, drop = FALSE]
+      row_idx <- block_row_idx[active_rows]
+      col_idx <- block_col_idx[active_cols]
+
+      row_base_idx <- base_row_index_map[row_idx]
+      col_base_idx <- base_col_index_map[col_idx]
+
+      keep_rows <- !is.na(row_base_idx)
+      keep_cols <- !is.na(col_base_idx)
+      if (sum(keep_rows) == 0 || sum(keep_cols) < 2) {
+        return(invisible(NULL))
+      }
+
+      block_grid <- block_grid[keep_rows, keep_cols, drop = FALSE]
+      row_idx <- row_idx[keep_rows]
+      col_idx <- col_idx[keep_cols]
+      row_base_idx <- row_base_idx[keep_rows]
+      col_base_idx <- col_base_idx[keep_cols]
+
+      result_matrix_data <- extract_result_matrix_from_grid(store, block_grid)
+      row_labels_data <- tab_result$layout$row_labels[row_idx]
+      col_names_data <- tab_result$layout$col_labels[col_idx]
+      rownames(result_matrix_data) <- row_labels_data
+      colnames(result_matrix_data) <- col_names_data
+
+      versus_block <- versus_local
+      if (is.numeric(versus_local)) {
+        if (length(versus_local) != 1 || !(versus_local %in% col_idx)) {
+          return(invisible(NULL))
+        }
+        versus_block <- match(versus_local, col_idx)
+      } else if (is.character(versus_local) && !versus_local %in% c("first_col", "last_col", "total")) {
+        if (!(versus_local %in% col_names_data)) {
+          suffix_match <- col_names_data[sub("^.*\\|\\s*", "", col_names_data) == versus_local]
+          if (length(suffix_match) == 1) {
+            versus_block <- suffix_match
+          } else {
+            return(invisible(NULL))
+          }
+        }
+      }
+
+      ms <- measure_lookup[[measure_id]]
+      if (is.null(ms)) {
+        return(invisible(NULL))
+      }
+      ms_stat <- get_statistic(ms$statistic_id)
+      values_arr <- arrays$per_measure[[measure_id]]$values_array %||% arrays$values_array
+
+      sig_result <- compute_significance(
+        base_array = arrays$base_array,
+        row_arrays = arrays$row_arrays[row_base_idx],
+        row_u_arrays = arrays$row_u_arrays[row_base_idx],
+        col_arrays = arrays$col_arrays[col_base_idx],
+        col_u_arrays = arrays$col_u_arrays[col_base_idx],
+        result_matrix = result_matrix_data,
+        statistic = ms_stat,
+        values_array = values_arr,
+        sig_config = list(
+          test = test,
+          versus = versus_block,
+          level = level,
+          adjust = adjust
+        ),
+        row_labels = row_labels_data
+      )
+
+      attach_sig_to_cells(
+        store = store,
+        grid = block_grid,
+        sig_result = sig_result,
+        test_name = test_name,
+        meta_row_indices = integer(0),
+        meta_col_indices = integer(0)
+      )
+      invisible(NULL)
+    }
+
+    if (!is.null(tab_result$layout$measure_col_map)) {
+      for (mid in unique(tab_result$layout$measure_col_map)) {
+        if (is.na(mid) || identical(mid, "summary_placeholder")) next
+        block_cols <- which(tab_result$layout$measure_col_map == mid)
+        if (length(block_cols) < 2) next
+        process_block(
+          block_grid = grid[, block_cols, drop = FALSE],
+          block_row_idx = seq_len(nrow(grid)),
+          block_col_idx = block_cols,
+          measure_id = mid
+        )
+      }
+      return(tab_result)
+    }
+
+    if (!is.null(tab_result$layout$measure_row_map)) {
+      for (mid in unique(tab_result$layout$measure_row_map)) {
+        if (is.na(mid) || identical(mid, "summary_placeholder")) next
+        block_rows <- which(tab_result$layout$measure_row_map == mid)
+        if (length(block_rows) == 0) next
+        process_block(
+          block_grid = grid[block_rows, , drop = FALSE],
+          block_row_idx = block_rows,
+          block_col_idx = seq_len(ncol(grid)),
+          measure_id = mid
+        )
+      }
+      return(tab_result)
+    }
+  }
+
+  # Legacy single-statistic path.
   if (is.null(statistic)) {
     stop("Cannot perform significance testing on mixed-statistic tabs. ",
          "This tab was created by gluing tabs with different statistics. ",
          "Apply add_sig() before gluing, or glue tabs with the same statistic.")
   }
-  
-  # Build result matrix directly from grid (no materialization)
+
   result_matrix <- extract_result_matrix_from_grid(store, grid)
-  
-  # Identify meta rows and columns to exclude from significance
   meta_row_indices <- identify_meta_indices(store, grid, "row")
   meta_col_indices <- identify_meta_indices(store, grid, "col")
-  
-  # Filter result_matrix and arrays to data-only elements
   data_rows <- setdiff(seq_len(nrow(grid)), meta_row_indices)
   data_cols <- setdiff(seq_len(ncol(grid)), meta_col_indices)
-  
+
   result_matrix_data <- result_matrix[data_rows, data_cols, drop = FALSE]
   row_arrays_data <- arrays$row_arrays[data_rows]
   row_u_arrays_data <- arrays$row_u_arrays[data_rows]
   col_arrays_data <- arrays$col_arrays[data_cols]
   col_u_arrays_data <- arrays$col_u_arrays[data_cols]
-  
-  # Get row labels for data rows
-  row_labels_data <- if (!is.null(tab_result$layout$row_labels)) {
-    tab_result$layout$row_labels[data_rows]
-  } else {
-    paste0("Row_", data_rows)
-  }
-  
-  # Get column names for data cols
-  col_names_data <- if (!is.null(tab_result$layout$col_labels)) {
-    tab_result$layout$col_labels[data_cols]
-  } else {
-    paste0("Col_", data_cols)
-  }
-  
-  # Set matrix names
+  row_labels_data <- if (!is.null(tab_result$layout$row_labels)) tab_result$layout$row_labels[data_rows] else paste0("Row_", data_rows)
+  col_names_data <- if (!is.null(tab_result$layout$col_labels)) tab_result$layout$col_labels[data_cols] else paste0("Col_", data_cols)
   rownames(result_matrix_data) <- row_labels_data
   colnames(result_matrix_data) <- col_names_data
-  
-  # Create sig_config
-  sig_config <- list(
-    test = test,
-    versus = versus,
-    level = level,
-    adjust = adjust
-  )
-  
-  # Compute significance using existing function
+
   sig_result <- compute_significance(
     base_array = arrays$base_array,
     row_arrays = row_arrays_data,
@@ -768,24 +909,20 @@ add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
     result_matrix = result_matrix_data,
     statistic = statistic,
     values_array = arrays$values_array,
-    sig_config = sig_config,
+    sig_config = list(test = test, versus = versus, level = level, adjust = adjust),
     row_labels = row_labels_data
   )
-  
-  # Determine test name
+
   if (is.null(name)) {
-    # Resolve versus to column name from data columns
     if (is.character(versus)) {
-      name <- switch(versus,
-                     "first_col" = col_names_data[1],
-                     "last_col" = col_names_data[length(col_names_data)],
-                     versus)  # Use as-is if it's already a column name
+      name <- switch(versus, "first_col" = col_names_data[1], "last_col" = col_names_data[length(col_names_data)], versus)
     } else if (is.numeric(versus)) {
       name <- col_names_data[versus]
+    } else {
+      name <- "sig"
     }
   }
-  
-  # Attach significance to cells
+
   attach_sig_to_cells(
     store = store,
     grid = grid,
@@ -794,7 +931,6 @@ add_sig_cell_native <- function(tab_result, versus, test, level, adjust, name) {
     meta_row_indices = meta_row_indices,
     meta_col_indices = meta_col_indices
   )
-  
-  # Return modified collection (still tab_cell_collection)
-  return(tab_result)
+
+  tab_result
 }

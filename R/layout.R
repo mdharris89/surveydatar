@@ -1797,6 +1797,12 @@ show_summary <- function(tab_result, .rows = TRUE, .cols = TRUE) {
   if (inherits(tab_result, "tab_cell_collection")) {
     needs_refresh <- FALSE
     stat <- tab_result$statistic
+    if (is.null(stat) && !is.null(tab_result$measures) && length(tab_result$measures) > 0) {
+      stat <- get_statistic(tab_result$measures[[1]]$statistic_id)
+    }
+    if (is.null(stat)) {
+      return(tab_result)
+    }
     
     # Add summary row_def if requested
     if (.rows && !is.null(stat$summary_row)) {
@@ -2840,7 +2846,8 @@ create_custom_col_def <- function(fn, label) {
 #' @param ... Named matcher functions (e.g., row_expr_matcher = function(x) ...)
 #'   Valid socket names: cell_id_matcher, value_matcher, base_matcher,
 #'   row_expr_matcher, col_expr_matcher, base_expr_matcher, row_dsl_matcher,
-#'   col_dsl_matcher, base_dsl_matcher, statistic_matcher, values_var_matcher,
+#'   col_dsl_matcher, base_dsl_matcher, statistic_matcher, measure_id_matcher,
+#'   values_var_matcher,
 #'   is_summary_row_matcher, is_summary_col_matcher, meta_matcher,
 #'   computation_matcher, derivation_matcher
 #' @param label Character label for this position (displayed in output)
@@ -2888,6 +2895,7 @@ new_layout_def <- function(..., label, dimension = c("row", "col")) {
     col_dsl_matcher = NULL,
     base_dsl_matcher = NULL,
     statistic_matcher = NULL,
+    measure_id_matcher = NULL,
     values_var_matcher = NULL,
     is_summary_row_matcher = NULL,
     is_summary_col_matcher = NULL,
@@ -2971,6 +2979,10 @@ cell_qualifies_for_def <- function(cell, layout_def) {
   
   if (!is.null(layout_def$statistic_matcher)) {
     if (!layout_def$statistic_matcher(cell$specification$statistic_id)) return(FALSE)
+  }
+
+  if (!is.null(layout_def$measure_id_matcher)) {
+    if (!layout_def$measure_id_matcher(cell$specification$measure_id)) return(FALSE)
   }
   
   if (!is.null(layout_def$values_var_matcher)) {
@@ -3078,6 +3090,7 @@ initialize_layout_defs <- function(expanded_specs, summary_spec = NULL, dimensio
 #' matcher(quote(gender == 2))  # FALSE
 #' }
 exact_match_matcher <- function(target) {
+  force(target)
   function(x) identical(x, target)
 }
 
@@ -3173,7 +3186,7 @@ print.layout_def <- function(x, ...) {
     "cell_id_matcher", "value_matcher", "base_matcher",
     "row_expr_matcher", "col_expr_matcher", "base_expr_matcher",
     "row_dsl_matcher", "col_dsl_matcher", "base_dsl_matcher",
-    "statistic_matcher", "values_var_matcher",
+    "statistic_matcher", "measure_id_matcher", "values_var_matcher",
     "is_summary_row_matcher", "is_summary_col_matcher",
     "meta_matcher", "computation_matcher", "derivation_matcher"
   )

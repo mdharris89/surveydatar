@@ -124,6 +124,10 @@
 #' @param weight Weight variable name (optional)
 #' @param statistic Type of statistic: "column_pct", "count", "row_pct", "mean"
 #' @param values Variable name to aggregate for value-based statistics
+#' @param measures Optional explicit list of `measure()` specifications. When set,
+#'   legacy `statistic`/`values` inputs are not allowed.
+#' @param measure_axis Where to place measure blocks for multi-measure tabs:
+#'   `"cols"`, `"rows"`, or `"auto"` (`"auto"` defaults to `"cols"`).
 #' @param show_row_nets Whether to display NET/summary rows (NET row for column_pct, Avg for mean, etc.). Summary rows are always computed, this controls visibility.
 #' @param show_col_nets Whether to display NET/summary columns (NET column for row_pct, Total for count, etc.). Summary columns are always computed, this controls visibility.
 #' @param show_base Whether to display Base row/column. Base is always computed, this controls visibility.
@@ -188,6 +192,8 @@
 tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
                 statistic = c("column_pct", "count", "row_pct", "mean"),
                 values = NULL,
+                measures = NULL,
+                measure_axis = c("auto", "cols", "rows"),
                 show_row_nets = TRUE, show_col_nets = TRUE, show_base = TRUE,
                 low_base_threshold = NULL,
                 hide_empty = TRUE,
@@ -262,6 +268,22 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
   }
   user_supplied_args <- unique(arg_names[nzchar(arg_names)])
+  measure_axis <- match.arg(measure_axis)
+  if (identical(measure_axis, "auto")) {
+    measure_axis <- "cols"
+  }
+
+  if (!is.null(measures)) {
+    if (!is.list(measures) || length(measures) == 0) {
+      stop("measures must be a non-empty list of measure() specifications")
+    }
+    if ("statistic" %in% user_supplied_args || "values" %in% user_supplied_args) {
+      stop("When `measures` is supplied, do not also supply legacy `statistic`/`values`.")
+    }
+  }
+
+  statistic_before_macro <- statistic
+  values_before_macro <- values
   
   # Save original quosures before macro processing
   rows_quo_original <- rows_quo
@@ -276,6 +298,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     weight = weight,
     statistic = statistic,
     values = values,
+    measures = measures,
     show_row_nets = show_row_nets,
     show_col_nets = show_col_nets,
     show_base = show_base,
@@ -322,6 +345,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   weight <- params$weight
   statistic <- params$statistic
   values <- params$values
+  measures <- params$measures
   show_row_nets <- params$show_row_nets
   show_col_nets <- params$show_col_nets
   show_base <- params$show_base
@@ -332,6 +356,11 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Update has_cols and has_filter based on potentially modified quosures
   has_cols <- !is.null(cols_quo)
   has_filter <- !is.null(filter_quo)
+
+  if (!is.null(measures) &&
+      (!identical(statistic, statistic_before_macro) || !identical(values, values_before_macro))) {
+    stop("Macro expansion cannot override `statistic`/`values` when `measures` is supplied.")
+  }
   
   ## Statistics validation and setup ------------------------------------------
   
@@ -351,26 +380,44 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     effective_stats <- effective_stats[!duplicated(names(effective_stats))]
   }
   
-  if (is.character(statistic)) {
-    if (length(statistic) > 1) {
-      statistic <- match.arg(statistic)
+  measure_specs <- NULL
+  if (is.null(measures)) {
+    if (is.character(statistic)) {
+      if (length(statistic) > 1) {
+        statistic <- match.arg(statistic)
+      }
+      if (!statistic %in% names(effective_stats)) {
+        stop("Unknown statistic: '", statistic, "'. Available: ",
+             paste(names(effective_stats), collapse = ", "))
+      }
+      statistic_obj <- effective_stats[[statistic]]
+    } else if (!inherits(statistic, "tab_stat")) {
+      stop("statistic must be a character string or tab_stat object")
+    } else {
+      statistic_obj <- statistic
     }
-    if (!statistic %in% names(effective_stats)) {
-      stop("Unknown statistic: '", statistic, "'. Available: ",
-           paste(names(effective_stats), collapse = ", "))
+
+    if (statistic_obj$requires_values && is.null(values)) {
+      stop(statistic_obj$id, " statistic requires 'values' parameter")
     }
-    statistic_obj <- effective_stats[[statistic]]
-  } else if (!inherits(statistic, "tab_stat")) {
-    stop("statistic must be a character string or tab_stat object")
+    if (!is.null(values) && !statistic_obj$requires_values) {
+      warning("Values parameter ignored for ", statistic_obj$id, " statistic")
+    }
+    measure_specs <- list(list(
+      id = "m1",
+      label = NULL,
+      statistic_obj = statistic_obj,
+      statistic_id = statistic_obj$id,
+      values = values
+    ))
   } else {
-    statistic_obj <- statistic
-  }
-  
-  if (statistic_obj$requires_values && is.null(values)) {
-    stop(statistic_obj$id, " statistic requires 'values' parameter")
-  }
-  if (!is.null(values) && !statistic_obj$requires_values) {
-    warning("Values parameter ignored for ", statistic_obj$id, " statistic")
+    measure_specs <- normalize_measures(measures, effective_stats = effective_stats)
+    # Keep a statistic object for legacy downstream metadata in single-measure mode.
+    statistic_obj <- if (length(measure_specs) == 1L) {
+      measure_specs[[1]]$statistic_obj
+    } else {
+      NULL
+    }
   }
   
   ## Label mode validation ----------------------------------------------------
@@ -392,6 +439,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       all_helpers[[helper$id]] <- helper
     }
   }
+
+  primary_measure <- measure_specs[[1]]
+  primary_statistic_obj <- primary_measure$statistic_obj
+  primary_values <- primary_measure$values
   
   ## Variable resolution (fuzzy matching) -------------------------------------
   
@@ -417,9 +468,16 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     var_candidates <- c(var_candidates, weight)
   }
   
-  # Extract from values if provided
-  if (!is.null(values) && is.character(values)) {
-    var_candidates <- c(var_candidates, values)
+  # Extract from values if provided (legacy and multi-measure)
+  values_candidates <- unique(c(
+    if (!is.null(values) && is.character(values)) values else character(0),
+    vapply(measure_specs, function(m) {
+      if (is.null(m$values)) "" else as.character(m$values)
+    }, character(1))
+  ))
+  values_candidates <- values_candidates[nzchar(values_candidates)]
+  if (length(values_candidates) > 0) {
+    var_candidates <- c(var_candidates, values_candidates)
   }
   
   # Resolve variable names if any string candidates found
@@ -454,6 +512,12 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   
       if (!is.null(values) && values %in% names(resolved_vars)) {
         values <- resolved_vars[[values]]
+      }
+      for (k in seq_along(measure_specs)) {
+        val_k <- measure_specs[[k]]$values
+        if (!is.null(val_k) && is.character(val_k) && val_k %in% names(resolved_vars)) {
+          measure_specs[[k]]$values <- resolved_vars[[val_k]]
+        }
       }
     }, error = function(e){
       # If resolution fails, fall back to original behavior silently
@@ -597,7 +661,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # Expand variables for rows
   rows_expanded <- list()
   for (row_spec in rows_parsed) {
-    expanded <- expand_variables(row_spec, data, dpdict, statistic_obj$id, values,
+    expanded <- expand_variables(row_spec, data, dpdict, primary_statistic_obj$id, primary_values,
                                  label_mode = label_mode, all_helpers = all_helpers)
     for (exp in expanded) {
       if (!is.null(row_spec$label) && length(rows_parsed) > 1) {
@@ -634,7 +698,7 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
       }
       
       # Normal expansion
-      expanded <- expand_variables(col_spec, data, dpdict, statistic_obj$id, values_var = NULL, 
+      expanded <- expand_variables(col_spec, data, dpdict, primary_statistic_obj$id, values_var = NULL, 
                                    label_mode = label_mode, all_helpers = all_helpers)
       cols_expanded <- append(cols_expanded, expanded)
     }
@@ -645,9 +709,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   ## Validate variables for statistics (parity with tab()) --------------------
   
   # Validate rows and columns for value statistics
-  if (!is.null(statistic_obj) && statistic_obj$requires_values) {
-    # Throws error if variables inappropriate for statistic, else continues
-    validate_statistic_variables(statistic_obj, rows_expanded, cols_expanded, data, dpdict)
+  for (m in measure_specs) {
+    if (isTRUE(m$statistic_obj$requires_values)) {
+      validate_statistic_variables(m$statistic_obj, rows_expanded, cols_expanded, data, dpdict)
+    }
   }
   
   ## Create row, column and value arrays ---------------------------------------
@@ -772,28 +837,35 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   }
   
   # Create values array if needed
+  values_array_cache <- list()
   values_array <- NULL
-  if (!is.null(values)) {
-    if (!values %in% names(data)) {
-      stop("Values variable '", values, "' not found in data")
+  unique_values_vars <- unique(vapply(measure_specs, function(m) {
+    if (is.null(m$values)) "" else as.character(m$values)
+  }, character(1)))
+  unique_values_vars <- unique_values_vars[nzchar(unique_values_vars)]
+  if (length(unique_values_vars) > 0) {
+    for (v in unique_values_vars) {
+      if (!v %in% names(data)) {
+        stop("Values variable '", v, "' not found in data")
+      }
+      arr <- data[[v]]
+      if (!is.numeric(arr)) {
+        stop("Values variable must be numeric for value-based statistics: ", v)
+      }
+      values_array_cache[[v]] <- arr
     }
-    values_array <- data[[values]]
-    
-    if (!is.numeric(values_array)) {
-      stop("Values variable must be numeric for mean calculations")
-    }
+  }
+  if (!is.null(primary_values) && nzchar(primary_values)) {
+    values_array <- values_array_cache[[primary_values]]
   }
   
   ## Check for label collisions (parity with tab()) ---------------------------
   
   # Check for label collisions with Base or summary rows and columns
-  meta_labels <- c(statistic_obj$base_label)
-  if (!is.null(statistic_obj$summary_row)) {
-    meta_labels <- c(meta_labels, statistic_obj$summary_row)
-  }
-  if (!is.null(statistic_obj$summary_col)) {
-    meta_labels <- c(meta_labels, statistic_obj$summary_col)
-  }
+  meta_labels <- unique(unlist(lapply(measure_specs, function(m) {
+    c(m$statistic_obj$base_label, m$statistic_obj$summary_row, m$statistic_obj$summary_col)
+  })))
+  meta_labels <- meta_labels[!is.na(meta_labels) & nzchar(meta_labels)]
   
   # Check row labels
   for (spec in rows_expanded) {
@@ -819,51 +891,183 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     }
   }
   
-  ## Create cell bundle directly from arrays ----------------------------------
-  # Cell-native computation: create cells directly from array intersections
-  # without intermediate matrix structures. This maintains position-independence
-  # and enables dimension-agnostic operations.
-  compute_result <- compute_cells_as_bundle(
-    base_array = base_array,
-    data = data,
-    dpdict = dpdict,
-    row_arrays = row_arrays,
-    row_u_arrays = row_u_arrays,
-    col_arrays = col_arrays,
-    col_u_arrays = col_u_arrays,
-    rows_expanded = rows_expanded,
-    cols_expanded = cols_expanded,
-    base_filter_spec = base_filter_spec,
-    base_filter_expr = base_filter_expr,
-    statistic_obj = statistic_obj,
-    values_array = values_array,
-    values_var = values
-  )
-  
-  store <- compute_result$store
-  summary_row_array <- compute_result$summary_row_array
-  summary_row_spec <- compute_result$summary_row_spec
-  summary_col_array <- compute_result$summary_col_array
-  summary_col_spec <- compute_result$summary_col_spec
-  summary_row_u_array <- compute_result$summary_row_u_array
-  summary_col_u_array <- compute_result$summary_col_u_array
-  
-  # Store dimensions for layout construction
+  ## Create cell bundles (single or multi-measure) ----------------------------
+  is_multi_measure <- length(measure_specs) > 1L
+  per_measure_arrays <- list()
+  per_measure_summaries <- list()
+  store <- new_cell_store(size_hint = length(measure_specs) * max(1L, length(row_arrays) * length(col_arrays)))
+  values_array <- NULL
+  summary_row_array <- NULL
+  summary_row_spec <- NULL
+  summary_col_array <- NULL
+  summary_col_spec <- NULL
+  summary_row_u_array <- NULL
+  summary_col_u_array <- NULL
+
+  for (m in measure_specs) {
+    values_arr_m <- NULL
+    if (!is.null(m$values) && nzchar(m$values)) {
+      values_arr_m <- values_array_cache[[m$values]]
+    }
+
+    compute_result_m <- compute_cells_as_bundle(
+      base_array = base_array,
+      data = data,
+      dpdict = dpdict,
+      row_arrays = row_arrays,
+      row_u_arrays = row_u_arrays,
+      col_arrays = col_arrays,
+      col_u_arrays = col_u_arrays,
+      rows_expanded = rows_expanded,
+      cols_expanded = cols_expanded,
+      base_filter_spec = base_filter_spec,
+      base_filter_expr = base_filter_expr,
+      statistic_obj = m$statistic_obj,
+      values_array = values_arr_m,
+      values_var = m$values,
+      measure_id = m$id
+    )
+
+    for (cell_id in all_cell_ids(compute_result_m$store)) {
+      cell <- get_cell(compute_result_m$store, cell_id)
+      add_cell(
+        store,
+        value = cell$value,
+        base = cell$base,
+        specification = cell$specification,
+        computation = cell$computation,
+        derivation = cell$derivation
+      )
+    }
+
+    per_measure_arrays[[m$id]] <- list(
+      values_array = values_arr_m,
+      statistic_id = m$statistic_obj$id
+    )
+    per_measure_summaries[[m$id]] <- list(
+      summary_row_array = compute_result_m$summary_row_array,
+      summary_col_array = compute_result_m$summary_col_array,
+      summary_row_u_array = compute_result_m$summary_row_u_array,
+      summary_col_u_array = compute_result_m$summary_col_u_array,
+      summary_row_spec = compute_result_m$summary_row_spec,
+      summary_col_spec = compute_result_m$summary_col_spec
+    )
+  }
+
+  # Preserve legacy single-measure fields for backward compatibility.
+  if (!is_multi_measure) {
+    only_id <- measure_specs[[1]]$id
+    values_array <- per_measure_arrays[[only_id]]$values_array
+    summary_row_array <- per_measure_summaries[[only_id]]$summary_row_array
+    summary_col_array <- per_measure_summaries[[only_id]]$summary_col_array
+    summary_row_u_array <- per_measure_summaries[[only_id]]$summary_row_u_array
+    summary_col_u_array <- per_measure_summaries[[only_id]]$summary_col_u_array
+    summary_row_spec <- per_measure_summaries[[only_id]]$summary_row_spec
+    summary_col_spec <- per_measure_summaries[[only_id]]$summary_col_spec
+  }
+
+  ## Build layout with layout_defs --------------------------------------------
   n_rows <- length(row_arrays)
   n_cols <- length(col_arrays)
-  
-  ## Build layout with layout_defs (NEW SYSTEM) --------------------------------
-  # Initialize layout_defs from expanded specs
-  has_summary_row <- !is.null(summary_row_spec)
-  has_summary_col <- !is.null(summary_col_spec)
-  
-  # Create layout_defs for rows and columns
-  # Only include summary specs if they should be shown
-  row_summary_spec <- if (has_summary_row && show_row_nets) summary_row_spec else NULL
-  col_summary_spec <- if (has_summary_col && show_col_nets) summary_col_spec else NULL
-  
-  row_defs <- initialize_layout_defs(rows_expanded, row_summary_spec, dimension = "row")
-  col_defs <- initialize_layout_defs(cols_expanded, col_summary_spec, dimension = "col")
+  row_defs <- list()
+  col_defs <- list()
+  measure_col_map <- NULL
+  measure_row_map <- NULL
+  base_col_index_map <- NULL
+  base_row_index_map <- NULL
+
+  if (!is_multi_measure) {
+    has_summary_row <- !is.null(summary_row_spec)
+    has_summary_col <- !is.null(summary_col_spec)
+    row_summary_spec <- if (has_summary_row && show_row_nets) summary_row_spec else NULL
+    col_summary_spec <- if (has_summary_col && show_col_nets) summary_col_spec else NULL
+    row_defs <- initialize_layout_defs(rows_expanded, row_summary_spec, dimension = "row")
+    col_defs <- initialize_layout_defs(cols_expanded, col_summary_spec, dimension = "col")
+  } else if (identical(measure_axis, "cols")) {
+    row_defs <- initialize_layout_defs(rows_expanded, summary_spec = NULL, dimension = "row")
+    base_row_index_map <- seq_along(row_defs)
+    col_defs <- list()
+    measure_col_map <- character(0)
+    base_col_index_map <- integer(0)
+
+    for (m in measure_specs) {
+      measure_prefix <- m$label %||% m$id
+      for (j in seq_along(cols_expanded)) {
+        spec <- cols_expanded[[j]]
+        col_defs[[length(col_defs) + 1L]] <- new_layout_def(
+          col_expr_matcher = exact_match_matcher(spec$expr),
+          measure_id_matcher = exact_match_matcher(m$id),
+          is_summary_col_matcher = function(x) identical(x, FALSE),
+          label = paste0(measure_prefix, " | ", spec$label),
+          dimension = "col"
+        )
+        measure_col_map <- c(measure_col_map, m$id)
+        base_col_index_map <- c(base_col_index_map, j)
+      }
+    }
+
+    if (isTRUE(show_col_nets) && any(vapply(measure_specs, function(m) !is.null(m$statistic_obj$summary_col), logical(1)))) {
+      col_defs[[length(col_defs) + 1L]] <- new_layout_def(
+        is_summary_col_matcher = function(x) isTRUE(x),
+        custom_matcher = function(cell) FALSE,
+        label = "Summary",
+        dimension = "col"
+      )
+      measure_col_map <- c(measure_col_map, "summary_placeholder")
+      base_col_index_map <- c(base_col_index_map, NA_integer_)
+    }
+    if (isTRUE(show_row_nets) && any(vapply(measure_specs, function(m) !is.null(m$statistic_obj$summary_row), logical(1)))) {
+      row_defs[[length(row_defs) + 1L]] <- new_layout_def(
+        is_summary_row_matcher = function(x) isTRUE(x),
+        custom_matcher = function(cell) FALSE,
+        label = "Summary",
+        dimension = "row"
+      )
+      base_row_index_map <- c(base_row_index_map, NA_integer_)
+    }
+  } else {
+    col_defs <- initialize_layout_defs(cols_expanded, summary_spec = NULL, dimension = "col")
+    base_col_index_map <- seq_along(col_defs)
+    row_defs <- list()
+    measure_row_map <- character(0)
+    base_row_index_map <- integer(0)
+
+    for (m in measure_specs) {
+      measure_prefix <- m$label %||% m$id
+      for (i in seq_along(rows_expanded)) {
+        spec <- rows_expanded[[i]]
+        row_defs[[length(row_defs) + 1L]] <- new_layout_def(
+          row_expr_matcher = exact_match_matcher(spec$expr),
+          measure_id_matcher = exact_match_matcher(m$id),
+          is_summary_row_matcher = function(x) identical(x, FALSE),
+          label = paste0(measure_prefix, " | ", spec$label),
+          dimension = "row"
+        )
+        measure_row_map <- c(measure_row_map, m$id)
+        base_row_index_map <- c(base_row_index_map, i)
+      }
+    }
+
+    if (isTRUE(show_row_nets) && any(vapply(measure_specs, function(m) !is.null(m$statistic_obj$summary_row), logical(1)))) {
+      row_defs[[length(row_defs) + 1L]] <- new_layout_def(
+        is_summary_row_matcher = function(x) isTRUE(x),
+        custom_matcher = function(cell) FALSE,
+        label = "Summary",
+        dimension = "row"
+      )
+      measure_row_map <- c(measure_row_map, "summary_placeholder")
+      base_row_index_map <- c(base_row_index_map, NA_integer_)
+    }
+    if (isTRUE(show_col_nets) && any(vapply(measure_specs, function(m) !is.null(m$statistic_obj$summary_col), logical(1)))) {
+      col_defs[[length(col_defs) + 1L]] <- new_layout_def(
+        is_summary_col_matcher = function(x) isTRUE(x),
+        custom_matcher = function(cell) FALSE,
+        label = "Summary",
+        dimension = "col"
+      )
+      base_col_index_map <- c(base_col_index_map, NA_integer_)
+    }
+  }
   
   ## Build filter_rules from parameters ----------------------------------------
   filter_rules <- list()
@@ -895,6 +1099,10 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   
   # Preserve filter_rules in layout
   layout$filter_rules <- filter_rules
+  layout$measure_col_map <- measure_col_map
+  layout$measure_row_map <- measure_row_map
+  layout$base_col_index_map <- base_col_index_map
+  layout$base_row_index_map <- base_row_index_map
   
   ## Store arrays for significance testing ------------------------------------
   arrays <- list(
@@ -907,8 +1115,17 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     summary_row_array = summary_row_array,
     summary_col_array = summary_col_array,
     summary_row_u_array = summary_row_u_array,
-    summary_col_u_array = summary_col_u_array
+    summary_col_u_array = summary_col_u_array,
+    per_measure = per_measure_arrays
   )
+  measure_meta <- lapply(measure_specs, function(m) {
+    list(
+      id = m$id,
+      label = m$label,
+      statistic_id = m$statistic_id,
+      values = m$values
+    )
+  })
   
   ## Build cell-based tab_result -----------------------------------------------
   result <- structure(list(
@@ -918,7 +1135,9 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
     
     data = data,
     dpdict = dpdict,
-    statistic = statistic_obj,
+    statistic = if (is_multi_measure) NULL else statistic_obj,
+    measures = measure_meta,
+    measure_axis = measure_axis,
     show_base = show_base,
     label_mode = label_mode,
     
@@ -934,6 +1153,62 @@ tab <- function(data, rows, cols = NULL, filter = NULL, weight = NULL,
   # via filter_rules during allocation. No post-processing needed.
   
   return(result)
+}
+
+normalize_measures <- function(measures, effective_stats) {
+  specs <- lapply(seq_along(measures), function(i) {
+    m <- measures[[i]]
+    if (!inherits(m, "tab_measure")) {
+      stop(
+        "All items in `measures` must be created with measure(). ",
+        "Implicit shorthand is not supported."
+      )
+    }
+
+    stat_obj <- NULL
+    if (inherits(m$statistic, "tab_stat")) {
+      stat_obj <- m$statistic
+    } else if (is.character(m$statistic) && length(m$statistic) == 1) {
+      if (!m$statistic %in% names(effective_stats)) {
+        stop("Unknown statistic in measures[[", i, "]]: '", m$statistic, "'")
+      }
+      stat_obj <- effective_stats[[m$statistic]]
+    } else {
+      stop("measure[[", i, "]] statistic must be a character id or tab_stat object")
+    }
+
+    values_var <- m$values
+    if (!is.null(values_var) && (!is.character(values_var) || length(values_var) != 1 || !nzchar(values_var))) {
+      stop("measure[[", i, "]] values must be NULL or a non-empty character scalar")
+    }
+
+    if (isTRUE(stat_obj$requires_values) && is.null(values_var)) {
+      stop("measure[[", i, "]] (", stat_obj$id, ") requires a `values` variable")
+    }
+    if (!isTRUE(stat_obj$requires_values) && !is.null(values_var)) {
+      warning("measure[[", i, "]] supplies values for non-value statistic '", stat_obj$id, "'. values will be ignored.")
+      values_var <- NULL
+    }
+
+    id <- m$id %||% paste0("m", i)
+    label <- m$label %||% id
+
+    list(
+      id = id,
+      label = label,
+      statistic_obj = stat_obj,
+      statistic_id = stat_obj$id,
+      values = values_var
+    )
+  })
+
+  ids <- vapply(specs, `[[`, character(1), "id")
+  if (anyDuplicated(ids)) {
+    dup <- unique(ids[duplicated(ids)])
+    stop("Duplicate measure ids detected: ", paste(dup, collapse = ", "))
+  }
+
+  specs
 }
 
 
@@ -1141,6 +1416,12 @@ filter_low_base_cells <- function(layout, store, threshold) {
     if (!is.null(layout$row_exposure) && length(layout$row_exposure) == n_rows) {
       layout$row_exposure <- layout$row_exposure[rows_to_keep]
     }
+    if (!is.null(layout$measure_row_map) && length(layout$measure_row_map) == n_rows) {
+      layout$measure_row_map <- layout$measure_row_map[rows_to_keep]
+    }
+    if (!is.null(layout$base_row_index_map) && length(layout$base_row_index_map) == n_rows) {
+      layout$base_row_index_map <- layout$base_row_index_map[rows_to_keep]
+    }
     n_rows <- nrow(grid)
   }
   
@@ -1154,6 +1435,12 @@ filter_low_base_cells <- function(layout, store, threshold) {
     }
     if (!is.null(layout$col_exposure) && length(layout$col_exposure) == n_cols) {
       layout$col_exposure <- layout$col_exposure[cols_to_keep]
+    }
+    if (!is.null(layout$measure_col_map) && length(layout$measure_col_map) == n_cols) {
+      layout$measure_col_map <- layout$measure_col_map[cols_to_keep]
+    }
+    if (!is.null(layout$base_col_index_map) && length(layout$base_col_index_map) == n_cols) {
+      layout$base_col_index_map <- layout$base_col_index_map[cols_to_keep]
     }
     n_cols <- ncol(grid)
   }
@@ -1290,7 +1577,7 @@ merge_cell_stores <- function(store1, store2) {
   for (cell_id in all_cell_ids(store1)) {
     cell <- get_cell(store1, cell_id)
     add_cell(merged, cell$value, cell$base, cell$specification, 
-             cell$computation, cell$metadata)
+             cell$computation, cell$derivation)
   }
   
   # Copy all cells from store2 (track new IDs for remapping)
@@ -1298,7 +1585,7 @@ merge_cell_stores <- function(store1, store2) {
   for (cell_id in all_cell_ids(store2)) {
     cell <- get_cell(store2, cell_id)
     new_id <- add_cell(merged, cell$value, cell$base, cell$specification,
-                      cell$computation, cell$metadata)
+                      cell$computation, cell$derivation)
     id_mapping[[as.character(cell_id)]] <- new_id
   }
   
@@ -1393,13 +1680,24 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix1 = NULL, prefix2 = 
     has_summary_row = tab1$layout$has_summary_row || tab2$layout$has_summary_row,
     has_summary_col = tab1$layout$has_summary_col || tab2$layout$has_summary_col
   )
+  new_layout$measure_col_map <- c(tab1$layout$measure_col_map %||% NULL, tab2$layout$measure_col_map %||% NULL)
+  new_layout$base_col_index_map <- c(tab1$layout$base_col_index_map %||% NULL, tab2$layout$base_col_index_map %||% NULL)
+  if (!is.null(tab1$layout$measure_row_map)) {
+    new_layout$measure_row_map <- tab1$layout$measure_row_map[tab1_row_idx]
+  }
+  if (!is.null(tab1$layout$base_row_index_map)) {
+    new_layout$base_row_index_map <- tab1$layout$base_row_index_map[tab1_row_idx]
+  }
   
   # Merge arrays
   merged_arrays <- list(
     base_array = tab1$arrays$base_array,  # Use tab1's base
     row_arrays = tab1$arrays$row_arrays,
+    row_u_arrays = tab1$arrays$row_u_arrays,
     col_arrays = c(tab1$arrays$col_arrays, tab2$arrays$col_arrays),
-    values_array = tab1$arrays$values_array
+    col_u_arrays = c(tab1$arrays$col_u_arrays, tab2$arrays$col_u_arrays),
+    values_array = tab1$arrays$values_array,
+    per_measure = c(tab1$arrays$per_measure %||% list(), tab2$arrays$per_measure %||% list())
   )
   
   # Build result - set statistic to NULL if different statistics were glued
@@ -1411,6 +1709,8 @@ glue_tabs_cols_cellbased <- function(tab1, tab2, sep, prefix1 = NULL, prefix2 = 
     data = tab1$data,
     dpdict = tab1$dpdict,
     statistic = if (stats_differ) NULL else tab1$statistic,
+    measures = c(tab1$measures %||% list(), tab2$measures %||% list()),
+    measure_axis = tab1$measure_axis %||% tab2$measure_axis,
     calc_base = tab1$calc_base,
     derive_operations = list(),
     formatting = list(),
@@ -1508,13 +1808,24 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix1 = NULL, prefix2 = 
     has_summary_row = tab1$layout$has_summary_row || tab2$layout$has_summary_row,
     has_summary_col = tab1$layout$has_summary_col || tab2$layout$has_summary_col
   )
+  new_layout$measure_row_map <- c(tab1$layout$measure_row_map %||% NULL, tab2$layout$measure_row_map %||% NULL)
+  new_layout$base_row_index_map <- c(tab1$layout$base_row_index_map %||% NULL, tab2$layout$base_row_index_map %||% NULL)
+  if (!is.null(tab1$layout$measure_col_map)) {
+    new_layout$measure_col_map <- tab1$layout$measure_col_map[tab1_col_idx]
+  }
+  if (!is.null(tab1$layout$base_col_index_map)) {
+    new_layout$base_col_index_map <- tab1$layout$base_col_index_map[tab1_col_idx]
+  }
   
   # Merge arrays
   merged_arrays <- list(
     base_array = tab1$arrays$base_array,  # Use tab1's base
     row_arrays = c(tab1$arrays$row_arrays, tab2$arrays$row_arrays),
+    row_u_arrays = c(tab1$arrays$row_u_arrays, tab2$arrays$row_u_arrays),
     col_arrays = tab1$arrays$col_arrays,
-    values_array = tab1$arrays$values_array
+    col_u_arrays = tab1$arrays$col_u_arrays,
+    values_array = tab1$arrays$values_array,
+    per_measure = c(tab1$arrays$per_measure %||% list(), tab2$arrays$per_measure %||% list())
   )
   
   # Build result - set statistic to NULL if different statistics were glued
@@ -1526,6 +1837,8 @@ glue_tabs_rows_cellbased <- function(tab1, tab2, sep, prefix1 = NULL, prefix2 = 
     data = tab1$data,
     dpdict = tab1$dpdict,
     statistic = if (stats_differ) NULL else tab1$statistic,
+    measures = c(tab1$measures %||% list(), tab2$measures %||% list()),
+    measure_axis = tab1$measure_axis %||% tab2$measure_axis,
     calc_base = tab1$calc_base,
     derive_operations = list(),
     formatting = list(),
@@ -1573,6 +1886,7 @@ multi_tab <- function(data, rows, cols, by,
                        total_name = "Total",
                        sep = ": ",
                        statistic = "column_pct",
+                       measures = NULL,
                        ...) {
   
   direction <- match.arg(direction)
@@ -1618,11 +1932,20 @@ multi_tab <- function(data, rows, cols, by,
     }
     
     # Call tab() for this group
-    if (missing(cols)) {
-      group_tab <- tab(group_data, rows = {{ rows }}, statistic = statistic, ...)
+    if (is.null(measures)) {
+      if (missing(cols)) {
+        group_tab <- tab(group_data, rows = {{ rows }}, statistic = statistic, ...)
+      } else {
+        group_tab <- tab(group_data, rows = {{ rows }}, cols = {{ cols }},
+                         statistic = statistic, ...)
+      }
     } else {
-      group_tab <- tab(group_data, rows = {{ rows }}, cols = {{ cols }}, 
-                       statistic = statistic, ...)
+      if (missing(cols)) {
+        group_tab <- tab(group_data, rows = {{ rows }}, measures = measures, ...)
+      } else {
+        group_tab <- tab(group_data, rows = {{ rows }}, cols = {{ cols }},
+                         measures = measures, ...)
+      }
     }
     
     result_tabs[[group_name]] <- group_tab
@@ -1630,11 +1953,20 @@ multi_tab <- function(data, rows, cols, by,
   
   # Optionally include total
   if (include_total) {
-    if (missing(cols)) {
-      total_tab <- tab(data, rows = {{ rows }}, statistic = statistic, ...)
+    if (is.null(measures)) {
+      if (missing(cols)) {
+        total_tab <- tab(data, rows = {{ rows }}, statistic = statistic, ...)
+      } else {
+        total_tab <- tab(data, rows = {{ rows }}, cols = {{ cols }},
+                         statistic = statistic, ...)
+      }
     } else {
-      total_tab <- tab(data, rows = {{ rows }}, cols = {{ cols }}, 
-                       statistic = statistic, ...)
+      if (missing(cols)) {
+        total_tab <- tab(data, rows = {{ rows }}, measures = measures, ...)
+      } else {
+        total_tab <- tab(data, rows = {{ rows }}, cols = {{ cols }},
+                         measures = measures, ...)
+      }
     }
     
     # Insert total at the beginning or end based on direction

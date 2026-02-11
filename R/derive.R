@@ -129,6 +129,64 @@ new_derive_spec <- function(op_id, ...) {
   )
 }
 
+.resolve_measure_id <- function(tab_result, measure = NULL) {
+  measures <- tab_result$measures %||% list()
+  is_multi <- length(measures) > 1L
+
+  if (is.null(measure)) {
+    if (is_multi) {
+      stop("This derive operation is ambiguous on multi-measure tables. Supply `measure = ...`.")
+    }
+    if (length(measures) == 1L) {
+      return(measures[[1]]$id)
+    }
+    return(NULL)
+  }
+
+  if (!is.character(measure) || length(measure) != 1 || !nzchar(measure)) {
+    stop("measure must be a single non-empty character id/label")
+  }
+
+  if (length(measures) == 0L) {
+    stop("No measure metadata available on this tab_result")
+  }
+
+  ids <- vapply(measures, `[[`, character(1), "id")
+  labels <- vapply(measures, function(m) m$label %||% "", character(1))
+
+  if (measure %in% ids) {
+    return(measure)
+  }
+  idx <- which(labels == measure)
+  if (length(idx) == 1L) {
+    return(ids[idx])
+  }
+
+  stop("Unknown measure selector '", measure, "'. Available ids: ", paste(ids, collapse = ", "))
+}
+
+.measure_scope_cols <- function(tab_result, measure_id = NULL) {
+  map <- tab_result$layout$measure_col_map
+  if (is.null(map)) {
+    return(seq_len(ncol(tab_result$layout$grid)))
+  }
+  if (is.null(measure_id)) {
+    return(which(!is.na(map) & map != "summary_placeholder"))
+  }
+  which(map == measure_id)
+}
+
+.measure_scope_rows <- function(tab_result, measure_id = NULL) {
+  map <- tab_result$layout$measure_row_map
+  if (is.null(map)) {
+    return(seq_len(nrow(tab_result$layout$grid)))
+  }
+  if (is.null(measure_id)) {
+    return(which(!is.na(map) & map != "summary_placeholder"))
+  }
+  which(map == measure_id)
+}
+
 # ============================================================================
 # Built-in Derive Operations
 # ============================================================================
@@ -153,17 +211,18 @@ new_derive_spec <- function(op_id, ...) {
 #'   derive(sum_if("ival", dimension = "cols")) %>%
 #'   hide_cols_except("Daily|Weekly|Monthly|Never")  # Show only derived columns
 #' }
-sum_if <- function(metadata_field, dimension = c("rows", "cols"), label_fn = NULL) {
+sum_if <- function(metadata_field, dimension = c("rows", "cols"), label_fn = NULL, measure = NULL) {
   dimension <- match.arg(dimension)
   new_derive_spec("sum_if",
                   metadata_field = metadata_field,
                   dimension = dimension,
-                  label_fn = label_fn)
+                  label_fn = label_fn,
+                  measure = measure)
 }
 
 #' Process sum_if derive operation
 #' @keywords internal
-process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NULL) {
+process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NULL, measure = NULL) {
   if (!inherits(tab_result, "tab_result")) {
     stop("tab_result must be a tab_result object")
   }
@@ -172,12 +231,14 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
   if (inherits(tab_result, "tab_cell_collection")) {
     store <- tab_result$cell_store
     layout <- tab_result$layout
+    measure_id <- .resolve_measure_id(tab_result, measure)
     
     if (dimension == "cols") {
       # Group columns by metadata field
       col_groups <- list()
+      scope_cols <- .measure_scope_cols(tab_result, measure_id)
       
-      for (j in seq_along(layout$col_labels)) {
+      for (j in scope_cols) {
         # Extract from first cell in this column to get metadata
         first_cell_id <- layout$grid[1, j]
         if (is.na(first_cell_id)) next
@@ -231,7 +292,13 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
             base_expr = first_cell$specification$base_expr,
             row_expr = first_cell$specification$row_expr,
             col_expr = call("sum_if", metadata_field, group_key),
-            meta = first_cell$specification$meta
+            dsl = first_cell$specification$dsl,
+            meta = first_cell$specification$meta,
+            statistic_id = first_cell$specification$statistic_id,
+            measure_id = first_cell$specification$measure_id,
+            values_var = first_cell$specification$values_var,
+            is_summary_row = FALSE,
+            is_summary_col = FALSE
           )
           
           derived_cell_id <- add_cell(
@@ -239,7 +306,7 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
             value = summed_value,
             base = NA,
             specification = derived_spec,
-            computation = list(statistic = NA, array_refs = list()),
+            computation = list(statistic = first_cell$computation$statistic, array_refs = list()),
             derivation = list(
               operation = "sum_if",
               source_cells = source_cell_ids
@@ -273,8 +340,9 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
     # Group rows by metadata field
     if (dimension == "rows") {
       row_groups <- list()
+      scope_rows <- .measure_scope_rows(tab_result, measure_id)
       
-      for (i in seq_along(layout$row_labels)) {
+      for (i in scope_rows) {
         # Extract from first cell in this row to get metadata
         first_cell_id <- layout$grid[i, 1]
         if (is.na(first_cell_id)) next
@@ -328,7 +396,13 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
             base_expr = first_cell$specification$base_expr,
             row_expr = call("sum_if", metadata_field, group_key),
             col_expr = first_cell$specification$col_expr,
-            meta = first_cell$specification$meta
+            dsl = first_cell$specification$dsl,
+            meta = first_cell$specification$meta,
+            statistic_id = first_cell$specification$statistic_id,
+            measure_id = first_cell$specification$measure_id,
+            values_var = first_cell$specification$values_var,
+            is_summary_row = FALSE,
+            is_summary_col = FALSE
           )
           
           derived_cell_id <- add_cell(
@@ -336,7 +410,7 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
             value = summed_value,
             base = NA,
             specification = derived_spec,
-            computation = list(statistic = NA, array_refs = list()),
+            computation = list(statistic = first_cell$computation$statistic, array_refs = list()),
             derivation = list(
               operation = "sum_if",
               source_cells = source_cell_ids
@@ -544,16 +618,17 @@ process_sum_if <- function(tab_result, metadata_field, dimension, label_fn = NUL
 #' dat <- get_basic_test_dat()
 #' result <- tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   derive(delta_vs("Yes", "No"))
-delta_vs <- function(from_col, to_col = NULL, label = NULL) {
+delta_vs <- function(from_col, to_col = NULL, label = NULL, measure = NULL) {
   new_derive_spec("delta_vs",
                   from_col = from_col,
                   to_col = to_col,
-                  label = label)
+                  label = label,
+                  measure = measure)
 }
 
 #' Process delta_vs derive operation
 #' @keywords internal
-process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) {
+process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL, measure = NULL) {
   if (!inherits(tab_result, "tab_result")) {
     stop("tab_result must be a tab_result object")
   }
@@ -562,6 +637,9 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
   if (inherits(tab_result, "tab_cell_collection")) {
     store <- tab_result$cell_store
     layout <- tab_result$layout
+    measure_id <- .resolve_measure_id(tab_result, measure)
+    scope_cols <- .measure_scope_cols(tab_result, measure_id)
+    scope_rows <- .measure_scope_rows(tab_result, measure_id)
     
     # Resolve from_col to column index in grid
     from_idx <- if (is.numeric(from_col)) {
@@ -572,6 +650,9 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
     
     if (is.na(from_idx) || from_idx < 1 || from_idx > ncol(layout$grid)) {
       stop("from_col '", from_col, "' not found")
+    }
+    if (!(from_idx %in% scope_cols)) {
+      stop("from_col '", from_col, "' is outside selected measure scope")
     }
     
     # For single to_col
@@ -585,11 +666,14 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
       if (is.na(to_idx) || to_idx < 1 || to_idx > ncol(layout$grid)) {
         stop("to_col '", to_col, "' not found")
       }
+      if (!(to_idx %in% scope_cols)) {
+        stop("to_col '", to_col, "' is outside selected measure scope")
+      }
       
       # Create derived column: to - from
-      new_col_cells <- character(nrow(layout$grid))
+      new_col_cells <- rep(NA_character_, nrow(layout$grid))
       
-      for (i in seq_len(nrow(layout$grid))) {
+      for (i in scope_rows) {
         from_cell_id <- layout$grid[i, from_idx]
         to_cell_id <- layout$grid[i, to_idx]
         
@@ -608,7 +692,13 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
           base_expr = from_cell$specification$base_expr,
           row_expr = from_cell$specification$row_expr,
           col_expr = call("delta", from_col, to_col),
-          meta = from_cell$specification$meta
+          dsl = from_cell$specification$dsl,
+          meta = from_cell$specification$meta,
+          statistic_id = from_cell$specification$statistic_id,
+          measure_id = from_cell$specification$measure_id,
+          values_var = from_cell$specification$values_var,
+          is_summary_row = FALSE,
+          is_summary_col = FALSE
         )
         
         derived_cell_id <- add_cell(
@@ -616,7 +706,7 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
           value = diff_value,
           base = NA,
           specification = derived_spec,
-          computation = list(statistic = NA, array_refs = list()),
+          computation = list(statistic = from_cell$computation$statistic, array_refs = list()),
           derivation = list(
             operation = "delta_vs",
             source_cells = c(from_cell_id, to_cell_id)
@@ -632,6 +722,7 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
       
       new_col_def <- new_layout_def(
         col_expr_matcher = exact_match_matcher(derived_col_expr),
+        measure_id_matcher = exact_match_matcher(measure_id),
         derivation_matcher = function(deriv) {
           !is.null(deriv) && deriv$operation == "delta_vs"
         },
@@ -648,16 +739,16 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
     
     # If to_col is NULL, create diff for all cols vs from_col
     # Loop through all columns except from_col
-    for (col_idx in seq_along(layout$col_defs)) {
+    for (col_idx in scope_cols) {
       if (col_idx == from_idx) next  # Skip from_col itself
       
       col_def <- layout$col_defs[[col_idx]]
       to_col_label <- col_def$label
       
       # Create derived column: to - from
-      new_col_cells <- character(nrow(layout$grid))
+      new_col_cells <- rep(NA_character_, nrow(layout$grid))
       
-      for (i in seq_len(nrow(layout$grid))) {
+      for (i in scope_rows) {
         from_cell_id <- layout$grid[i, from_idx]
         to_cell_id <- layout$grid[i, col_idx]
         
@@ -676,7 +767,13 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
           base_expr = from_cell$specification$base_expr,
           row_expr = from_cell$specification$row_expr,
           col_expr = call("delta", from_col, to_col_label),
-          meta = from_cell$specification$meta
+          dsl = from_cell$specification$dsl,
+          meta = from_cell$specification$meta,
+          statistic_id = from_cell$specification$statistic_id,
+          measure_id = from_cell$specification$measure_id,
+          values_var = from_cell$specification$values_var,
+          is_summary_row = FALSE,
+          is_summary_col = FALSE
         )
         
         derived_cell_id <- add_cell(
@@ -684,7 +781,7 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
           value = diff_value,
           base = NA,
           specification = derived_spec,
-          computation = list(statistic = NA, array_refs = list()),
+          computation = list(statistic = from_cell$computation$statistic, array_refs = list()),
           derivation = list(
             operation = "delta_vs",
             source_cells = c(from_cell_id, to_cell_id)
@@ -705,6 +802,7 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
       
       new_col_def <- new_layout_def(
         col_expr_matcher = exact_match_matcher(derived_col_expr),
+        measure_id_matcher = exact_match_matcher(measure_id),
         derivation_matcher = function(deriv) {
           !is.null(deriv) && deriv$operation == "delta_vs"
         },
@@ -820,17 +918,18 @@ process_delta_vs <- function(tab_result, from_col, to_col = NULL, label = NULL) 
 #' dat <- get_basic_test_dat()
 #' result <- tab(dat, labelledordinal, binarycategoricalasfactor, show_col_nets = TRUE) %>%
 #'   derive(index_vs("Total"))
-index_vs <- function(base_col, multiplier = 100, label = NULL, cols = NULL) {
+index_vs <- function(base_col, multiplier = 100, label = NULL, cols = NULL, measure = NULL) {
   new_derive_spec("index_vs",
                   base_col = base_col,
                   multiplier = multiplier,
                   label = label,
-                  cols = cols)
+                  cols = cols,
+                  measure = measure)
 }
 
 #' Process index_vs derive operation
 #' @keywords internal
-process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NULL, cols = NULL) {
+process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NULL, cols = NULL, measure = NULL) {
   if (!inherits(tab_result, "tab_result")) {
     stop("tab_result must be a tab_result object")
   }
@@ -839,6 +938,9 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
   if (inherits(tab_result, "tab_cell_collection")) {
     store <- tab_result$cell_store
     layout <- tab_result$layout
+    measure_id <- .resolve_measure_id(tab_result, measure)
+    scope_cols <- .measure_scope_cols(tab_result, measure_id)
+    scope_rows <- .measure_scope_rows(tab_result, measure_id)
     
     # Resolve base column
     base_col_idx <- if (is.numeric(base_col)) {
@@ -850,10 +952,13 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
     if (is.na(base_col_idx) || base_col_idx < 1 || base_col_idx > ncol(layout$grid)) {
       stop("base_col '", base_col, "' not found")
     }
+    if (!(base_col_idx %in% scope_cols)) {
+      stop("base_col '", base_col, "' is outside selected measure scope")
+    }
     
     # Determine columns to index
     cols_to_index <- if (is.null(cols)) {
-      setdiff(seq_along(layout$col_labels), base_col_idx)
+      setdiff(scope_cols, base_col_idx)
     } else {
       # Resolve cols to indices
       if (is.numeric(cols)) {
@@ -865,12 +970,13 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
     
     # Remove NAs
     cols_to_index <- cols_to_index[!is.na(cols_to_index)]
+    cols_to_index <- intersect(cols_to_index, scope_cols)
     
       # For each column to index, create new derived column
       for (col_idx in cols_to_index) {
-        new_col_cells <- character(nrow(layout$grid))
+        new_col_cells <- rep(NA_character_, nrow(layout$grid))
         
-        for (i in seq_len(nrow(layout$grid))) {
+        for (i in scope_rows) {
         base_cell_id <- layout$grid[i, base_col_idx]
         col_cell_id <- layout$grid[i, col_idx]
         
@@ -890,7 +996,13 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
           base_expr = col_cell$specification$base_expr,
           row_expr = col_cell$specification$row_expr,
           col_expr = call("index_vs", base_col, layout$col_labels[col_idx]),
-          meta = col_cell$specification$meta
+          dsl = col_cell$specification$dsl,
+          meta = col_cell$specification$meta,
+          statistic_id = col_cell$specification$statistic_id,
+          measure_id = col_cell$specification$measure_id,
+          values_var = col_cell$specification$values_var,
+          is_summary_row = FALSE,
+          is_summary_col = FALSE
         )
         
         derived_cell_id <- add_cell(
@@ -898,7 +1010,7 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
           value = index_value,
           base = NA,
           specification = derived_spec,
-          computation = list(statistic = NA, array_refs = list()),
+          computation = list(statistic = col_cell$computation$statistic, array_refs = list()),
           derivation = list(
             operation = "index_vs",
             source_cells = c(base_cell_id, col_cell_id),
@@ -922,6 +1034,7 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
       
       new_col_def <- new_layout_def(
         col_expr_matcher = exact_match_matcher(derived_col_expr),
+        measure_id_matcher = exact_match_matcher(measure_id),
         derivation_matcher = function(deriv) {
           !is.null(deriv) && deriv$operation == "index_vs"
         },
@@ -1010,16 +1123,17 @@ process_index_vs <- function(tab_result, base_col, multiplier = 100, label = NUL
 #' dat <- get_basic_test_dat()
 #' result <- tab(dat, labelledordinal, binarycategoricalasfactor) %>%
 #'   derive(share_of_sum(by = "row"))
-share_of_sum <- function(by = c("row", "col"), label = NULL) {
+share_of_sum <- function(by = c("row", "col"), label = NULL, measure = NULL) {
   by <- match.arg(by)
   new_derive_spec("share_of_sum",
                   by = by,
-                  label = label)
+                  label = label,
+                  measure = measure)
 }
 
 #' Process share_of_sum derive operation
 #' @keywords internal
-process_share_of_sum <- function(tab_result, by, label = NULL) {
+process_share_of_sum <- function(tab_result, by, label = NULL, measure = NULL) {
   if (!inherits(tab_result, "tab_result")) {
     stop("tab_result must be a tab_result object")
   }
@@ -1028,154 +1142,128 @@ process_share_of_sum <- function(tab_result, by, label = NULL) {
   if (inherits(tab_result, "tab_cell_collection")) {
     store <- tab_result$cell_store
     layout <- tab_result$layout
-    
+    measure_id <- .resolve_measure_id(tab_result, measure)
+    scope_cols <- .measure_scope_cols(tab_result, measure_id)
+    scope_rows <- .measure_scope_rows(tab_result, measure_id)
+
     if (by == "row") {
-      # Each cell as percentage of row total
-      # For each row, calculate sum across all columns, then create derived columns
-      
-      for (j in 1:ncol(layout$grid)) {
-        new_col_cells <- character(nrow(layout$grid))
-        
-        for (i in 1:nrow(layout$grid)) {
-          # Calculate row total
-          row_cell_ids <- layout$grid[i, ]
+      for (j in scope_cols) {
+        derived_col_expr <- call("share_of_sum", "row", layout$col_labels[j])
+        share_label_suffix <- if (!is.null(label)) label else "% of Row"
+        col_label <- paste0(layout$col_labels[j], " ", share_label_suffix)
+
+        for (i in scope_rows) {
+          row_cell_ids <- layout$grid[i, scope_cols]
           row_cell_ids <- row_cell_ids[!is.na(row_cell_ids)]
-          
-          if (length(row_cell_ids) == 0) {
-            new_col_cells[i] <- NA
-            next
-          }
-          
+          cell_id <- layout$grid[i, j]
+          if (length(row_cell_ids) == 0 || is.na(cell_id)) next
+
           row_values <- sapply(row_cell_ids, function(id) {
             cell <- get_cell(store, id)
             if (!is.null(cell)) cell$value else NA
           })
           row_total <- sum(row_values, na.rm = TRUE)
-          
-          # Get this cell's value
-          cell_id <- layout$grid[i, j]
-          if (is.na(cell_id)) {
-            new_col_cells[i] <- NA
-            next
-          }
-          
           cell <- get_cell(store, cell_id)
-          share_value <- if (row_total != 0) {
-            (cell$value / row_total) * 100
-          } else {
-            NA
-          }
-          
-          # Create derived cell
+          share_value <- if (row_total != 0) (cell$value / row_total) * 100 else NA
+
           derived_spec <- list(
             base_expr = cell$specification$base_expr,
             row_expr = cell$specification$row_expr,
-            col_expr = call("share_of_sum", "row", layout$col_labels[j]),
-            meta = cell$specification$meta
+            col_expr = derived_col_expr,
+            dsl = cell$specification$dsl,
+            meta = cell$specification$meta,
+            statistic_id = cell$specification$statistic_id,
+            measure_id = cell$specification$measure_id,
+            values_var = cell$specification$values_var,
+            is_summary_row = FALSE,
+            is_summary_col = FALSE
           )
-          
-          derived_cell_id <- add_cell(
+
+          add_cell(
             store,
             value = share_value,
             base = NA,
             specification = derived_spec,
-            computation = list(statistic = NA, array_refs = list()),
+            computation = list(statistic = cell$computation$statistic, array_refs = list()),
             derivation = list(
               operation = "share_of_sum",
               by = "row",
               source_cells = row_cell_ids
             )
           )
-          
-          new_col_cells[i] <- derived_cell_id
         }
-        
-        # Add derived column
-        share_label_suffix <- if (!is.null(label)) label else "% of Row"
-        col_label <- paste0(layout$col_labels[j], " ", share_label_suffix)
-        
-        layout$grid <- cbind(layout$grid, new_col_cells)
-        layout$col_labels <- c(layout$col_labels, col_label)
-      }
-      
-      tab_result$layout <- layout
-      return(tab_result)
-      
-    } else {  # by == "col"
-      # Each cell as percentage of column total
-      # For each column, calculate sum across all rows, then create derived rows
-      
-      for (i in 1:nrow(layout$grid)) {
-        new_row_cells <- character(ncol(layout$grid))
-        
-        for (j in 1:ncol(layout$grid)) {
-          # Calculate column total
-          col_cell_ids <- layout$grid[, j]
-          col_cell_ids <- col_cell_ids[!is.na(col_cell_ids)]
-          
-          if (length(col_cell_ids) == 0) {
-            new_row_cells[j] <- NA
-            next
-          }
-          
-          col_values <- sapply(col_cell_ids, function(id) {
-            cell <- get_cell(store, id)
-            if (!is.null(cell)) cell$value else NA
-          })
-          col_total <- sum(col_values, na.rm = TRUE)
-          
-          # Get this cell's value
-          cell_id <- layout$grid[i, j]
-          if (is.na(cell_id)) {
-            new_row_cells[j] <- NA
-            next
-          }
-          
-          cell <- get_cell(store, cell_id)
-          share_value <- if (col_total != 0) {
-            (cell$value / col_total) * 100
-          } else {
-            NA
-          }
-          
-          # Create derived cell
-          derived_spec <- list(
-            base_expr = cell$specification$base_expr,
-            row_expr = call("share_of_sum", "col", layout$row_labels[i]),
-            col_expr = cell$specification$col_expr,
-            meta = cell$specification$meta
+
+        tab_result$layout$col_defs <- c(tab_result$layout$col_defs, list(
+          new_layout_def(
+            col_expr_matcher = exact_match_matcher(derived_col_expr),
+            measure_id_matcher = exact_match_matcher(measure_id),
+            derivation_matcher = function(deriv) !is.null(deriv) && deriv$operation == "share_of_sum",
+            label = col_label,
+            dimension = "col"
           )
-          
-          derived_cell_id <- add_cell(
-            store,
-            value = share_value,
-            base = NA,
-            specification = derived_spec,
-            computation = list(statistic = NA, array_refs = list()),
-            derivation = list(
-              operation = "share_of_sum",
-              by = "col",
-              source_cells = col_cell_ids
-            )
-          )
-          
-          new_row_cells[j] <- derived_cell_id
-        }
-        
-        # Add derived row
-        share_label <- if (!is.null(label)) {
-          paste0(layout$row_labels[i], " ", label)
-        } else {
-          paste0(layout$row_labels[i], " % of Col")
-        }
-        
-        layout$grid <- rbind(layout$grid, new_row_cells)
-        layout$row_labels <- c(layout$row_labels, share_label)
+        ))
       }
-      
-      tab_result$layout <- layout
-      return(tab_result)
+      return(refresh_layout(tab_result))
     }
+
+    # by == "col"
+    for (i in scope_rows) {
+      derived_row_expr <- call("share_of_sum", "col", layout$row_labels[i])
+      share_label <- if (!is.null(label)) paste0(layout$row_labels[i], " ", label) else paste0(layout$row_labels[i], " % of Col")
+
+      for (j in scope_cols) {
+        col_cell_ids <- layout$grid[scope_rows, j]
+        col_cell_ids <- col_cell_ids[!is.na(col_cell_ids)]
+        cell_id <- layout$grid[i, j]
+        if (length(col_cell_ids) == 0 || is.na(cell_id)) next
+
+        col_values <- sapply(col_cell_ids, function(id) {
+          cell <- get_cell(store, id)
+          if (!is.null(cell)) cell$value else NA
+        })
+        col_total <- sum(col_values, na.rm = TRUE)
+        cell <- get_cell(store, cell_id)
+        share_value <- if (col_total != 0) (cell$value / col_total) * 100 else NA
+
+        derived_spec <- list(
+          base_expr = cell$specification$base_expr,
+          row_expr = derived_row_expr,
+          col_expr = cell$specification$col_expr,
+          dsl = cell$specification$dsl,
+          meta = cell$specification$meta,
+          statistic_id = cell$specification$statistic_id,
+          measure_id = cell$specification$measure_id,
+          values_var = cell$specification$values_var,
+          is_summary_row = FALSE,
+          is_summary_col = FALSE
+        )
+
+        add_cell(
+          store,
+          value = share_value,
+          base = NA,
+          specification = derived_spec,
+          computation = list(statistic = cell$computation$statistic, array_refs = list()),
+          derivation = list(
+            operation = "share_of_sum",
+            by = "col",
+            source_cells = col_cell_ids
+          )
+        )
+      }
+
+      tab_result$layout$row_defs <- c(tab_result$layout$row_defs, list(
+        new_layout_def(
+          row_expr_matcher = exact_match_matcher(derived_row_expr),
+          measure_id_matcher = exact_match_matcher(measure_id),
+          derivation_matcher = function(deriv) !is.null(deriv) && deriv$operation == "share_of_sum",
+          label = share_label,
+          dimension = "row"
+        )
+      ))
+    }
+
+    return(refresh_layout(tab_result))
   }
 
   data_cols <- tab_result[, -1, drop = FALSE]

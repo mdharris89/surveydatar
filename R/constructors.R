@@ -137,6 +137,45 @@ create_macro_call <- function(macro_id, ...) {
   )
 }
 
+#' Create a measure specification for multi-measure tab() calls
+#'
+#' Measures are used with `tab(measures = list(...))` to compute multiple
+#' statistics (and optional value variables) in one table.
+#'
+#' @param statistic Statistic identifier (character) or `tab_stat` object.
+#' @param values Optional values variable name for value-based statistics.
+#' @param id Optional stable id for the measure. If omitted, tab() creates one.
+#' @param label Optional display label for the measure block.
+#' @return A `tab_measure` object.
+#' @export
+measure <- function(statistic, values = NULL, id = NULL, label = NULL) {
+  if (!(is.character(statistic) || inherits(statistic, "tab_stat"))) {
+    stop("measure(): statistic must be a character id or tab_stat object")
+  }
+  if (is.character(statistic) && length(statistic) != 1) {
+    stop("measure(): statistic must be length 1 when provided as character")
+  }
+  if (!is.null(values) && (!is.character(values) || length(values) != 1 || !nzchar(values))) {
+    stop("measure(): values must be NULL or a non-empty character scalar")
+  }
+  if (!is.null(id) && (!is.character(id) || length(id) != 1 || !nzchar(id))) {
+    stop("measure(): id must be NULL or a non-empty character scalar")
+  }
+  if (!is.null(label) && (!is.character(label) || length(label) != 1 || !nzchar(label))) {
+    stop("measure(): label must be NULL or a non-empty character scalar")
+  }
+
+  structure(
+    list(
+      statistic = statistic,
+      values = values,
+      id = id,
+      label = label
+    ),
+    class = "tab_measure"
+  )
+}
+
 #' Create and register a tab macro
 #'
 #' @param id Character identifier for the macro

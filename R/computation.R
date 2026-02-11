@@ -177,7 +177,8 @@ compute_cells_as_bundle <- function(base_array,
                                    base_filter_expr,
                                    statistic_obj,
                                    values_array = NULL,
-                                   values_var = NULL) {
+                                   values_var = NULL,
+                                   measure_id = NULL) {
   
   n_cells <- length(row_arrays) * length(col_arrays)
   
@@ -238,7 +239,8 @@ compute_cells_as_bundle <- function(base_array,
         base_filter_spec, base_filter_expr,
         data, dpdict,
         statistic_id = statistic_obj$id,
-        values_var = values_var
+        values_var = values_var,
+        measure_id = measure_id
       )
       
       specification$row_exposure <- row_exposures[i]
@@ -347,7 +349,8 @@ compute_cells_as_bundle <- function(base_array,
         is_summary_row = FALSE,
         is_summary_col = TRUE,
         statistic_id = statistic_obj$id,
-        values_var = values_var
+        values_var = values_var,
+        measure_id = measure_id
       )
       
       specification$row_exposure <- row_exposures[i]
@@ -435,7 +438,8 @@ compute_cells_as_bundle <- function(base_array,
         is_summary_row = TRUE,
         is_summary_col = FALSE,
         statistic_id = statistic_obj$id,
-        values_var = values_var
+        values_var = values_var,
+        measure_id = measure_id
       )
       
       specification$row_exposure <- summary_row_exposure
@@ -477,7 +481,8 @@ compute_cells_as_bundle <- function(base_array,
         is_summary_row = TRUE,
         is_summary_col = TRUE,
         statistic_id = statistic_obj$id,
-        values_var = values_var
+        values_var = values_var,
+        measure_id = measure_id
       )
       
       specification$row_exposure <- summary_row_exposure
@@ -524,7 +529,8 @@ build_cell_specification <- function(row_spec, col_spec,
                                      is_summary_row = FALSE,
                                      is_summary_col = FALSE,
                                      statistic_id = NULL,
-                                     values_var = NULL) {
+                                     values_var = NULL,
+                                     measure_id = NULL) {
   
   # Extract metadata from arrays
   row_meta <- attr(row_array, "meta")
@@ -568,6 +574,7 @@ build_cell_specification <- function(row_spec, col_spec,
     
     # Computation context
     statistic_id = statistic_id,
+    measure_id = measure_id,
     values_var = if (!is.null(values_var)) {
       if (is.character(values_var)) as.symbol(values_var) else values_var
     } else NULL,

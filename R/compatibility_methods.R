@@ -187,8 +187,9 @@ names.tab_result <- function(x) {
   if (inherits(x, "tab_cell_collection")) {
     # Check if accessing list element or column
     # Use direct list access to avoid recursion
-    list_names <- c("cell_store", "layout", "arrays", "data", "dpdict", 
-                    "statistic", "show_base", "base_spec", "label_mode", "derive_operations", "formatting", "call")
+    list_names <- c("cell_store", "layout", "arrays", "data", "dpdict",
+                    "statistic", "measures", "measure_axis",
+                    "show_base", "base_spec", "label_mode", "derive_operations", "formatting", "call")
     if (i %in% list_names) {
       # List element access - use unclass to avoid recursion
       unclass(x)[[i]]
@@ -209,8 +210,9 @@ names.tab_result <- function(x) {
 `$.tab_result` <- function(x, name) {
   if (inherits(x, "tab_cell_collection")) {
     # Use direct list access to avoid recursion
-    list_names <- c("cell_store", "layout", "arrays", "data", "dpdict", 
-                    "statistic", "show_base", "base_spec", "label_mode", "derive_operations", "formatting", "call")
+    list_names <- c("cell_store", "layout", "arrays", "data", "dpdict",
+                    "statistic", "measures", "measure_axis",
+                    "show_base", "base_spec", "label_mode", "derive_operations", "formatting", "call")
     if (name %in% list_names) {
       # List element - use unclass to avoid recursion
       unclass(x)[[name]]

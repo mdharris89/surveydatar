@@ -1329,6 +1329,8 @@ as.data.frame.tab_result <- function(x,
   
   # Preserve key attributes for compatibility with existing functions
   attr(df, "statistic") <- x$statistic
+  attr(df, "measures") <- x$measures
+  attr(df, "measure_axis") <- x$measure_axis
   attr(df, "call") <- x$call
   attr(df, "layout") <- x$layout
   if (!is.null(x$layout$row_exposure)) {
@@ -1371,6 +1373,26 @@ as.data.frame.tab_result <- function(x,
       }
     }
     attr(df, "statistic_matrix") <- statistic_matrix
+  }
+
+  # Always attach measure matrix when available.
+  measure_matrix <- matrix(NA_character_, n_rows, n_cols)
+  has_measure <- FALSE
+  for (i in seq_len(n_rows)) {
+    for (j in seq_len(n_cols)) {
+      cell_id <- grid[i, j]
+      if (!is.na(cell_id)) {
+        cell <- get_cell(x$cell_store, cell_id)
+        mid <- cell$specification$measure_id
+        if (!is.null(mid)) {
+          measure_matrix[i, j] <- as.character(mid)
+          has_measure <- TRUE
+        }
+      }
+    }
+  }
+  if (has_measure) {
+    attr(df, "measure_matrix") <- measure_matrix
   }
   
   ## Extract significance from cells if present ----------------------------------
@@ -1455,7 +1477,11 @@ as.data.frame.tab_result <- function(x,
   
   ## Add visible base (using calculated base matrix) ------------------------------
   base_orientation <- NULL
-  if (show_base && !is.null(base_matrix) && is.list(x$statistic)) {
+  stat_for_base <- x$statistic
+  if (is.null(stat_for_base) && !is.null(x$measures) && length(x$measures) > 0) {
+    stat_for_base <- get_statistic(x$measures[[1]]$statistic_id)
+  }
+  if (show_base && !is.null(base_matrix) && is.list(stat_for_base)) {
     # Determine orientation from the base_matrix structure
     display_as_row <- TRUE
     display_as_column <- TRUE
@@ -1515,7 +1541,17 @@ as.data.frame.tab_result <- function(x,
         }
       }
       
-      df[[x$statistic$base_label]] <- row_base_values
+      if (!is.null(x$layout$base_row_index_map) && length(x$layout$base_row_index_map) == length(row_base_values)) {
+        for (rid in unique(x$layout$base_row_index_map)) {
+          if (is.na(rid)) next
+          rows_in_group <- which(x$layout$base_row_index_map == rid)
+          group_vals <- row_base_values[rows_in_group]
+          if (any(is.na(group_vals)) || length(unique(group_vals)) != 1) {
+            row_base_values[rows_in_group] <- NA_real_
+          }
+        }
+      }
+      df[[stat_for_base$base_label]] <- row_base_values
       
     } else {
       # Display base as a row
@@ -1534,6 +1570,17 @@ as.data.frame.tab_result <- function(x,
         } else {
           # Inconsistent bases - use NA to maintain numeric type
           col_base_values[j] <- NA_real_
+        }
+      }
+
+      if (!is.null(x$layout$base_col_index_map) && length(x$layout$base_col_index_map) == length(col_base_values)) {
+        for (cid in unique(x$layout$base_col_index_map)) {
+          if (is.na(cid)) next
+          cols_in_group <- which(x$layout$base_col_index_map == cid)
+          group_vals <- col_base_values[cols_in_group]
+          if (any(is.na(group_vals)) || length(unique(group_vals)) != 1) {
+            col_base_values[cols_in_group] <- NA_real_
+          }
         }
       }
       
@@ -1563,7 +1610,7 @@ as.data.frame.tab_result <- function(x,
       base_row <- df[1, , drop = FALSE]
       
       # Set all values to the base values we calculated
-      base_row[1, 1] <- x$statistic$base_label  # row_label column
+      base_row[1, 1] <- stat_for_base$base_label  # row_label column
       for (i in seq_along(col_base_values)) {
         base_row[1, i + 1] <- col_base_values[i]
       }
@@ -1574,6 +1621,44 @@ as.data.frame.tab_result <- function(x,
       # Add base row
       df <- rbind(df, base_row)
     }
+  }
+
+  # Keep statistic/measure matrices aligned with visible data dimensions
+  # after optional base presentation rows/columns are added.
+  align_cell_matrix <- function(mat) {
+    if (is.null(mat)) return(NULL)
+    target_rows <- nrow(df)
+    target_cols <- ncol(df) - 1L
+
+    if (nrow(mat) == (target_rows - 1L)) {
+      mat <- rbind(mat, rep(NA_character_, ncol(mat)))
+    }
+    if (ncol(mat) == (target_cols - 1L)) {
+      mat <- cbind(mat, rep(NA_character_, nrow(mat)))
+    }
+
+    if (nrow(mat) < target_rows) {
+      mat <- rbind(mat, matrix(NA_character_, nrow = target_rows - nrow(mat), ncol = ncol(mat)))
+    } else if (nrow(mat) > target_rows) {
+      mat <- mat[seq_len(target_rows), , drop = FALSE]
+    }
+
+    if (ncol(mat) < target_cols) {
+      mat <- cbind(mat, matrix(NA_character_, nrow = nrow(mat), ncol = target_cols - ncol(mat)))
+    } else if (ncol(mat) > target_cols) {
+      mat <- mat[, seq_len(target_cols), drop = FALSE]
+    }
+
+    mat
+  }
+
+  stat_mat <- attr(df, "statistic_matrix", exact = TRUE)
+  if (!is.null(stat_mat)) {
+    attr(df, "statistic_matrix") <- align_cell_matrix(stat_mat)
+  }
+  meas_mat <- attr(df, "measure_matrix", exact = TRUE)
+  if (!is.null(meas_mat)) {
+    attr(df, "measure_matrix") <- align_cell_matrix(meas_mat)
   }
   
   # Store base orientation as attribute for downstream use

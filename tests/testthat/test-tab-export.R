@@ -1392,3 +1392,52 @@ test_that("cell_qualifies_for_def checks expr matchers", {
   )
   expect_false(cell_qualifies_for_def(cell, def_no_match))
 })
+
+test_that("cell_qualifies_for_def checks measure_id_matcher", {
+  cell <- list(
+    specification = list(
+      measure_id = "m2"
+    )
+  )
+
+  def_match <- new_layout_def(
+    measure_id_matcher = function(x) identical(x, "m2"),
+    label = "Measure m2",
+    dimension = "col"
+  )
+  expect_true(cell_qualifies_for_def(cell, def_match))
+
+  def_no_match <- new_layout_def(
+    measure_id_matcher = function(x) identical(x, "m1"),
+    label = "Measure m1",
+    dimension = "col"
+  )
+  expect_false(cell_qualifies_for_def(cell, def_no_match))
+})
+
+test_that("multi-measure export keeps summary placeholders and aligned measure metadata", {
+  dat <- get_basic_test_dat()
+
+  x <- tab(
+    dat,
+    labelledordinal,
+    binarycategoricalasfactor,
+    measures = list(
+      measure("column_pct", id = "pct"),
+      measure("mean", values = "randomnumeric", id = "avg")
+    ),
+    show_row_nets = TRUE,
+    show_col_nets = TRUE
+  )
+  df <- as.data.frame(x)
+
+  expect_true("Summary" %in% df$row_label)
+  expect_true("Summary" %in% names(df))
+  expect_true(all(is.na(df[df$row_label == "Summary", -1, drop = TRUE])))
+  expect_true(all(is.na(df[["Summary"]])))
+
+  measure_matrix <- attr(df, "measure_matrix")
+  expect_true(!is.null(measure_matrix))
+  expect_equal(nrow(measure_matrix), nrow(df))
+  expect_equal(ncol(measure_matrix), ncol(df) - 1L)
+})
